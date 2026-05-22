@@ -2,7 +2,7 @@
 
 > **Production-grade, locally-runnable AI agent framework with dynamic RAG, multi-agent orchestration, and compiled manifest pattern.**
 
-[![CI](https://github.com/your-org/volt/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/volt/actions)
+[![CI](https://github.com/iixiiartist/volt/actions/workflows/ci.yml/badge.svg)](https://github.com/iixiiartist/volt/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
@@ -13,6 +13,7 @@ Volt is not just another AI agent framework. It's a **production-grade Autonomou
 - **Dynamic RAG Loop**: Tools, skills, and memories are retrieved via pgvector cosine similarity — not hardcoded. Up to **75% fewer input tokens** per LLM call.
 - **Compiled Manifest Pattern**: Author skills in Markdown (`SKILL.md`), compile into PostgreSQL with HNSW indexing. Human-friendly authoring, machine-optimized runtime.
 - **Multi-Agent Orchestration**: Parallel, pipeline, and supervisor patterns built-in.
+- **Polyglot Execution Sandbox**: Tools written in Python, TypeScript, Bash, or Mojo run in kernel-isolated `unshare` namespaces with `prlimit` boundaries.
 - **Zero Dependencies**: Single 18MB Rust binary. No Python, Node, or Docker required at runtime.
 - **MCP Native**: Full Model Context Protocol support for tool interoperability.
 
@@ -22,7 +23,7 @@ Volt is not just another AI agent framework. It's a **production-grade Autonomou
 
 ```bash
 # Download the binary (Linux/Mac/Windows)
-curl -fsSL https://github.com/your-org/volt/releases/latest/download/volt | sh
+curl -fsSL https://github.com/iixiiartist/volt/releases/latest/download/volt | sh
 
 # Or build from source
 cargo install volt
@@ -151,7 +152,7 @@ Interactive terminal UI with:
 
 ```bash
 # Prerequisites: Rust 1.95+, PostgreSQL 16+ with pgvector
-git clone https://github.com/your-org/volt.git
+git clone https://github.com/iixiiartist/volt.git
 cd volt
 cargo install --path .
 ```
@@ -244,12 +245,24 @@ cargo clippy -- -D warnings
 
 ## Roadmap
 
-- [ ] IDE extensions (VS Code, JetBrains)
-- [ ] Web UI dashboard
-- [ ] Git-aware diff visualization
-- [ ] Multi-modal support (images, PDFs)
-- [ ] Plugin system for custom tools
-- [ ] Distributed agent federation
+### Q1 2026
+- [x] Dynamic RAG Loop (Tools + Skills + Memories)
+- [x] Compiled Manifest Pattern
+- [x] Multi-Agent Orchestration
+- [x] Permission System
+- [x] TUI with cursor editing
+
+### Q2 2026
+- [ ] **gVisor & Firecracker Integration**: Transitioning local sub-process execution from kernel namespaces to dedicated microVM structures
+- [ ] **The Volt Skill Marketplace**: A decentralized, cryptographic ledger registry for distributing compiled multi-language manifests safely
+- [ ] **Native C-FFI / Mojo Matrix Bridges**: Native bindings for ultra-low latency local tensor math tools without interpreter overhead
+- [ ] **IDE Extensions**: VS Code and JetBrains plugins for in-editor agent assistance
+
+### Q3 2026
+- [ ] **Distributed Agent Federation**: Asynchronous secure TCP nodes for multi-machine agent coordination
+- [ ] **Web Dashboard**: Real-time agent monitoring and skill management UI
+- [ ] **Git-Aware Diff Visualization**: Contextual code review with semantic diff highlighting
+- [ ] **Multi-modal Support**: Image, PDF, and document understanding via vision models
 
 ## Contributing
 
@@ -276,4 +289,4 @@ Built with:
 
 ---
 
-**Volt** — The Autonomous Systems Engine. Built for production, designed for developers.
+**Volt** — The Autonomous Systems Engine. Maintained by [Setique Labs, Inc.](https://volt.setique.com). Built for production, designed for developers.

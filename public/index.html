@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volt - The Autonomous Systems Engine</title>
+    <meta name="description" content="Production-grade AI agent framework with dynamic RAG, multi-agent orchestration, and compiled manifest pattern. Built in Rust.">
+    <meta name="keywords" content="AI agents, Rust, RAG, multi-agent, automation, LLM, pgvector">
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="Volt - The Autonomous Systems Engine">
+    <meta property="og:description" content="Production-grade AI agent framework with dynamic RAG and multi-agent orchestration">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://volt.setique.com">
+    
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Volt - The Autonomous Systems Engine">
+    <meta name="twitter:description" content="Production-grade AI agent framework with dynamic RAG and multi-agent orchestration">
+    
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #2563eb;
+            --secondary: #10b981;
+            --dark: #0f172a;
+            --light: #f8fafc;
+            --gray: #64748b;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: var(--dark);
+            background: var(--light);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+        
+        /* Header */
+        header {
+            background: linear-gradient(135deg, var(--dark) 0%, #1e293b 100%);
+            color: white;
+            padding: 2rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/></svg>');
+            background-size: 50px 50px;
+        }
+        
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 2;
+        }
+        
+        .logo {
+            font-size: 2rem;
+            font-weight: 700;
+            color: white;
+            text-decoration: none;
+        }
+        
+        .logo span {
+            color: var(--primary);
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+        
+        .nav-links a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        .nav-links a:hover {
+            color: white;
+        }
+        
+        /* Hero */
+        .hero {
+            text-align: center;
+            padding: 6rem 0;
+            position: relative;
+        }
+        
+        .hero h1 {
+            font-size: 4rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero p {
+            font-size: 1.5rem;
+            color: var(--gray);
+            max-width: 800px;
+            margin: 0 auto 2rem;
+        }
+        
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 4rem;
+            margin: 3rem 0;
+            flex-wrap: wrap;
+        }
+        
+        .stat {
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .stat-label {
+            color: var(--gray);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin: 0.5rem;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: transparent;
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--primary);
+            color: white;
+        }
+        
+        /* Features */
+        .features {
+            padding: 6rem 0;
+            background: white;
+        }
+        
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .section-subtitle {
+            text-align: center;
+            color: var(--gray);
+            max-width: 600px;
+            margin: 0 auto 4rem;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+        
+        .feature-card {
+            background: var(--light);
+            padding: 2rem;
+            border-radius: 12px;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .feature-card h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--dark);
+        }
+        
+        .feature-card p {
+            color: var(--gray);
+        }
+        
+        /* Architecture */
+        .architecture {
+            padding: 6rem 0;
+            background: var(--light);
+        }
+        
+        .architecture-diagram {
+            background: white;
+            padding: 3rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            margin: 2rem 0;
+            overflow-x: auto;
+        }
+        
+        .architecture-diagram pre {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        
+        /* Performance */
+        .performance {
+            padding: 6rem 0;
+            background: white;
+        }
+        
+        .performance-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+        
+        .performance-item {
+            text-align: center;
+            padding: 2rem;
+            background: var(--light);
+            border-radius: 8px;
+        }
+        
+        .performance-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .performance-label {
+            color: var(--gray);
+        }
+        
+        /* CTA */
+        .cta {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 6rem 0;
+            text-align: center;
+        }
+        
+        .cta h2 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .cta p {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+        
+        .cta .btn {
+            background: white;
+            color: var(--primary);
+        }
+        
+        .cta .btn:hover {
+            background: var(--light);
+            transform: translateY(-2px);
+        }
+        
+        /* Footer */
+        footer {
+            background: var(--dark);
+            color: rgba(255,255,255,0.7);
+            padding: 3rem 0;
+            text-align: center;
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 2rem 0;
+            list-style: none;
+        }
+        
+        .footer-links a {
+            color: rgba(255,255,255,0.7);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        .footer-links a:hover {
+            color: white;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .hero p {
+                font-size: 1.2rem;
+            }
+            
+            .hero-stats {
+                gap: 2rem;
+            }
+            
+            .nav-links {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <nav>
+                <a href="#" class="logo">Volt<span>.</span></a>
+                <ul class="nav-links">
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#architecture">Architecture</a></li>
+                    <li><a href="#performance">Performance</a></li>
+                    <li><a href="https://github.com/iixiiartist/volt" target="_blank">GitHub</a></li>
+                    <li><a href="https://github.com/iixiiartist/volt/releases" target="_blank">Download</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <section class="hero">
+        <div class="container">
+            <h1>The Autonomous Systems Engine</h1>
+            <p>Production-grade AI agent framework with dynamic RAG, multi-agent orchestration, and compiled manifest pattern. Built in Rust for maximum performance.</p>
+            
+            <div class="hero-stats">
+                <div class="stat">
+                    <div class="stat-number">75%</div>
+                    <div class="stat-label">Fewer Tokens</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number"><1ms</div>
+                    <div class="stat-label">Search Latency</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">18MB</div>
+                    <div class="stat-label">Binary Size</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">Zero</div>
+                    <div class="stat-label">Runtime Dependencies</div>
+                </div>
+            </div>
+            
+            <div class="cta-buttons">
+                <a href="https://github.com/iixiiartist/volt" class="btn btn-primary">Get Started</a>
+                <a href="#architecture" class="btn btn-secondary">Learn More</a>
+            </div>
+        </div>
+    </section>
+
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title">Why Volt?</h2>
+            <p class="section-subtitle">Built for production, designed for developers. Volt redefines what's possible with AI agents.</p>
+            
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔄</div>
+                    <h3>Dynamic RAG Loop</h3>
+                    <p>Tools, skills, and memories are retrieved via pgvector cosine similarity — not hardcoded. Up to 75% fewer input tokens per LLM call.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📦</div>
+                    <h3>Compiled Manifest Pattern</h3>
+                    <p>Author skills in Markdown (SKILL.md), compile into PostgreSQL with HNSW indexing. Human-friendly authoring, machine-optimized runtime.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3>Multi-Agent Orchestration</h3>
+                    <p>Parallel, pipeline, and supervisor patterns built-in. Coordinate multiple agents to solve complex problems together.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Permission System</h3>
+                    <p>Destructive operations require human approval. Sandboxed execution for provisioned tools with full audit logging.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Zero Dependencies</h3>
+                    <p>Single 18MB Rust binary. No Python, Node, or Docker required at runtime. Fast cold start <100ms.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔌</div>
+                    <h3>MCP Native</h3>
+                    <p>Full Model Context Protocol support for tool interoperability. Connect to any LLM provider seamlessly.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="architecture" class="architecture">
+        <div class="container">
+            <h2 class="section-title">Architecture</h2>
+            <p class="section-subtitle">Every agent turn performs semantic search across tools, skills, and memories.</p>
+            
+            <div class="architecture-diagram">
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│                    Volt Agent Loop                      │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│  User Query + Last 3 Messages (Context)                 │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+              ┌────────────────────────────────┐
+              │  pgvector Cosine Similarity    │
+              │  (HNSW Index - Sub-ms Search)  │
+              └────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│ Top-8 Tools   │   │ Top-3 Skills  │   │ Top-5 Memories│
+│ (Dynamic)     │   │ (Priming)     │   │ (Temporal)    │
+└───────────────┘   └───────────────┘   └───────────────┘
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              ▼
+              ┌────────────────────────────────┐
+              │  System Prompt Construction    │
+              │  (Context-Aware, Pruned)       │
+              └────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│  LLM Call (Kimi/Claude/GPT) - 75% Fewer Tokens          │
+└─────────────────────────────────────────────────────────┘</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <section id="performance" class="performance">
+        <div class="container">
+            <h2 class="section-title">Performance</h2>
+            <p class="section-subtitle">Built for speed and efficiency at every layer.</p>
+            
+            <div class="performance-grid">
+                <div class="performance-item">
+                    <div class="performance-value"><1ms</div>
+                    <div class="performance-label">Tool Search Latency</div>
+                </div>
+                <div class="performance-item">
+                    <div class="performance-value"><5ms</div>
+                    <div class="performance-label">Memory Search Latency</div>
+                </div>
+                <div class="performance-item">
+                    <div class="performance-value">75%</div>
+                    <div class="performance-label">Token Reduction</div>
+                </div>
+                <div class="performance-item">
+                    <div class="performance-value"><100ms</div>
+                    <div class="performance-label">Cold Start Time</div>
+                </div>
+                <div class="performance-item">
+                    <div class="performance-value">18MB</div>
+                    <div class="performance-label">Binary Size</div>
+                </div>
+                <div class="performance-item">
+                    <div class="performance-value">0</div>
+                    <div class="performance-label">Runtime Dependencies</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta">
+        <div class="container">
+            <h2>Ready to Build the Future?</h2>
+            <p>Join thousands of developers building autonomous systems with Volt.</p>
+            <a href="https://github.com/iixiiartist/volt" class="btn">Get Started on GitHub</a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Volt. Built with ❤️ in Rust.</p>
+            <ul class="footer-links">
+                <li><a href="https://github.com/iixiiartist/volt">GitHub</a></li>
+                <li><a href="https://github.com/iixiiartist/volt/blob/main/ARCHITECTURE.md">Architecture</a></li>
+                <li><a href="https://github.com/iixiiartist/volt/blob/main/LICENSE">License</a></li>
+                <li><a href="https://github.com/iixiiartist/volt/issues">Issues</a></li>
+            </ul>
+        </div>
+    </footer>
+</body>
+</html>
