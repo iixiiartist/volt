@@ -1,0 +1,19 @@
+{
+  "tool_name": "domain-compliance-soc2-reader",
+  "description": "Extracts SOC 2 control evidence checklist items from structured document text and emits review tasks for compliance operators.",
+  "language": "python",
+  "source_code": "import json\nimport sys\n\ndef run(payload):\n    text = payload.get('text', '').lower()\n    controls = ['access control', 'change management', 'incident response', 'vendor management']\n    return {'matches': [c for c in controls if c in text]}\n\nif __name__ == '__main__':\n    print(json.dumps(run(json.load(sys.stdin))))\n",
+  "parameter_schema": {
+    "type": "object",
+    "required": ["text"],
+    "properties": {
+      "text": { "type": "string" }
+    }
+  },
+  "signature": "dev-placeholder-signature",
+  "relationships": [],
+  "metadata": {
+    "package_format": "Domain Compliance Packs",
+    "target_segment": "Financial, Fintech, and Healthcare Systems"
+  }
+}

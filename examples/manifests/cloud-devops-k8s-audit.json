@@ -1,0 +1,18 @@
+{
+  "tool_name": "cloud-devops-k8s-audit",
+  "description": "Audits Kubernetes configuration manifests for common operational risks such as missing resource limits, default namespace use, and privileged containers.",
+  "language": "python",
+  "source_code": "import json\nimport sys\n\ndef run(payload):\n    findings = []\n    for item in payload.get('items', []):\n        spec = item.get('spec', {})\n        if item.get('metadata', {}).get('namespace') == 'default':\n            findings.append({'severity': 'medium', 'message': 'Workload uses default namespace'})\n        for c in spec.get('containers', []):\n            if 'resources' not in c:\n                findings.append({'severity': 'high', 'message': f\"Container {c.get('name', 'unknown')} has no resources block\"})\n    return {'findings': findings}\n\nif __name__ == '__main__':\n    payload = json.load(sys.stdin)\n    print(json.dumps(run(payload)))\n",
+  "parameter_schema": {
+    "type": "object",
+    "properties": {
+      "items": { "type": "array" }
+    }
+  },
+  "signature": "dev-placeholder-signature",
+  "relationships": [],
+  "metadata": {
+    "package_format": "Cloud DevOps Automations",
+    "target_segment": "Enterprise Engineering Squads, Scale-ups"
+  }
+}

@@ -1,0 +1,51 @@
+[package]
+name = "volt"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Volt — Rust agent framework with MCP, memory, sandboxed tools, and multi-agent orchestration"
+
+[lib]
+name = "volt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "volt"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+hex = "0.4"
+hmac = "0.12"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "stream"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "chrono", "json", "uuid"] }
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "fs", "io-util", "io-std", "sync", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+ratatui = "0.29"
+crossterm = "0.28"
+regex = "1"
+walkdir = "2"
+ignore = "0.4"
+futures = "0.3"
+tokio-stream = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
+axum = "0.8"
+url = "2"
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+jsonpath-rust = "0.7"
+similar = "2"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

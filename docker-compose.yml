@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: volt-postgres
+    environment:
+      POSTGRES_USER: volt
+      POSTGRES_PASSWORD: volt
+      POSTGRES_DB: volt
+    ports:
+      - "5432:5432"
+    volumes:
+      - volt_pg_data:/var/lib/postgresql/data
+      - ./migrations/0001_core.sql:/docker-entrypoint-initdb.d/0001_core.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U volt -d volt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  volt_pg_data:
