@@ -1,6 +1,7 @@
 pub mod registry;
 pub mod bash;
 pub mod edit;
+pub mod path;
 pub mod read_tool;
 pub mod write_tool;
 pub mod glob_tool;
@@ -10,4 +11,4 @@ pub mod memory_tool;
 pub mod delegate;
 pub mod todo_tool;
 pub mod mcp_client;
-pub use registry::ToolRegistry;
+pub use registry::{ToolFn, ToolRegistry};

@@ -58,7 +58,6 @@ impl MCPClient {
                     stdin.write_all(request.to_string().as_bytes()).await?;
                     stdin.flush().await?;
                 }
-                drop(child.stdin.take());
 
                 let output = child.wait_with_output().await?;
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();

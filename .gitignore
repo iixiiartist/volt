@@ -1,7 +1,12 @@
 /target
+/target_corrupted
 .env
 *.db
 *.sqlite
 .DS_Store
 /tmp
 /dist
+.volt_tasks.md
+MEMORY.md
+.volt/
+.volt/

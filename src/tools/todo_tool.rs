@@ -1,7 +1,7 @@
 use crate::models::ToolResult;
 use std::time::Instant;
 
-pub fn todo_add(task: &str) -> ToolResult {
+pub async fn todo_add(task: &str) -> ToolResult {
     let started = Instant::now();
     let path = ".volt_tasks.md";
     let entry = format!("- [ ] {}\n", task);

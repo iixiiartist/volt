@@ -1,6 +1,6 @@
 use crate::agent::loop_rs::Agent;
 use crate::models::{CancelToken, Session};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -92,68 +92,17 @@ impl TuiChat {
         .await
         .ok();
 
-        {
-            let state = agent.state.lock().await;
-            for msg in &state.messages {
-                chat.messages.push(ChatMessage {
-                    role: msg.role.clone(),
-                    content: msg.content.clone(),
-                });
-            }
-        }
+        chat.load_agent_messages(agent).await;
 
         loop {
             terminal.draw(|f| chat.render(f))?;
 
-            if chat.cancel.is_cancelled() {
-                if chat.is_thinking {
-                    chat.stream_buffer.push_str("\n[interrupted]");
-                    let buf = chat.stream_buffer.clone();
-                    chat.add_message("assistant", &buf);
-                    chat.stream_buffer.clear();
-                    chat.is_thinking = false;
-                } else {
-                    break;
-                }
+            if chat.handle_cancellation() {
+                break;
             }
 
             if chat.is_thinking {
-                let input = chat.input.clone();
-                let result = agent.run(&input).await;
-
-                if chat.cancel.is_cancelled() {
-                    chat.stream_buffer.clear();
-                    chat.is_thinking = false;
-                    continue;
-                }
-
-                match result {
-                    Ok(output) => {
-                        chat.add_message("assistant", &output);
-                        if let Some(ref sp) = sessions_pool {
-                            let s = agent.state.lock().await;
-                            let _ = crate::session::create_session(
-                                sp,
-                                &Session {
-                                    id: s.session_id,
-                                    agent_name: s.name.clone(),
-                                    title: input.chars().take(60).collect(),
-                                    message_count: s.messages.len() as u32,
-                                    created_at: s.created_at,
-                                    updated_at: s.updated_at,
-                                },
-                            )
-                            .await;
-                            for msg in s.messages.iter().rev().take(2) {
-                                let _ = crate::session::save_message(sp, s.session_id, msg).await;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        chat.add_message("system", &format!("error: {}", e));
-                    }
-                }
-                chat.is_thinking = false;
+                chat.handle_agent_response(agent, &sessions_pool).await;
                 continue;
             }
 
@@ -161,74 +110,147 @@ impl TuiChat {
                 continue;
             }
 
-            match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    match key.code {
-                        KeyCode::Enter => {
-                            let input = chat.input.trim().to_string();
-                            if input.is_empty() {
-                                continue;
-                            }
-                            if input == "/quit" {
-                                break;
-                            }
-                            chat.add_message("user", &input);
-                            chat.input.clear();
-                            chat.cursor_pos = 0;
-                            chat.is_thinking = true;
-                            chat.stream_buffer.clear();
-                        }
-                        KeyCode::Backspace => {
-                            if chat.cursor_pos > 0 {
-                                chat.cursor_pos -= 1;
-                                chat.input.remove(chat.cursor_pos);
-                            }
-                        }
-                        KeyCode::Delete => {
-                            if chat.cursor_pos < chat.input.len() {
-                                chat.input.remove(chat.cursor_pos);
-                            }
-                        }
-                        KeyCode::Char(c) => {
-                            chat.input.insert(chat.cursor_pos, c);
-                            chat.cursor_pos += 1;
-                        }
-                        KeyCode::Left => {
-                            chat.cursor_pos = chat.cursor_pos.saturating_sub(1);
-                        }
-                        KeyCode::Right => {
-                            chat.cursor_pos = chat.cursor_pos.saturating_add(1).min(chat.input.len());
-                        }
-                        KeyCode::Home => {
-                            chat.cursor_pos = 0;
-                        }
-                        KeyCode::End => {
-                            chat.cursor_pos = chat.input.len();
-                        }
-                        KeyCode::Up => {
-                            let max = chat.messages.len().saturating_sub(1);
-                            chat.scroll_offset = (chat.scroll_offset + 1).min(max);
-                        }
-                        KeyCode::Down => {
-                            chat.scroll_offset = chat.scroll_offset.saturating_sub(1);
-                        }
-                        KeyCode::PageUp => {
-                            let max = chat.messages.len().saturating_sub(1);
-                            chat.scroll_offset = (chat.scroll_offset + 10).min(max);
-                        }
-                        KeyCode::PageDown => {
-                            chat.scroll_offset = chat.scroll_offset.saturating_sub(10);
-                        }
-                        _ => {}
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    if chat.handle_key_event(key) {
+                        break;
                     }
                 }
-                _ => {}
             }
         }
 
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen)?;
         Ok(())
+    }
+
+    async fn load_agent_messages(&mut self, agent: &Agent) {
+        let state = agent.state.lock().await;
+        for msg in &state.messages {
+            self.messages.push(ChatMessage {
+                role: msg.role.clone(),
+                content: msg.content.as_str().to_string(),
+            });
+        }
+    }
+
+    /// Returns true if the loop should break
+    fn handle_cancellation(&mut self) -> bool {
+        if self.cancel.is_cancelled() {
+            if self.is_thinking {
+                self.stream_buffer.push_str("\n[interrupted]");
+                let buf = self.stream_buffer.clone();
+                self.add_message("assistant", &buf);
+                self.stream_buffer.clear();
+                self.is_thinking = false;
+            } else {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn handle_agent_response(&mut self, agent: &Agent, sessions_pool: &Option<sqlx::SqlitePool>) {
+        let input = self.input.clone();
+        let result = agent.run(&input).await;
+
+        if self.cancel.is_cancelled() {
+            self.stream_buffer.clear();
+            self.is_thinking = false;
+            return;
+        }
+
+        match result {
+            Ok(output) => {
+                self.add_message("assistant", &output);
+                if let Some(ref sp) = sessions_pool {
+                    let s = agent.state.lock().await;
+                    let _ = crate::session::create_session(
+                        sp,
+                        &Session {
+                            id: s.session_id,
+                            agent_name: s.name.clone(),
+                            title: input.chars().take(60).collect(),
+                            message_count: s.messages.len() as u32,
+                            created_at: s.created_at,
+                            updated_at: s.updated_at,
+                        },
+                    )
+                    .await;
+                    let _ = crate::session::delete_session_messages(sp, s.session_id).await;
+                    for msg in &s.messages {
+                        let _ = crate::session::save_message(sp, s.session_id, msg).await;
+                    }
+                }
+            }
+            Err(e) => {
+                self.add_message("system", &format!("error: {}", e));
+            }
+        }
+        self.is_thinking = false;
+    }
+
+    /// Returns true if user wants to quit
+    fn handle_key_event(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Enter => {
+                let input = self.input.trim().to_string();
+                if input.is_empty() {
+                    return false;
+                }
+                if input == "/quit" {
+                    return true;
+                }
+                self.add_message("user", &input);
+                self.input.clear();
+                self.cursor_pos = 0;
+                self.is_thinking = true;
+                self.stream_buffer.clear();
+            }
+            KeyCode::Backspace => {
+                if self.cursor_pos > 0 {
+                    self.cursor_pos -= 1;
+                    self.input.remove(self.cursor_pos);
+                }
+            }
+            KeyCode::Delete => {
+                if self.cursor_pos < self.input.len() {
+                    self.input.remove(self.cursor_pos);
+                }
+            }
+            KeyCode::Char(c) => {
+                self.input.insert(self.cursor_pos, c);
+                self.cursor_pos += 1;
+            }
+            KeyCode::Left => {
+                self.cursor_pos = self.cursor_pos.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                self.cursor_pos = self.cursor_pos.saturating_add(1).min(self.input.len());
+            }
+            KeyCode::Home => {
+                self.cursor_pos = 0;
+            }
+            KeyCode::End => {
+                self.cursor_pos = self.input.len();
+            }
+            KeyCode::Up => {
+                let max = self.messages.len().saturating_sub(1);
+                self.scroll_offset = (self.scroll_offset + 1).min(max);
+            }
+            KeyCode::Down => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+            }
+            KeyCode::PageUp => {
+                let max = self.messages.len().saturating_sub(1);
+                self.scroll_offset = (self.scroll_offset + 10).min(max);
+            }
+            KeyCode::PageDown => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(10);
+            }
+            _ => {}
+        }
+        false
     }
 
     fn render(&self, f: &mut Frame) {

@@ -13,10 +13,7 @@ pub struct RegistryClient {
 impl RegistryClient {
     pub fn new() -> Self {
         Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_default(),
+            http: crate::http_client(30),
         }
     }
 

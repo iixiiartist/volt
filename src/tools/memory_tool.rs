@@ -1,7 +1,7 @@
 use crate::models::ToolResult;
 use std::time::Instant;
 
-pub fn memory_append(kind: &str, content: &str) -> ToolResult {
+pub async fn memory_append(kind: &str, content: &str) -> ToolResult {
     let started = Instant::now();
     let path = "MEMORY.md";
     let entry = format!("## {}\n{}\n\n", kind, content);

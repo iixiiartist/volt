@@ -5,27 +5,33 @@ const DENIED_PATTERNS: &[&str] = &[
     "std::env::vars",
     "std::env::var(",
     "env::vars",
+    "env::var(",
     "std::fs::read_dir(\"/",
     "std::fs::read_to_string(\"/etc",
     "std::process::Command::new(\"sh\")",
     "std::process::Command::new(\"bash\")",
     "Command::new(\"sh\")",
     "Command::new(\"bash\")",
+    "Command::new(\"cmd\")",
+    "Command::new(\"powershell\")",
     "TcpStream::connect",
     "UdpSocket::bind",
     "reqwest::",
     "hyper::",
     "/dev/",
     "/proc/",
+    "/sys/",
+    "std::os::unix",
+    "std::os::windows",
+    "std::net::",
     "unsafe {",
 ];
-
 pub fn validate_manifest(manifest: &RegistryManifest) -> ValidationReport {
     let source_lower = manifest.source_code.to_lowercase();
     let mut denied = Vec::new();
 
     for pattern in DENIED_PATTERNS {
-        if source_lower.contains(&pattern.to_lowercase()) {
+        if source_lower.contains(pattern) {
             denied.push(pattern.to_string());
         }
     }

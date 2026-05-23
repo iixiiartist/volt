@@ -1,7 +1,6 @@
 services:
-  postgres:
+  db:
     image: pgvector/pgvector:pg16
-    container_name: volt-postgres
     environment:
       POSTGRES_USER: volt
       POSTGRES_PASSWORD: volt
@@ -9,13 +8,34 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - volt_pg_data:/var/lib/postgresql/data
-      - ./migrations/0001_core.sql:/docker-entrypoint-initdb.d/0001_core.sql:ro
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U volt -d volt"]
+      test: ["CMD-SHELL", "pg_isready -U volt"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 5
+
+  volt:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://volt:volt@db:5432/volt
+      LLM_MODEL: ${LLM_MODEL:-phi4-mini:3.8b}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-mxbai-embed-large}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-http://host.docker.internal:11434/v1}
+    volumes:
+      - .:/workdir
+    working_dir: /workdir
+    stdin_open: true
+    tty: true
 
 volumes:
-  volt_pg_data:
+  pgdata:

@@ -1,10 +1,12 @@
 # Volt Architecture Documentation
 
-## Executive Summary
+## Overview
 
-Volt is a **production-grade Autonomous Systems Engine** built in Rust that implements a **Unified RAG Loop** for dynamic tool, skill, and memory retrieval. Unlike traditional agent frameworks that hardcode all tools into every LLM call, Volt uses **pgvector cosine similarity** to select only the most relevant context, reducing token usage by **75%** while improving agent performance.
+Volt is an AI agent framework built in Rust that implements a **Unified RAG Loop** for dynamic tool, skill, and memory retrieval. Rather than hardcoding all available tools into every LLM call, Volt embeds the current query context and retrieves only the most relevant tools, skills, and memories per turn. This reduces per-call context overhead on registries with many tools and avoids priming the model with irrelevant capabilities.
 
-## Core Innovations
+The project is under active development. The architecture described here reflects what is currently implemented.
+
+## Core Design Decisions
 
 ### 1. Unified RAG Loop
 
@@ -16,23 +18,26 @@ User Query + Context
 [pgvector Cosine Search - HNSW Index]
     ↓
 ┌──────────┬──────────┬──────────┐
-│Top-8     │Top-3     │Top-5     │
-│Tools     │Skills    │Memories  │
+│ Top-8    │ Top-3    │ Top-5    │
+│ Tools    │ Skills   │ Memories │
 └──────────┴──────────┴──────────┘
     ↓
 [System Prompt Construction]
     ↓
-[LLM Call - 75% Fewer Tokens]
+[LLM Call]
 ```
 
-**Key Metrics:**
-- Tool search latency: <1ms (HNSW index)
-- Memory search latency: <5ms (pgvector)
-- Token reduction: 75% vs. static tool lists
+**Why this matters:**
+The benefit scales with registry size. With 12 built-in tools, the savings are modest. As the tool registry grows — especially with domain-specific registered tools — retrieving only the 8 most relevant per query keeps the system prompt lean regardless of how large the registry gets.
+
+Latencies on current hardware:
+- Tool search: <1ms (HNSW index, small registry)
+- Memory search: <5ms (pgvector)
+- Cold start: <100ms
 
 ### 2. Compiled Manifest Pattern
 
-Volt uses a **compile-time** approach to skill definition:
+Volt uses a compile-time approach to skill definition:
 
 ```
 SKILL.md (Human-Readable)
@@ -42,43 +47,43 @@ PostgreSQL + pgvector (Runtime)
 Sub-millisecond Vector Search
 ```
 
-**Why Not Runtime Markdown Parsing?**
-- **Brittle State Validation**: Regex-based parsing fails on formatting changes
-- **No Graph Relations**: Markdown can't enforce foreign key constraints
-- **MCP Mismatch**: MCP uses JSON Schema, not plain text
+**Why not parse Markdown at runtime?**
+- Regex-based frontmatter parsing is brittle across formatting variations
+- Markdown has no relational structure — can't enforce foreign key constraints between skills and tools
+- MCP expects JSON Schema; Markdown needs a compilation step regardless
 
-**The Volt Solution:**
-- Author in Markdown (developer-friendly)
-- Compile to relational tables (runtime-optimized)
-- Query via HNSW index (sub-millisecond)
+**The approach:**
+- Author in Markdown (developer-friendly, diffable)
+- Compile to relational tables at provision time
+- Query via HNSW index at runtime
 
 ### 3. Multi-Agent Orchestration
 
-Three patterns built into the core:
+Three patterns are implemented in the core:
 
-| Pattern | Use Case | Example |
-|---------|----------|---------|
-| **Parallel** | Independent tasks | Analyze code + Review security |
-| **Pipeline** | Sequential chaining | Extract → Transform → Load |
+| Pattern      | Use Case            | Example                        |
+| ------------ | ------------------- | ------------------------------ |
+| **Parallel** | Independent tasks   | Analyze code + Review security |
+| **Pipeline** | Sequential chaining | Extract → Transform → Load     |
 | **Supervisor** | Dynamic delegation | One agent delegates to workers |
 
 ### 4. Permission System
 
-Destructive operations require human approval:
+Destructive operations require human approval before execution:
 
 ```
 [approval] tool 'bash({"command": "rm -rf /tmp/*"})' requires approval.
 Proceed? [y/N] y
 ```
 
-**Protected Tools:**
-- `bash` - Shell command execution
-- `write` - File modification
-- `edit` - In-place file editing
+**Protected tools:**
+- `bash` — Shell command execution
+- `write` — File modification
+- `edit` — In-place file editing
 
 ### 5. Memory as Temporal RAG
 
-All conversations are stored in PostgreSQL with pgvector:
+Conversations are stored in PostgreSQL with pgvector, enabling semantic retrieval of past context:
 
 ```sql
 CREATE TABLE memories (
@@ -93,17 +98,14 @@ CREATE TABLE memories (
 CREATE INDEX ON memories USING hnsw (embedding vector_cosine_ops);
 ```
 
-**Use Cases:**
-- Long-running task context
-- Cross-session knowledge
-- Personalized agent behavior
+Useful for long-running tasks and cross-session knowledge.
 
 ## Database Schema
 
 ### Core Tables
 
 ```sql
--- Tools (registry and builtin)
+-- Tools (built-in and registered)
 CREATE TABLE agent_tools (
     id SERIAL PRIMARY KEY,
     tool_name VARCHAR(255) UNIQUE,
@@ -148,7 +150,7 @@ CREATE TABLE tool_executions (
 ### Indexes
 
 ```sql
--- HNSW for sub-millisecond vector search
+-- HNSW for vector search
 CREATE INDEX ON agent_tools USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON skills USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON memories USING hnsw (embedding vector_cosine_ops);
@@ -163,29 +165,28 @@ CREATE INDEX ON memories(kind);
 
 ### Built-in Tools
 
-| Tool | Permission | Description |
-|------|------------|-------------|
-| `read` | Allow | Read file contents |
-| `write` | Prompt | Write to file |
-| `edit` | Prompt | Modify file in-place |
-| `bash` | Prompt | Execute shell command |
-| `glob` | Allow | Find files by pattern |
-| `grep` | Allow | Search file contents |
-| `web_fetch` | Allow | Fetch URL contents |
-| `memory_append` | Allow | Store in memory |
-| `todo_add` | Allow | Add to task list |
-| `delegate` | Allow | Spawn sub-agent |
-| `run_workflow` | Allow | Execute multi-agent flow |
+| Tool            | Permission | Description              |
+| --------------- | ---------- | ------------------------ |
+| `read`          | Allow      | Read file contents       |
+| `write`         | Prompt     | Write to file            |
+| `edit`          | Prompt     | Modify file in-place     |
+| `bash`          | Prompt     | Execute shell command    |
+| `glob`          | Allow      | Find files by pattern    |
+| `grep`          | Allow      | Search file contents     |
+| `web_fetch`     | Allow      | Fetch URL contents       |
+| `memory_append` | Allow      | Store in memory          |
+| `todo_add`      | Allow      | Add to task list         |
+| `delegate`      | Allow      | Spawn sub-agent          |
+| `run_workflow`  | Allow      | Execute multi-agent flow |
 
 ### Dynamic Tool Selection
 
-At runtime, the agent:
-1. Embeds the current query context
-2. Searches `agent_tools` via pgvector
-3. Returns top-8 most similar tools
-4. Always includes fallback tools (`read`, `glob`, `grep`, `web_fetch`)
+At runtime:
+1. Embed the current query context
+2. Search `agent_tools` via pgvector cosine similarity
+3. Return top-8 most similar tools
+4. Always include fallback tools (`read`, `glob`, `grep`, `web_fetch`) regardless of similarity score
 
-**Code Flow:**
 ```rust
 let query_embedding = embedder.embed(&context_query).await?;
 let tools = tools.search_tools(&query_embedding, 8, &["read", "glob", "grep", "web_fetch"]).await;
@@ -195,7 +196,7 @@ let tools = tools.search_tools(&query_embedding, 8, &["read", "glob", "grep", "w
 
 ### SKILL.md Format
 
-```markdown
+```yaml
 ---
 name: "github_pr_reviewer"
 version: "1.0.0"
@@ -217,7 +218,7 @@ Detailed description...
 volt provision-skill --path ./examples/github-pr-reviewer/SKILL.md
 ```
 
-**Steps:**
+Steps:
 1. Parse frontmatter (YAML)
 2. Extract description for embedding
 3. Generate 1024-dim vector via embedding model
@@ -240,25 +241,25 @@ let skills = skill_registry.search(&context_embedding, 3).await;
 async fn run(&self, input: &str) -> Result<String> {
     // 1. Build context query
     let context = build_context(&self.messages, input);
-    
+
     // 2. Embed context
     let embedding = embedder.embed(&context).await?;
-    
+
     // 3. Search tools (dynamic)
     let tools = tools.search(&embedding, 8, &fallback).await;
-    
+
     // 4. Search skills (context priming)
     let skills = skills.search(&embedding, 3).await;
-    
+
     // 5. Search memories (temporal RAG)
     let memories = memories.search(&embedding, 5).await;
-    
+
     // 6. Construct system prompt
     let prompt = build_prompt(&tools, &skills, &memories);
-    
+
     // 7. Call LLM
     let response = llm.complete(&prompt).await?;
-    
+
     // 8. Execute tool calls (with permission checks)
     for tool_call in response.tool_calls {
         if needs_approval(&tool_call) {
@@ -266,25 +267,26 @@ async fn run(&self, input: &str) -> Result<String> {
         }
         execute_tool(&tool_call)?;
     }
-    
+
     // 9. Store memory
     memories.store(&response.content).await?;
-    
+
     Ok(response.content)
 }
 ```
 
-## Performance Characteristics
+## Performance
 
-| Metric | Value | Measurement |
-|--------|-------|-------------|
-| Binary Size | 18MB | Statically linked Rust |
-| Cold Start | <100ms | No runtime dependencies |
-| Tool Search | <1ms | HNSW index (N=1000) |
-| Skill Search | <1ms | HNSW index (N=100) |
-| Memory Search | <5ms | HNSW index (N=10,000) |
-| Token Reduction | 75% | 12 tools vs. top-8 |
-| Max Context | 128K | GPT-4 / Claude-3.5 |
+Current benchmarks. These will be updated as the registry grows and production workloads are characterized.
+
+| Metric          | Value                   | Notes                         |
+| --------------- | ----------------------- | ----------------------------- |
+| Binary Size     | ~18MB                   | Statically linked Rust        |
+| Cold Start      | <100ms                  | No interpreter startup        |
+| Tool Search     | <1ms                    | HNSW, small registry          |
+| Skill Search    | <1ms                    | HNSW, small registry          |
+| Memory Search   | <5ms                    | HNSW, up to ~10K entries      |
+| Context Overhead | Reduced vs. static lists | Depends on registry size and tool description verbosity |
 
 ## Security Model
 
@@ -299,15 +301,18 @@ enum PermissionLevel {
 
 ### Sandboxing
 
-Provisioned tools run in isolated environments:
-- **Environment Clearing**: `env_clear()`
+Provisioned tools run in isolated subprocesses:
+- **Environment clearing**: `env_clear()` before execution
 - **Explicit PATH**: Only `/usr/bin:/bin`
-- **Timeout**: 5s default
-- **Output Truncation**: 256KB max
+- **Timeout**: 5s default, configurable
+- **Output truncation**: 256KB max stdout
+
+Note: Current sandboxing uses subprocess isolation. More robust microVM-based isolation (gVisor, Firecracker) is on the roadmap.
 
 ### Audit Logging
 
 Every tool execution is recorded:
+
 ```sql
 INSERT INTO tool_executions (
     tool_name, input, output, status, duration_ms, execution_id
@@ -319,14 +324,13 @@ INSERT INTO tool_executions (
 ### Requirements
 
 - **Rust**: 1.95+
-- **PostgreSQL**: 16+ with `pgvector`
-- **LLM Provider**: Ollama, NVIDIA NIM, or OpenAI-compatible
-- **RAM**: 4GB min, 16GB recommended
+- **PostgreSQL**: 16+ with `pgvector` extension
+- **LLM Provider**: Ollama, NVIDIA NIM, or any OpenAI-compatible endpoint
+- **RAM**: 4GB minimum; 16GB recommended when running local models alongside the agent
 
 ### Configuration
 
 ```bash
-# Environment variables
 export LLM_MODEL="phi4-mini:3.8b"
 export EMBEDDING_MODEL="mxbai-embed-large"
 export DATABASE_URL="postgres://volt:volt@localhost:5432/volt"
@@ -339,60 +343,33 @@ See `.github/workflows/ci.yml` for:
 - Schema migration
 - Test suite
 - Binary size check
-- Security audit
+- Security audit (`cargo audit`)
 
-## Future Roadmap
+## Roadmap
 
-### Q1 2026
+### v0.1 (current)
+
 - [x] Dynamic RAG Loop (Tools + Skills + Memories)
 - [x] Compiled Manifest Pattern
 - [x] Multi-Agent Orchestration
 - [x] Permission System
 - [x] TUI with cursor editing
 
-### Q2 2026
-- [ ] IDE Extensions (VS Code, JetBrains)
-- [ ] Web Dashboard
-- [ ] Git-aware Diff Visualization
-- [ ] Multi-modal Support (Images, PDFs)
+### Near-term
 
-### Q3 2026
-- [ ] Plugin System for Custom Tools
-- [ ] Distributed Agent Federation
-- [ ] Real-time Collaboration
-- [ ] Enterprise RBAC
+- [ ] Binary releases (Linux/macOS)
+- [ ] Improved sandbox isolation
+- [ ] Local skill registry for sharing compiled manifests
+- [ ] VS Code extension
 
-## Comparison
+### Later
 
-| Feature | Volt | OpenCode | Claude Code | Aider |
-|---------|------|----------|-------------|-------|
-| Runtime | Rust (18MB) | TypeScript | Python | Python |
-| Tool RAG | ✅ | ❌ | ❌ | ❌ |
-| Skill RAG | ✅ | ❌ | ❌ | ❌ |
-| Memory RAG | ✅ | ❌ | ❌ | ❌ |
-| Multi-Agent | ✅ | ❌ | ❌ | ❌ |
-| Permission System | ✅ | ❌ | ❌ | ❌ |
-| Compiled Manifest | ✅ | ❌ | ❌ | ❌ |
-| IDE Integration | ❌ | ✅ | ✅ | ❌ |
-| Git Awareness | ❌ | ✅ | ✅ | ✅ |
-
-## Conclusion
-
-Volt represents a **paradigm shift** in agent architecture:
-
-1. **From Static to Dynamic**: Tools are no longer hardcoded; they're retrieved via semantic search.
-2. **From Runtime to Compile-Time**: Skills are compiled to optimized database entities, not parsed at runtime.
-3. **From Single to Multi-Agent**: Orchestration patterns enable complex workflows.
-4. **From Unrestricted to Permissioned**: Human-in-the-loop approval for destructive operations.
-
-The result is a **production-grade** system that is:
-- **Fast**: Sub-millisecond vector search
-- **Efficient**: 75% fewer tokens per call
-- **Secure**: Permission gating + sandboxing
-- **Extensible**: Compiled manifest pattern
-
-**Volt is ready for production.**
+- [ ] gVisor / Firecracker integration for stronger tool sandboxing
+- [ ] Web dashboard for agent monitoring and skill management
+- [ ] Git-aware diff visualization for code review workflows
+- [ ] Multi-modal input (images, PDFs via vision models)
+- [ ] Distributed agent coordination
 
 ---
 
-*Built with ❤️ in Rust*
+*Built in Rust by [Setique Labs, Inc.](https://setique.com)*

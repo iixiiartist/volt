@@ -1,0 +1,107 @@
+use std::path::Path;
+use std::sync::OnceLock;
+
+static PROJECT_ROOT: OnceLock<Option<String>> = OnceLock::new();
+
+fn find_project_root() -> Option<String> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join("Cargo.toml").exists() {
+            return Some(dir.to_string_lossy().to_string());
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn project_root() -> Option<&'static String> {
+    PROJECT_ROOT.get_or_init(|| find_project_root()).as_ref()
+}
+
+pub fn sanitize_path(path: &str) -> Result<String, String> {
+    let root = match project_root() {
+        Some(r) => Path::new(r).canonicalize().map_err(|e| format!("project root canonicalize: {}", e))?,
+        None => return Err("no project root found".into()),
+    };
+
+    let p = Path::new(path);
+    let normalized = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    };
+
+    let canonical = normalized.canonicalize().map_err(|_| format!("path does not exist: {}", path))?;
+
+    if canonical.starts_with(&root) {
+        Ok(canonical.to_string_lossy().to_string())
+    } else {
+        Err(format!("path '{}' escapes project root", path))
+    }
+}
+
+pub fn resolve_path(path: &str) -> String {
+    if let Ok(safe) = sanitize_path(path) {
+        return safe;
+    }
+    let root = match project_root() {
+        Some(r) => r,
+        None => return path.to_string(),
+    };
+    let candidate = Path::new(&root).join(path.trim_start_matches('/').trim_start_matches('\\'));
+    if let Ok(canonical) = candidate.canonicalize() {
+        if canonical.starts_with(root) {
+            return canonical.to_string_lossy().to_string();
+        }
+    }
+    let components: Vec<&str> = path.split(&['/', '\\'][..]).filter(|s| !s.is_empty()).collect();
+    for i in (1..=components.len()).rev() {
+        let suffix = components[components.len()-i..].join("/");
+        let candidate = Path::new(&root).join(&suffix);
+        if let Ok(canonical) = candidate.canonicalize() {
+            if canonical.starts_with(root) {
+                return canonical.to_string_lossy().to_string();
+            }
+        }
+    }
+    path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_path_traversal_rejected() {
+        let p = sanitize_path("../../../etc/passwd");
+        assert!(p.is_err(), "path traversal should be rejected");
+    }
+
+    #[test]
+    fn test_sanitize_path_nonexistent_rejected() {
+        let p = sanitize_path("/nonexistent/path/file.txt");
+        assert!(p.is_err(), "nonexistent path should be rejected");
+    }
+
+    #[test]
+    fn test_sanitize_path_src_exists() {
+        let p = sanitize_path("src/lib.rs");
+        assert!(p.is_ok(), "src/lib.rs should be accessible: {:?}", p);
+        let path = p.unwrap();
+        assert!(path.ends_with("src\\lib.rs") || path.ends_with("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_sanitize_path_absolute_project_path() {
+        let root = project_root().cloned().unwrap();
+        let p = sanitize_path(&format!("{}/src/lib.rs", root));
+        assert!(p.is_ok(), "absolute project path should be OK");
+    }
+
+    #[test]
+    fn test_resolve_path_finds_src_lib() {
+        let p = resolve_path("src/lib.rs");
+        assert!(p.contains("lib.rs"), "resolve should find lib.rs: {}", p);
+    }
+}

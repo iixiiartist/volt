@@ -1,7 +1,7 @@
 use crate::embedding::EmbeddingProvider;
 use crate::models::SandboxPolicy;
 use std::env;
-use std::path::Path;
+use std::io::Write;
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct ProjectConfig {
@@ -41,12 +41,256 @@ pub struct SandboxConfigSection {
 }
 
 pub fn load_project_config() -> Option<ProjectConfig> {
-    let path = Path::new(".volt").join("config.toml");
+    let path = project_config_path();
     if !path.exists() {
         return None;
     }
     let content = std::fs::read_to_string(&path).ok()?;
-    toml::from_str(&content).ok()
+            toml::from_str(&content).map_err(|e| {
+                eprintln!("[config] warning: invalid .volt/config.toml: {}", e);
+                e
+            }).ok()
+}
+
+pub fn project_config_path() -> std::path::PathBuf {
+    std::path::Path::new(".volt").join("config.toml")
+}
+
+/// Prompt the user for configuration if none exists.
+/// Returns true if a config file was written.
+pub fn first_run_wizard() -> bool {
+        // Skip if config already exists
+    if project_config_path().exists() {
+        return false;
+    }
+
+    // Skip if essential env vars are already set
+    let has_llm = std::env::var("LLM_MODEL").is_ok()
+        || std::env::var("LLM_BASE_URL").is_ok()
+        || std::env::var("LLM_API_KEY").is_ok()
+        || std::env::var("ANTHROPIC_API_KEY").is_ok()
+        || std::env::var("OPENAI_API_KEY").is_ok()
+        || std::env::var("GROQ_API_KEY").is_ok();
+    let has_db = std::env::var("DATABASE_URL").is_ok();
+    if has_llm && has_db {
+        return false;
+    }
+
+    // Skip if not a TTY (non-interactive)
+    #[cfg(not(test))]
+    {
+        use crossterm::tty::IsTty;
+        if !std::io::stdin().is_tty() {
+            return false;
+        }
+    }
+
+    println!("╔══════════════════════════════════════════════════╗");
+    println!("║     Welcome to Volt — First-Time Setup          ║");
+    println!("╚══════════════════════════════════════════════════╝");
+    println!();
+    println!("No configuration found. Let's get you set up.");
+    println!();
+
+    // ── LLM Provider ──────────────────────────────────────────
+    println!("Which LLM provider would you like to use?");
+    println!("  1) Ollama (local, free) — requires Ollama running on your machine");
+    println!("  2) Groq — fast cloud API (free tier available, needs GROQ_API_KEY)");
+    println!("  3) OpenAI — needs OPENAI_API_KEY");
+    println!("  4) Anthropic (Claude) — needs ANTHROPIC_API_KEY");
+    println!("  5) NVIDIA NIM — needs NVIDIA_API_KEY or LLM_API_KEY");
+    print!("Choice [1]: ");
+    std::io::stdout().flush().ok();
+    let mut choice = String::new();
+    std::io::stdin().read_line(&mut choice).ok();
+    let choice = choice.trim();
+
+    let (model, base_url, api_key_env, provider, api_key_name) = match choice {
+        "2" => {
+            println!();
+            print!("Groq model [llama-3.1-8b-instant]: ");
+            std::io::stdout().flush().ok();
+            let mut m = String::new();
+            std::io::stdin().read_line(&mut m).ok();
+            let m = if m.trim().is_empty() { "llama-3.1-8b-instant" } else { m.trim() };
+            println!();
+            print!("GROQ_API_KEY: ");
+            std::io::stdout().flush().ok();
+            let mut k = String::new();
+            std::io::stdin().read_line(&mut k).ok();
+            (m.to_string(), "https://api.groq.com/openai/v1".to_string(), Some(k.trim().to_string()), "groq", "GROQ_API_KEY")
+        }
+        "3" => {
+            println!();
+            print!("OpenAI model [gpt-4o]: ");
+            std::io::stdout().flush().ok();
+            let mut m = String::new();
+            std::io::stdin().read_line(&mut m).ok();
+            let m = if m.trim().is_empty() { "gpt-4o" } else { m.trim() };
+            println!();
+            print!("OPENAI_API_KEY: ");
+            std::io::stdout().flush().ok();
+            let mut k = String::new();
+            std::io::stdin().read_line(&mut k).ok();
+            (m.to_string(), "https://api.openai.com/v1".to_string(), Some(k.trim().to_string()), "openai", "OPENAI_API_KEY")
+        }
+        "4" => {
+            println!();
+            print!("Claude model [claude-sonnet-4-5]: ");
+            std::io::stdout().flush().ok();
+            let mut m = String::new();
+            std::io::stdin().read_line(&mut m).ok();
+            let m = if m.trim().is_empty() { "claude-sonnet-4-5" } else { m.trim() };
+            println!();
+            print!("ANTHROPIC_API_KEY: ");
+            std::io::stdout().flush().ok();
+            let mut k = String::new();
+            std::io::stdin().read_line(&mut k).ok();
+            (m.to_string(), "https://api.anthropic.com".to_string(), Some(k.trim().to_string()), "anthropic", "ANTHROPIC_API_KEY")
+        }
+        "5" => {
+            println!();
+            print!("NVIDIA NIM model [nvidia/llama-nemotron-embed-1b-v2]: ");
+            std::io::stdout().flush().ok();
+            let mut m = String::new();
+            std::io::stdin().read_line(&mut m).ok();
+            let m = if m.trim().is_empty() { "nvidia/llama-nemotron-embed-1b-v2" } else { m.trim() };
+            println!();
+            print!("NVIDIA_API_KEY (or LLM_API_KEY): ");
+            std::io::stdout().flush().ok();
+            let mut k = String::new();
+            std::io::stdin().read_line(&mut k).ok();
+            (m.to_string(), "https://integrate.api.nvidia.com/v1".to_string(), Some(k.trim().to_string()), "nvidia", "NVIDIA_API_KEY")
+        }
+        _ => {
+            println!();
+            print!("Ollama model [phi4-mini:3.8b]: ");
+            std::io::stdout().flush().ok();
+            let mut m = String::new();
+            std::io::stdin().read_line(&mut m).ok();
+            let m = if m.trim().is_empty() { "phi4-mini:3.8b" } else { m.trim() };
+            println!();
+            print!("Ollama base URL [http://localhost:11434/v1]: ");
+            std::io::stdout().flush().ok();
+            let mut u = String::new();
+            std::io::stdin().read_line(&mut u).ok();
+            let u = if u.trim().is_empty() { "http://localhost:11434/v1" } else { u.trim() };
+            (m.to_string(), u.to_string(), None, "ollama", "LLM_BASE_URL")
+        }
+    };
+
+    // ── Embedding Provider ────────────────────────────────────
+    println!();
+    println!("Embedding provider (used for skill/memory search):");
+    println!("  1) Ollama (local) — requires embedding model pulled");
+    println!("  2) NVIDIA NIM (cloud, free tier)");
+    print!("Choice [1]: ");
+    std::io::stdout().flush().ok();
+    let mut emb_choice = String::new();
+    std::io::stdin().read_line(&mut emb_choice).ok();
+    let (emb_model, emb_provider, emb_endpoint) = match emb_choice.trim() {
+        "2" => ("nvidia/llama-nemotron-embed-1b-v2".to_string(), "nvidia".to_string(), "https://integrate.api.nvidia.com/v1/embeddings".to_string()),
+        _ => ("mxbai-embed-large".to_string(), "ollama".to_string(), "http://localhost:11434/v1".to_string()),
+    };
+
+    // ── Database ──────────────────────────────────────────────
+    println!();
+    println!("Database URL (Volt needs PostgreSQL 16+ with pgvector).");
+    println!("  • Local install: postgres://volt:volt@localhost:5432/volt");
+    println!("  • Docker Compose: postgres://volt:volt@localhost:5432/volt");
+    println!("  • Cloud: postgres://user:pass@host:5432/db");
+    print!("DATABASE_URL [postgres://volt:volt@localhost:5432/volt]: ");
+    std::io::stdout().flush().ok();
+    let mut db_url = String::new();
+    std::io::stdin().read_line(&mut db_url).ok();
+    let db_url = if db_url.trim().is_empty() { "postgres://volt:volt@localhost:5432/volt" } else { db_url.trim() };
+
+    // ── Write config ──────────────────────────────────────────
+    let config_dir = std::path::Path::new(".volt");
+    if !config_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(config_dir) {
+            eprintln!("Warning: could not create .volt directory: {}", e);
+            return false;
+        }
+    }
+
+    let mut lines = Vec::new();
+
+    // Agent section
+    lines.push("[agent]".to_string());
+    lines.push(format!("model = \"{}\"", model));
+    lines.push(format!("provider = \"{}\"", provider));
+    lines.push("max_iterations = 25".to_string());
+    lines.push("temperature = 0.3".to_string());
+    lines.push(String::new());
+
+    // Embedding section
+    lines.push("[embedding]".to_string());
+    lines.push(format!("model = \"{}\"", emb_model));
+    lines.push(format!("provider = \"{}\"", emb_provider));
+    lines.push(format!("endpoint = \"{}\"", emb_endpoint));
+    lines.push(String::new());
+
+    // Database section
+    lines.push("[database]".to_string());
+    lines.push(format!("url = \"{}\"", db_url));
+    lines.push(String::new());
+
+    let config_content = lines.join("\n");
+
+    match std::fs::write(project_config_path(), &config_content) {
+        Ok(_) => {
+            println!();
+            println!("✓ Configuration written to .volt/config.toml");
+
+            // Write env vars to .env
+            let env_path = std::path::Path::new(".env");
+
+            // API key (if provided)
+            if let Some(key) = api_key_env {
+                let entry = format!("{}={}\n", api_key_name, key);
+                if !env_path.exists() {
+                    if std::fs::write(env_path, &entry).is_ok() {
+                        println!("✓ {} saved to .env", api_key_name);
+                    }
+                } else {
+                    let existing = std::fs::read_to_string(env_path).unwrap_or_default();
+                    if !existing.contains(api_key_name) {
+                        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(env_path) {
+                            use std::io::Write;
+                            let _ = writeln!(f, "{}={}", api_key_name, key);
+                            println!("✓ {} appended to .env", api_key_name);
+                        }
+                    }
+                }
+            }
+
+            // LLM_BASE_URL (for Ollama, when a custom base URL was provided)
+            if provider == "ollama" && base_url != "http://localhost:11434/v1" {
+                let entry = format!("LLM_BASE_URL={}\n", base_url);
+                if !env_path.exists() {
+                    let _ = std::fs::write(env_path, &entry);
+                } else {
+                    let existing = std::fs::read_to_string(env_path).unwrap_or_default();
+                    if !existing.contains("LLM_BASE_URL") {
+                        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(env_path) {
+                            use std::io::Write;
+                            let _ = writeln!(f, "LLM_BASE_URL={}", base_url);
+                        }
+                    }
+                }
+            }
+
+            println!();
+            println!("Run `volt init-db` to initialize the database schema.");
+            println!("Run `volt agent-chat` to start an interactive session.");
+            true
+        }
+        Err(e) => {
+            eprintln!("Warning: could not write config: {}", e);
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +311,7 @@ impl Settings {
 
         let database_url = env::var("DATABASE_URL").ok()
             .or_else(|| project.as_ref().and_then(|p| p.database.as_ref()).and_then(|d| d.url.clone()))
-            .unwrap_or_else(|| "postgres://volt:volt@localhost:5432/volt".to_string());
+            .ok_or_else(|| anyhow::anyhow!("DATABASE_URL must be set (e.g. postgres://user:pass@host/db)"))?;
         let registry_base_url = env::var("VOLT_REGISTRY_BASE_URL")
             .unwrap_or_else(|_| "https://registry.voltagents.com/v1".to_string());
         let registry_token = env::var("VOLT_REGISTRY_TOKEN").ok().filter(|v| !v.is_empty());
