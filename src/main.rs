@@ -131,6 +131,41 @@ enum Commands {
         #[arg(long)]
         path: PathBuf,
     },
+
+    /// List skills available in the remote catalog.
+    ListCatalogSkills {
+        #[arg(long)]
+        catalog_url: Option<String>,
+    },
+
+    /// Search for skills in the remote catalog.
+    SearchCatalogSkills {
+        #[arg(long)]
+        query: String,
+        #[arg(long)]
+        catalog_url: Option<String>,
+    },
+
+    /// Install a skill from the catalog into the database.
+    InstallSkill {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        catalog_url: Option<String>,
+    },
+
+    /// Import a skill from an external file (CLAUDE.md, .cursorrules, copilot-instructions.md, or plain markdown) into Volt's RAG.
+    ImportSkill {
+        /// Path to the external skill file
+        #[arg(long)]
+        path: PathBuf,
+        /// Override source format: auto | claude | cursor | copilot | markdown
+        #[arg(long, default_value = "auto")]
+        format: String,
+        /// Override the skill name (default: derived from filename)
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -139,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+    volt::config::first_run_wizard();
     let settings = Settings::from_env()?;
 
     match cli.command {
@@ -161,12 +197,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let manifest = load_manifest(&manifest).await?;
             let pool = db::connect(&settings.database_url).await?;
-            let embedder = EmbeddingClient::with_provider(
-                settings.embedding_api_key.clone(),
-                settings.embedding_model.clone(),
-                settings.embedding_provider.clone(),
-                settings.embedding_endpoint.clone(),
-            );
+            let embedder = EmbeddingClient::new_smart().await;
             let result =
                 provision_manifest(&pool, &embedder, manifest, marketplace_verified).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -184,12 +215,7 @@ async fn main() -> anyhow::Result<()> {
                 auth_token: auth_token.or(settings.registry_token),
             };
             let manifest = registry.fetch_manifest(&options).await?;
-            let embedder = EmbeddingClient::with_provider(
-                settings.embedding_api_key.clone(),
-                settings.embedding_model.clone(),
-                settings.embedding_provider.clone(),
-                settings.embedding_endpoint.clone(),
-            );
+            let embedder = EmbeddingClient::new_smart().await;
             let result = provision_manifest(&pool, &embedder, manifest, true).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
@@ -298,12 +324,7 @@ async fn main() -> anyhow::Result<()> {
                 c.cancel();
             });
 
-            let embedder = EmbeddingClient::with_provider(
-                settings.embedding_api_key.clone(),
-                settings.embedding_model.clone(),
-                settings.embedding_provider.clone(),
-                settings.embedding_endpoint.clone(),
-            );
+            let embedder = EmbeddingClient::new_smart().await;
             let tools = setup_tools(Some(&embedder)).await;
             let config = AgentConfig {
                 name: "volt-agent".into(),
@@ -379,12 +400,7 @@ async fn main() -> anyhow::Result<()> {
                     print!("{}", token);
                 }));
             if let Ok(pool) = db::connect(&settings.database_url).await {
-                let embedder = EmbeddingClient::with_provider(
-                    settings.embedding_api_key.clone(),
-                    settings.embedding_model.clone(),
-                    settings.embedding_provider.clone(),
-                    settings.embedding_endpoint.clone(),
-                );
+                let embedder = EmbeddingClient::new_smart().await;
                 agent = agent.with_memory(pool, embedder);
             }
 
@@ -501,12 +517,7 @@ async fn main() -> anyhow::Result<()> {
             };
             let mut agent = Agent::new(config, provider, tools);
             if let Ok(pool) = db::connect(&settings.database_url).await {
-                let embedder = EmbeddingClient::with_provider(
-                    settings.embedding_api_key.clone(),
-                    settings.embedding_model.clone(),
-                    settings.embedding_provider.clone(),
-                    settings.embedding_endpoint.clone(),
-                );
+                let embedder = EmbeddingClient::new_smart().await;
                 agent = agent.with_memory(pool, embedder);
             }
 
@@ -614,16 +625,122 @@ async fn main() -> anyhow::Result<()> {
             server.serve_stdio().await?;
         }
         Commands::ProvisionSkill { path } => {
-            let embedder = EmbeddingClient::with_provider(
-                settings.embedding_api_key.clone(),
-                settings.embedding_model.clone(),
-                settings.embedding_provider.clone(),
-                settings.embedding_endpoint.clone(),
-            );
+            let embedder = EmbeddingClient::new_smart().await;
             let pool = db::connect(&settings.database_url).await?;
             let registry = volt::skills::SkillRegistry::new(Some(pool), Some(embedder.clone()));
             registry.compile_skill(&path, &embedder).await?;
             println!("Skill compiled from {:?} and stored in database.", path);
+        }
+        Commands::ListCatalogSkills { catalog_url } => {
+            match volt::skills::catalog::fetch_catalog(catalog_url.as_deref()).await {
+                Ok(catalog) => {
+                    println!("Available skills ({}):", catalog.skills.len());
+                    for skill in volt::skills::catalog::list_catalog(&catalog) {
+                        println!("  {} v{} — {}", skill.name, skill.version, skill.description);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to fetch catalog: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::SearchCatalogSkills { query, catalog_url } => {
+            match volt::skills::catalog::fetch_catalog(catalog_url.as_deref()).await {
+                Ok(catalog) => {
+                    let results = volt::skills::catalog::search_catalog(&catalog, &query);
+                    if results.is_empty() {
+                        println!("No skills found matching '{}'", query);
+                    } else {
+                        println!("Skills matching '{}' ({}):", query, results.len());
+                        for skill in results {
+                            println!("  {} v{} — {}", skill.name, skill.version, skill.description);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to fetch catalog: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::InstallSkill { name, catalog_url } => {
+            let embedder = EmbeddingClient::new_smart().await;
+            let pool = db::connect(&settings.database_url).await?;
+            match volt::skills::catalog::fetch_catalog(catalog_url.as_deref()).await {
+                Ok(catalog) => {
+                    match volt::skills::catalog::install_skill(&catalog, &name, &pool, &embedder).await {
+                        Ok(_) => println!("✓ Skill '{}' installed successfully.", name),
+                        Err(e) => {
+                            eprintln!("Failed to install skill '{}': {}", name, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to fetch catalog: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::ImportSkill { path, format, name } => {
+            use volt::skills::importer;
+
+            if !path.exists() {
+                eprintln!("File not found: {:?}", path);
+                std::process::exit(1);
+            }
+
+            let content = match tokio::fs::read_to_string(&path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to read {:?}: {}", path, e);
+                    std::process::exit(1);
+                }
+            };
+
+            let source_fmt = match format.as_str() {
+                "claude" => importer::SourceFormat::Claude,
+                "cursor" => importer::SourceFormat::Cursor,
+                "copilot" => importer::SourceFormat::Copilot,
+                "opencode" => importer::SourceFormat::OpenCode,
+                "markdown" => importer::SourceFormat::Markdown,
+                _ => importer::detect_format(&path, &content),
+            };
+
+            if source_fmt == importer::SourceFormat::Volt {
+                println!("✓ File is already a native Volt SKILL.md. Use `volt provision-skill --path {:?}` instead.", path);
+                return Ok(());
+            }
+
+            let label = importer::format_label(&source_fmt);
+            println!("Detected format: {}", label);
+
+            let converted = importer::convert_to_volt_skill(&path, &content, &source_fmt, name.as_deref());
+
+            // Write to temp file and compile
+            let tmp_dir = std::env::temp_dir().join(format!("volt-import-{}", std::process::id()));
+            std::fs::create_dir_all(&tmp_dir).ok();
+            let tmp_path = tmp_dir.join("SKILL.md");
+            std::fs::write(&tmp_path, &converted)?;
+
+            let embedder = EmbeddingClient::new_smart().await;
+            let pool = db::connect(&settings.database_url).await?;
+            let registry = volt::skills::SkillRegistry::new(Some(pool), Some(embedder.clone()));
+
+            match registry.compile_skill(&tmp_path, &embedder).await {
+                Ok(_) => {
+                    let manifest = volt::skills::parse_skill_manifest(&tmp_path).ok();
+                    let skill_name = manifest.as_ref().map(|m| m.name.as_str()).unwrap_or("unknown");
+                    println!("✓ Imported from {} as skill '{}' with RAG embedding.", label, skill_name);
+                }
+                Err(e) => {
+                    eprintln!("Failed to compile imported skill: {}", e);
+                    std::process::exit(1);
+                }
+            }
+
+            std::fs::remove_dir_all(&tmp_dir).ok();
         }
     }
 

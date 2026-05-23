@@ -1,3 +1,6 @@
+pub mod catalog;
+pub mod importer;
+
 use crate::db::{self, SkillEntry};
 use crate::embedding::EmbeddingClient;
 use sqlx::PgPool;

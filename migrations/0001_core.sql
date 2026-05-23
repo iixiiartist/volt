@@ -71,6 +71,22 @@ CREATE INDEX IF NOT EXISTS memories_kind_idx ON memories(kind);
 CREATE INDEX IF NOT EXISTS memories_embedding_idx
   ON memories USING hnsw (embedding vector_cosine_ops);
 
+CREATE TABLE IF NOT EXISTS skills (
+  id UUID PRIMARY KEY,
+  name VARCHAR(255) UNIQUE NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  version VARCHAR(50) NOT NULL DEFAULT '1.0.0',
+  content TEXT NOT NULL DEFAULT '',
+  embedding vector(1024),
+  mcp_servers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_path VARCHAR(1024),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS skills_name_idx ON skills(name);
+CREATE INDEX IF NOT EXISTS skills_embedding_idx
+  ON skills USING hnsw (embedding vector_cosine_ops);
+
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "base_url": "https://raw.githubusercontent.com/iixiiartist/volt/main",
+  "skills": [
+    {
+      "name": "github-pr-reviewer",
+      "description": "Automated code review with security pattern scanning, style checks, and structured review comments",
+      "version": "1.0.0",
+      "author": "Volt",
+      "path": "examples/github-pr-reviewer/SKILL.md"
+    },
+    {
+      "name": "system-diagnostics",
+      "description": "Local system health checks: CPU, memory, disk, network diagnostics and reporting",
+      "version": "1.0.0",
+      "author": "Volt",
+      "path": "skills/catalog/system-diagnostics/SKILL.md"
+    },
+    {
+      "name": "data-pipeline",
+      "description": "ETL data pipeline with extraction, transformation, loading, error handling, and validation",
+      "version": "1.0.0",
+      "author": "Volt",
+      "path": "skills/catalog/data-pipeline/SKILL.md"
+    },
+    {
+      "name": "dependency-audit",
+      "description": "Audit project dependencies for security vulnerabilities, outdated packages, and license compliance",
+      "version": "1.0.0",
+      "author": "Volt",
+      "path": "skills/catalog/dependency-audit/SKILL.md"
+    },
+    {
+      "name": "documentation-generator",
+      "description": "Generate project documentation from source code: API docs, README, architecture diagrams",
+      "version": "1.0.0",
+      "author": "Volt",
+      "path": "skills/catalog/documentation-generator/SKILL.md"
+    }
+  ]
+}
