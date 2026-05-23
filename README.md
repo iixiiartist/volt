@@ -1,32 +1,35 @@
 # Volt - The Autonomous Systems Engine
 
-> **Production-grade, locally-runnable AI agent framework with dynamic RAG, multi-agent orchestration, and compiled manifest pattern.**
+> **Locally-runnable AI agent framework with dynamic RAG, multi-agent orchestration, and compiled manifest pattern. Early development — built in public.**
 
-[![CI](https://github.com/iixiiartist/volt/actions/workflows/ci.yml/badge.svg)](https://github.com/iixiiartist/volt/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
+[![CI](https://github.com/iixiiartist/volt/actions/workflows/ci.yml/badge.svg)](https://github.com/iixiiartist/volt/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
 ## Why Volt?
 
-Volt is not just another AI agent framework. It's a **production-grade Autonomous Systems Engine** built in Rust with:
+Most agent frameworks inject every available tool into every LLM call. Volt takes a different approach — tools, skills, and memories are retrieved dynamically via vector similarity, so the model only sees what's relevant to the current task.
 
-- **Dynamic RAG Loop**: Tools, skills, and memories are retrieved via pgvector cosine similarity — not hardcoded. Up to **75% fewer input tokens** per LLM call.
-- **Compiled Manifest Pattern**: Author skills in Markdown (`SKILL.md`), compile into PostgreSQL with HNSW indexing. Human-friendly authoring, machine-optimized runtime.
+Key design decisions:
+
+- **Dynamic RAG Loop**: Tools, skills, and memories are retrieved via pgvector cosine similarity rather than hardcoded into the system prompt. This reduces context overhead on tool-heavy registries.
+- **Compiled Manifest Pattern**: Author skills in Markdown (`SKILL.md`), compile into PostgreSQL with HNSW indexing. Human-friendly authoring, efficient runtime retrieval.
 - **Multi-Agent Orchestration**: Parallel, pipeline, and supervisor patterns built-in.
-- **Polyglot Execution Sandbox**: Tools written in Python, TypeScript, Bash, or Mojo run in kernel-isolated `unshare` namespaces with `prlimit` boundaries.
-- **Zero Dependencies**: Single 18MB Rust binary. No Python, Node, or Docker required at runtime.
-- **MCP Native**: Full Model Context Protocol support for tool interoperability.
+- **Polyglot Execution Sandbox**: Tools written in Python, TypeScript, Bash, or Mojo run in isolated subprocesses with environment clearing and output limits.
+- **Single Binary**: Rust-compiled, no Python or Node required at runtime. PostgreSQL with pgvector is required for memory and skill storage.
+- **MCP Native**: Model Context Protocol support for tool interoperability.
+
+## Status
+
+Volt is under active development. The core agent loop, dynamic RAG, compiled manifest, and TUI are implemented. Binary releases are not yet published — build from source for now.
 
 ## Quick Start
 
-### Install
+### Build from Source
 
 ```bash
-# Download the binary (Linux/Mac/Windows)
-curl -fsSL https://github.com/iixiiartist/volt/releases/latest/download/volt | sh
-
-# Or build from source
-cargo install volt
+# Prerequisites: Rust 1.95+, PostgreSQL 16+ with pgvector
+git clone https://github.com/iixiiartist/volt.git
+cd volt
+cargo build --release
 ```
 
 ### Run Your First Agent
@@ -76,7 +79,7 @@ volt provision-skill --path ./examples/github-pr-reviewer/SKILL.md
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  LLM Call (Kimi/Claude/GPT) - 75% Fewer Tokens              │
+│  LLM Call (Ollama / Claude / OpenAI-compatible)             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,15 +87,15 @@ volt provision-skill --path ./examples/github-pr-reviewer/SKILL.md
 
 ### Dynamic RAG Loop
 
-Every agent turn performs **semantic search** across three knowledge sources:
+Every agent turn performs semantic search across three knowledge sources:
 
-1. **Tools**: 12+ built-in tools (`read`, `write`, `bash`, `grep`, `glob`, `web_fetch`, etc.) + registry tools. Only the top-8 most relevant are shown to the LLM.
+1. **Tools**: 12+ built-in tools (`read`, `write`, `bash`, `grep`, `glob`, `web_fetch`, etc.) plus registry tools. Only the top-8 most relevant are included in the LLM call.
 2. **Skills**: Compiled from `SKILL.md` files. Context-priming instructions injected as system messages.
-3. **Memories**: Persistent conversation history stored in PostgreSQL with pgvector. Temporal RAG for long-running tasks.
+3. **Memories**: Persistent conversation history stored in PostgreSQL with pgvector. Useful for long-running tasks and cross-session context.
 
 ### Compiled Manifest Pattern
 
-```markdown
+```yaml
 ---
 name: "github_pr_reviewer"
 version: "1.0.0"
@@ -101,7 +104,7 @@ mcp_servers: ["github-api"]
 ---
 # GitHub PR Reviewer
 
-An intelligent agent that performs comprehensive code reviews...
+An agent that performs code reviews...
 
 ## Allowed Tools
 - `read` - Read changed files
@@ -131,7 +134,7 @@ volt workflow --pattern supervisor \
 
 ### Permission System
 
-Destructive tools (`bash`, `write`, `edit`) require **human approval** before execution:
+Destructive tools (`bash`, `write`, `edit`) require human approval before execution:
 
 ```
 [approval] tool 'bash({"command": "rm -rf /tmp/*"})' requires approval.
@@ -141,6 +144,7 @@ Proceed? [y/N] y
 ### TUI Chat
 
 Interactive terminal UI with:
+
 - Cursor-based input editing (left/right arrows, delete)
 - Scrollable message history
 - Real-time streaming output
@@ -148,21 +152,21 @@ Interactive terminal UI with:
 
 ## Installation
 
-### From Source
-
-```bash
-# Prerequisites: Rust 1.95+, PostgreSQL 16+ with pgvector
-git clone https://github.com/iixiiartist/volt.git
-cd volt
-cargo install --path .
-```
-
 ### System Requirements
 
 - **Rust**: 1.95+
-- **PostgreSQL**: 16+ with `pgvector` extension (for memory/skills RAG)
+- **PostgreSQL**: 16+ with `pgvector` extension (required for memory and skill storage)
 - **LLM Provider**: Ollama (local), NVIDIA NIM, or any OpenAI-compatible API
-- **RAM**: 4GB minimum (16GB recommended for local models)
+- **RAM**: 4GB minimum (16GB recommended when running local models)
+
+### Build from Source
+
+```bash
+git clone https://github.com/iixiiartist/volt.git
+cd volt
+cargo build --release
+# Binary at ./target/release/volt
+```
 
 ## Configuration
 
@@ -170,7 +174,7 @@ cargo install --path .
 
 ```bash
 # LLM Configuration
-export LLM_MODEL="phi4-mini:3.8b"           # or "claude-3-5-sonnet"
+export LLM_MODEL="phi4-mini:3.8b"           # or "claude-sonnet-4-5", etc.
 export LLM_BASE_URL="http://localhost:11434/v1"
 export LLM_API_KEY=""                       # Empty for local Ollama
 
@@ -203,9 +207,9 @@ max_stdout_bytes = 262144
 
 ## Examples
 
-See [`examples/`](./examples/) for production-ready skills:
+See [`examples/`](./examples) for reference skills:
 
-- **GitHub PR Reviewer**: Automated code review with security scanning
+- **GitHub PR Reviewer**: Code review with security pattern scanning
 - **System Diagnostics**: Local system health checks
 - **Data Pipeline**: ETL with error handling
 
@@ -227,66 +231,70 @@ cargo clippy -- -D warnings
 
 ## Performance
 
-| Metric | Value |
-|--------|-------|
-| Binary Size | 18MB (statically linked) |
-| Tool Search Latency | <1ms (HNSW index) |
-| Memory Search Latency | <5ms (pgvector) |
-| Token Reduction | 75% vs. static tool list |
-| Cold Start | <100ms |
+These numbers reflect benchmarks on the implemented components. Claims will be updated as the system matures.
+
+| Metric                | Value                          |
+| --------------------- | ------------------------------ |
+| Binary Size           | ~18MB (statically linked)      |
+| Tool Search Latency   | <1ms (HNSW, small registry)    |
+| Memory Search Latency | <5ms (pgvector)                |
+| Context Reduction     | Fewer tools per call vs. static lists (varies by registry size) |
+| Cold Start            | <100ms                         |
 
 ## Security
 
 - **Permission Gating**: Destructive tools require human approval
-- **Sandbox Execution**: Provisioned tools run in isolated environments
-- **Input Validation**: All tool arguments are validated against JSON Schema
-- **No Code Injection**: SKILL.md is compiled, not interpreted at runtime
-- **Audit Logging**: All tool executions are recorded in PostgreSQL
+- **Sandbox Execution**: Provisioned tools run in isolated subprocesses with cleared environments
+- **Input Validation**: Tool arguments validated against JSON Schema
+- **No Runtime Parsing**: SKILL.md is compiled at provision time, not interpreted during execution
+- **Audit Logging**: All tool executions recorded in PostgreSQL
 
 ## Roadmap
 
-### Q1 2026
+### v0.1 (current)
+
 - [x] Dynamic RAG Loop (Tools + Skills + Memories)
 - [x] Compiled Manifest Pattern
-- [x] Multi-Agent Orchestration
+- [x] Multi-Agent Orchestration (parallel, pipeline, supervisor)
 - [x] Permission System
 - [x] TUI with cursor editing
 
-### Q2 2026
-- [ ] **gVisor & Firecracker Integration**: Transitioning local sub-process execution from kernel namespaces to dedicated microVM structures
-- [ ] **The Volt Skill Marketplace**: A decentralized, cryptographic ledger registry for distributing compiled multi-language manifests safely
-- [ ] **Native C-FFI / Mojo Matrix Bridges**: Native bindings for ultra-low latency local tensor math tools without interpreter overhead
-- [ ] **IDE Extensions**: VS Code and JetBrains plugins for in-editor agent assistance
+### Near-term
 
-### Q3 2026
-- [ ] **Distributed Agent Federation**: Asynchronous secure TCP nodes for multi-machine agent coordination
-- [ ] **Web Dashboard**: Real-time agent monitoring and skill management UI
-- [ ] **Git-Aware Diff Visualization**: Contextual code review with semantic diff highlighting
-- [ ] **Multi-modal Support**: Image, PDF, and document understanding via vision models
+- [ ] Binary releases (Linux/macOS)
+- [ ] Improved sandbox isolation
+- [ ] Skill registry — local index for sharing compiled manifests
+- [ ] IDE extensions (VS Code)
+
+### Later
+
+- [ ] Web dashboard for agent monitoring
+- [ ] Git-aware diff visualization in code review flows
+- [ ] Multi-modal support (image, PDF input via vision models)
+- [ ] Distributed agent coordination
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing`)
-3. Commit your changes (`git commit -am 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing`)
-5. Open a Pull Request
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -am 'Add your feature'`)
+4. Push and open a Pull Request
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 ## License
 
-MIT License - see [LICENSE](./LICENSE) for details.
+MIT — see [LICENSE](./LICENSE) for details.
 
-## Acknowledgments
+## Built With
 
-Built with:
-- [Rust](https://www.rust-lang.org) - Performance and safety
-- [pgvector](https://github.com/pgvector/pgvector) - Vector similarity
-- [ratatui](https://ratatui.rs) - TUI framework
-- [tokio](https://tokio.rs) - Async runtime
-- [sqlx](https://github.com/launchbadge/sqlx) - Database access
+- [Rust](https://www.rust-lang.org) — Performance and memory safety
+- [pgvector](https://github.com/pgvector/pgvector) — Vector similarity search
+- [ratatui](https://ratatui.rs) — Terminal UI framework
+- [tokio](https://tokio.rs) — Async runtime
+- [sqlx](https://github.com/launchbadge/sqlx) — Database access
+- [axum](https://github.com/tokio-rs/axum) — HTTP server
 
 ---
 
-**Volt** — The Autonomous Systems Engine. Maintained by [Setique Labs, Inc.](https://volt.setique.com). Built for production, designed for developers.
+**Volt** — The Autonomous Systems Engine. Maintained by [Setique Labs, Inc.](https://setique.com)
