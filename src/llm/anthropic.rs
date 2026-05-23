@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::json;
+use std::sync::Arc;
 
 pub struct AnthropicProvider {
     http: Client,
@@ -16,10 +17,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: String, base_url: Option<String>, name: String) -> Self {
         Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .unwrap_or_default(),
+            http: crate::http_client(300),
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".into()),
             name,
@@ -33,7 +31,7 @@ fn build_messages(request: &LLMRequest) -> (Vec<serde_json::Value>, Option<Strin
 
     for msg in &request.messages {
         if msg.role == "system" {
-            system = Some(msg.content.clone());
+            system = Some(msg.content.as_str().to_string());
             continue;
         }
         if msg.role == "tool" && msg.tool_call_id.is_some() {
@@ -42,13 +40,13 @@ fn build_messages(request: &LLMRequest) -> (Vec<serde_json::Value>, Option<Strin
                 "content": [{
                     "type": "tool_result",
                     "tool_use_id": msg.tool_call_id,
-                    "content": msg.content
+                    "content": msg.content.as_str()
                 }]
             }));
         } else if let Some(tcs) = &msg.tool_calls {
             let mut content: Vec<serde_json::Value> = Vec::new();
             if !msg.content.is_empty() {
-                content.push(json!({"type": "text", "text": msg.content}));
+                content.push(json!({"type": "text", "text": msg.content.as_str()}));
             }
             for tc in tcs {
                 content.push(json!({
@@ -60,7 +58,7 @@ fn build_messages(request: &LLMRequest) -> (Vec<serde_json::Value>, Option<Strin
             }
             messages.push(json!({"role": "assistant", "content": content}));
         } else {
-            messages.push(json!({"role": msg.role, "content": msg.content}));
+            messages.push(json!({"role": msg.role, "content": msg.content.as_str()}));
         }
     }
 
@@ -220,7 +218,7 @@ impl LLMProvider for AnthropicProvider {
         }
 
         Ok(LLMResponse {
-            content: full_content,
+            content: Arc::new(full_content),
             tool_calls: if tool_calls_acc.is_empty() { None } else { Some(tool_calls_acc) },
             finish_reason: stop_reason,
             usage: Some(Usage {
@@ -259,7 +257,7 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
     });
 
     Ok(LLMResponse {
-        content,
+        content: Arc::new(content),
         tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
         finish_reason: resp["stop_reason"].as_str().map(|s| s.to_string()),
         usage,

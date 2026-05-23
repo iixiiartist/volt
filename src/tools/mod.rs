@@ -11,4 +11,4 @@ pub mod memory_tool;
 pub mod delegate;
 pub mod todo_tool;
 pub mod mcp_client;
-pub use registry::ToolRegistry;
+pub use registry::{ToolFn, ToolRegistry};

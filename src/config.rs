@@ -46,7 +46,10 @@ pub fn load_project_config() -> Option<ProjectConfig> {
         return None;
     }
     let content = std::fs::read_to_string(&path).ok()?;
-    toml::from_str(&content).ok()
+            toml::from_str(&content).map_err(|e| {
+                eprintln!("[config] warning: invalid .volt/config.toml: {}", e);
+                e
+            }).ok()
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +70,7 @@ impl Settings {
 
         let database_url = env::var("DATABASE_URL").ok()
             .or_else(|| project.as_ref().and_then(|p| p.database.as_ref()).and_then(|d| d.url.clone()))
-            .unwrap_or_else(|| "postgres://volt:volt@localhost:5432/volt".to_string());
+            .ok_or_else(|| anyhow::anyhow!("DATABASE_URL must be set (e.g. postgres://user:pass@host/db)"))?;
         let registry_base_url = env::var("VOLT_REGISTRY_BASE_URL")
             .unwrap_or_else(|_| "https://registry.voltagents.com/v1".to_string());
         let registry_token = env::var("VOLT_REGISTRY_TOKEN").ok().filter(|v| !v.is_empty());

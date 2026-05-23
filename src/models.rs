@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 // ─── Agent types ──────────────────────────────────────────────
@@ -16,6 +17,8 @@ pub struct AgentConfig {
     pub temperature: f32,
     pub toolsets: Vec<String>,
     pub hidden: bool,
+    #[serde(default)]
+    pub allow_all: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,14 +28,17 @@ pub struct AgentState {
     pub session_id: Uuid,
     pub iteration: u32,
     pub messages: Vec<Message>,
+    pub context_injected: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub allow_session: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
-    pub content: String,
+    pub content: Arc<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_result: Option<String>,
     pub tool_name: Option<String>,
@@ -70,14 +76,14 @@ pub struct LLMRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMMessage {
     pub role: String,
-    pub content: String,
+    pub content: Arc<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMResponse {
-    pub content: String,
+    pub content: Arc<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub finish_reason: Option<String>,
     pub usage: Option<Usage>,
@@ -261,11 +267,11 @@ impl CancelToken {
     }
 
     pub fn cancel(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::SeqCst)
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -297,6 +303,75 @@ impl ModelContext {
     }
 
     pub fn estimate_tokens(text: &str) -> u32 {
-        (text.len() / 4) as u32
+        (text.len() / 3).max(1) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_estimate_tokens_short() {
+        assert_eq!(ModelContext::estimate_tokens("abc"), 1);
+    }
+
+    #[test]
+    fn test_estimate_tokens_long() {
+        let s = "a".repeat(300);
+        assert_eq!(ModelContext::estimate_tokens(&s), 100);
+    }
+
+    #[test]
+    fn test_cancel_token() {
+        let token = CancelToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_token_clone() {
+        let t1 = CancelToken::new();
+        let t2 = t1.clone();
+        assert!(!t1.is_cancelled());
+        assert!(!t2.is_cancelled());
+        t1.cancel();
+        assert!(t2.is_cancelled());
+    }
+
+    #[test]
+    fn test_agent_state_default() {
+        let state = AgentState {
+            id: Uuid::new_v4(),
+            name: "test".into(),
+            session_id: Uuid::new_v4(),
+            iteration: 0,
+            messages: vec![],
+            context_injected: false,
+            allow_session: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        assert_eq!(state.name, "test");
+        assert!(!state.context_injected);
+    }
+
+    #[test]
+    fn test_model_context_claude() {
+        let ctx = ModelContext::for_model("claude-3-5-sonnet");
+        assert_eq!(ctx.max_context_tokens, 200000);
+    }
+
+    #[test]
+    fn test_model_context_gpt4() {
+        let ctx = ModelContext::for_model("gpt-4o");
+        assert_eq!(ctx.max_context_tokens, 128000);
+    }
+
+    #[test]
+    fn test_model_context_default() {
+        let ctx = ModelContext::for_model("unknown-model");
+        assert_eq!(ctx.max_context_tokens, 4096);
     }
 }

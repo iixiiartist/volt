@@ -46,15 +46,19 @@ impl SkillRegistry {
             db::search_skills(pool, query_embedding, limit as i64)
                 .await
                 .unwrap_or_default()
+        } else if let Some(ref embedder) = self.embedder {
+            let mut scored: Vec<(f32, SkillEntry)> = Vec::new();
+            for skill in &self.cache {
+                if let Ok(emb) = embedder.embed_description(&skill.description).await {
+                    let sim = cosine_similarity(query_embedding, &emb);
+                    scored.push((sim, skill.clone()));
+                }
+            }
+            scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(limit);
+            scored.into_iter().map(|(_, s)| s).collect()
         } else {
-            // In-memory fallback: simple cosine similarity
-            self.cache
-                .iter()
-                .filter_map(|_s| {
-                    // Skills don't have embeddings in cache, skip
-                    None
-                })
-                .collect()
+            Vec::new()
         }
     }
 
@@ -160,4 +164,11 @@ pub fn parse_skill_manifest(path: &Path) -> anyhow::Result<SkillManifest> {
         mcp_servers,
         source_path: path.to_str().map(String::from),
     })
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    dot / (norm_a * norm_b).max(f32::EPSILON)
 }

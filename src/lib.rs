@@ -14,3 +14,13 @@ pub mod skills;
 pub mod tools;
 pub mod tui;
 pub mod validation;
+
+#[cfg(any(test, feature = "testutils"))]
+pub mod test_utils;
+
+pub fn http_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .expect("reqwest client build must succeed")
+}

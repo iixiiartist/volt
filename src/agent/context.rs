@@ -1,4 +1,5 @@
 use crate::models::Message;
+use std::sync::Arc;
 
 pub fn compress_context(messages: &[Message], max_messages: usize) -> Vec<Message> {
     if messages.len() <= max_messages {
@@ -10,7 +11,7 @@ pub fn compress_context(messages: &[Message], max_messages: usize) -> Vec<Messag
 
     compressed.push(Message {
         role: "system".into(),
-        content: "[Earlier conversation compressed]".into(),
+        content: Arc::new("[Earlier conversation compressed]".to_string()),
         tool_calls: None,
         tool_result: None,
         tool_name: None,

@@ -2,7 +2,7 @@ use crate::models::ToolResult;
 use crate::tools::path::resolve_path;
 use std::time::Instant;
 
-pub fn write_file(path: &str, content: &str) -> ToolResult {
+pub async fn write_file(path: &str, content: &str) -> ToolResult {
     let path = resolve_path(path);
     let started = Instant::now();
     match std::fs::write(&path, content) {

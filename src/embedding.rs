@@ -33,10 +33,7 @@ impl EmbeddingClient {
         endpoint: impl Into<String>,
     ) -> Self {
         Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_default(),
+            http: crate::http_client(30),
             api_key,
             model: model.into(),
             provider,

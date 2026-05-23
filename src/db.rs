@@ -141,16 +141,22 @@ pub async fn get_tool_by_name(pool: &PgPool, tool_name: &str) -> anyhow::Result<
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|r| AgentTool {
-        id: r.try_get("id").unwrap(),
-        tool_name: r.try_get("tool_name").unwrap(),
-        description: r.try_get("description").unwrap(),
-        language: r.try_get("language").unwrap(),
-        is_marketplace_verified: r.try_get("is_marketplace_verified").unwrap(),
-        source_sha256: r.try_get("source_sha256").unwrap(),
-        created_at: r.try_get("created_at").unwrap(),
-        updated_at: r.try_get("updated_at").unwrap(),
-    }))
+    match row {
+        Some(r) => {
+            let tool = AgentTool {
+                id: r.try_get("id").map_err(|e| anyhow::anyhow!("db: id: {}", e))?,
+                tool_name: r.try_get("tool_name").map_err(|e| anyhow::anyhow!("db: tool_name: {}", e))?,
+                description: r.try_get("description").map_err(|e| anyhow::anyhow!("db: description: {}", e))?,
+                language: r.try_get("language").map_err(|e| anyhow::anyhow!("db: language: {}", e))?,
+                is_marketplace_verified: r.try_get("is_marketplace_verified").map_err(|e| anyhow::anyhow!("db: is_marketplace_verified: {}", e))?,
+                source_sha256: r.try_get("source_sha256").map_err(|e| anyhow::anyhow!("db: source_sha256: {}", e))?,
+                created_at: r.try_get("created_at").map_err(|e| anyhow::anyhow!("db: created_at: {}", e))?,
+                updated_at: r.try_get("updated_at").map_err(|e| anyhow::anyhow!("db: updated_at: {}", e))?,
+            };
+            Ok(Some(tool))
+        }
+        None => Ok(None),
+    }
 }
 
 pub async fn get_tool_source(pool: &PgPool, tool_name: &str) -> anyhow::Result<Option<String>> {
@@ -318,14 +324,9 @@ pub async fn search_memories(
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let embedding_val: Option<String> = row.try_get("embedding").ok();
-        let embedding = embedding_val.as_deref().and_then(|s| {
-            let trimmed = s.trim_matches(|c| c == '[' || c == ']');
-            let coords: Vec<f32> = trimmed
-                .split(',')
-                .filter_map(|v| v.trim().parse::<f32>().ok())
-                .collect();
-            if coords.is_empty() { None } else { Some(coords) }
-        });
+        let embedding = embedding_val
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Vec<f32>>(s).ok());
         out.push(MemoryEntry {
             id: row.try_get("id")?,
             kind: row.try_get("kind")?,

@@ -2,7 +2,7 @@ use crate::models::ToolResult;
 use crate::tools::path::resolve_path;
 use std::time::Instant;
 
-pub fn edit_file(path: &str, old_string: &str, new_string: &str) -> ToolResult {
+pub async fn edit_file(path: &str, old_string: &str, new_string: &str) -> ToolResult {
     let path = resolve_path(path);
     let started = Instant::now();
     match std::fs::read_to_string(&path) {
@@ -15,7 +15,7 @@ pub fn edit_file(path: &str, old_string: &str, new_string: &str) -> ToolResult {
                     duration_ms: started.elapsed().as_millis(),
                 };
             }
-            let new_content = content.replace(old_string, new_string);
+            let new_content = content.replacen(old_string, new_string, 1);
             match std::fs::write(&path, &new_content) {
                 Ok(()) => ToolResult {
                     success: true,

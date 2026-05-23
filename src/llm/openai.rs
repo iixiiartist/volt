@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::json;
+use std::sync::Arc;
 
 pub struct OpenAIProvider {
     http: Client,
@@ -15,26 +16,8 @@ pub struct OpenAIProvider {
 
 impl OpenAIProvider {
     pub fn new(api_key: String, base_url: String, name: String) -> Self {
-        let client = match Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .build() 
-        {
-            Ok(c) => c,
-            Err(e) => {
-                println!("[Provider Init Error] Failed to build reqwest client: {}", e);
-                Client::new()
-            }
-        };
-
-        println!(
-            "[Provider Debug] Agent: '{}' | URL: '{}' | Key Length: {}", 
-            name, 
-            base_url, 
-            api_key.len()
-        );
-
         Self {
-            http: client,
+            http: crate::http_client(300),
             api_key,
             base_url,
             name,
@@ -63,7 +46,7 @@ fn build_request_body(request: &LLMRequest) -> serde_json::Value {
         "messages": request.messages.iter().map(|m| {
             let mut msg = json!({
                 "role": m.role,
-                "content": m.content
+                "content": m.content.as_str()
             });
             if let Some(tcs) = &m.tool_calls {
                 msg["tool_calls"] = json!(tcs.iter().map(|tc| {
@@ -221,7 +204,7 @@ impl LLMProvider for OpenAIProvider {
         }
 
         Ok(LLMResponse {
-            content: full_content,
+            content: Arc::new(full_content),
             tool_calls: if tool_calls_acc.is_empty() { None } else { Some(tool_calls_acc) },
             finish_reason,
             usage,
@@ -232,7 +215,7 @@ impl LLMProvider for OpenAIProvider {
 fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse> {
     let choice = &resp["choices"][0];
     let message = &choice["message"];
-    let content = message["content"].as_str().unwrap_or_default().to_string();
+    let content = Arc::new(message["content"].as_str().unwrap_or_default().to_string());
 
     let tool_calls = message["tool_calls"].as_array().map(|arr| {
         arr.iter()

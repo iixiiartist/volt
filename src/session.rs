@@ -3,6 +3,7 @@ use anyhow::Context;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
@@ -115,7 +116,7 @@ pub async fn save_message(pool: &SqlitePool, session_id: Uuid, msg: &Message) ->
     )
     .bind(session_id.to_string())
     .bind(&msg.role)
-    .bind(&msg.content)
+    .bind(msg.content.as_str())
     .bind(msg.tool_calls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
     .bind(msg.tool_result.as_ref())
     .bind(msg.tool_name.as_ref())
@@ -142,7 +143,7 @@ pub async fn load_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Resul
     for row in rows {
         out.push(Message {
             role: row.try_get("role")?,
-            content: row.try_get("content")?,
+            content: Arc::new(row.try_get("content")?),
             tool_calls: row
                 .try_get::<Option<&str>, _>("tool_calls")?
                 .and_then(|s| serde_json::from_str(s).ok()),
@@ -155,4 +156,128 @@ pub async fn load_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Resul
         });
     }
     Ok(out)
+}
+
+pub async fn delete_session_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM messages WHERE session_id = ?")
+        .bind(session_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    async fn test_pool() -> SqlitePool {
+        let dir = std::env::temp_dir().join(format!("volt_test_{}", uuid::Uuid::new_v4()));
+        let options = SqliteConnectOptions::new()
+            .filename(&dir)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                agent_name TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT 'untitled',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                tool_calls TEXT,
+                tool_result TEXT,
+                tool_name TEXT,
+                created_at TEXT NOT NULL
+            )"
+        ).execute(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_create_and_list_sessions() {
+        let pool = test_pool().await;
+        let session = Session {
+            id: Uuid::new_v4(),
+            agent_name: "test-agent".into(),
+            title: "test session".into(),
+            message_count: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+        let sessions = list_sessions(&pool, 10).await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].agent_name, "test-agent");
+    }
+
+    #[tokio::test]
+    async fn test_save_and_load_messages() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let session = Session {
+            id: session_id,
+            agent_name: "test-agent".into(),
+            title: "test".into(),
+            message_count: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        let msg = Message {
+            role: "user".into(),
+            content: Arc::new("hello".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        save_message(&pool, session_id, &msg).await.unwrap();
+
+        let msgs = load_messages(&pool, session_id).await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content.as_str(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_messages() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let session = Session {
+            id: session_id,
+            agent_name: "test-agent".into(),
+            title: "test".into(),
+            message_count: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        let msg = Message {
+            role: "user".into(),
+            content: Arc::new("data".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        save_message(&pool, session_id, &msg).await.unwrap();
+        delete_session_messages(&pool, session_id).await.unwrap();
+
+        let msgs = load_messages(&pool, session_id).await.unwrap();
+        assert_eq!(msgs.len(), 0);
+    }
 }

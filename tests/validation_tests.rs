@@ -1,6 +1,6 @@
+use serde_json::json;
 use volt::models::RegistryManifest;
 use volt::validation::{compute_source_sha256, validate_manifest};
-use serde_json::json;
 
 fn manifest(source_code: &str) -> RegistryManifest {
     RegistryManifest {

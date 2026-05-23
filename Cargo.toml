@@ -5,6 +5,9 @@ edition = "2021"
 license = "MIT"
 description = "Volt — Rust agent framework with MCP, memory, sandboxed tools, and multi-agent orchestration"
 
+[features]
+testutils = []
+
 [lib]
 name = "volt"
 path = "src/lib.rs"
@@ -21,8 +24,8 @@ clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 hex = "0.4"
 hmac = "0.12"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "stream"], default-features = false }
-serde = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "chrono", "json", "uuid"] }
@@ -43,9 +46,10 @@ tower-http = { version = "0.6", features = ["cors"] }
 axum = "0.8"
 url = "2"
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
-jsonpath-rust = "0.7"
 similar = "2"
 toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+mockall = "0.13"
+wiremock = "0.6"

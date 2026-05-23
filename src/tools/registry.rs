@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-type ToolFn = Arc<dyn Fn(Value) -> ToolResult + Send + Sync>;
+pub type ToolFn = Arc<dyn Fn(Value) -> futures::future::BoxFuture<'static, ToolResult> + Send + Sync>;
 
 pub struct ToolRegistry {
     tools: RwLock<std::collections::HashMap<String, RegisteredTool>>,
@@ -85,7 +85,20 @@ impl ToolRegistry {
         let tool = tools
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("tool '{}' not found", name))?;
-        Ok((tool.exec)(args.clone()))
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            (tool.exec)(args.clone()),
+        )
+        .await;
+        match result {
+            Ok(res) => Ok(res),
+            Err(_) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("tool '{}' timed out after 300s", name)),
+                duration_ms: 300_000,
+            }),
+        }
     }
 
     pub async fn compute_embeddings(&self, embedder: &EmbeddingClient) {
@@ -100,9 +113,12 @@ impl ToolRegistry {
                 .collect()
         };
 
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
         let results: Vec<(String, Option<Vec<f32>>)> =
             futures::future::join_all(items.into_iter().map(|(name, text)| {
+                let sem = sem.clone();
                 async move {
+                    let _permit = sem.acquire().await.ok();
                     let emb = embedder.embed_description(&text).await.ok();
                     (name, emb)
                 }

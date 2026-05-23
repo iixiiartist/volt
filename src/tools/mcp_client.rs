@@ -20,20 +20,45 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
                 "id": 1
             });
 
-            let mut child = cmd.stdin(std::process::Stdio::piped())
+            let mut child = match cmd.stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
-                .map_err(|e| anyhow::anyhow!("MCP spawn failed: {}", e))
-                .unwrap();
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("MCP spawn failed: {}", e)),
+                        duration_ms: 0,
+                    }
+                }
+            };
 
             if let Some(mut stdin) = child.stdin.take() {
                 use tokio::io::AsyncWriteExt;
-                stdin.write_all(request.to_string().as_bytes()).await.unwrap();
-                drop(stdin);
+                if let Err(e) = stdin.write_all(request.to_string().as_bytes()).await {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("MCP write failed: {}", e)),
+                        duration_ms: 0,
+                    }
+                }
             }
 
-            let output = child.wait_with_output().await.unwrap();
+            let output = match child.wait_with_output().await {
+                Ok(o) => o,
+                Err(e) => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("MCP wait failed: {}", e)),
+                        duration_ms: 0,
+                    }
+                }
+            };
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             ToolResult {
                 success: output.status.success(),
