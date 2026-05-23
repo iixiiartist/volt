@@ -1,4 +1,4 @@
-use crate::llm::provider::TokenCallback;
+﻿use crate::llm::provider::TokenCallback;
 use crate::llm::LLMProvider;
 use crate::models::*;
 use async_trait::async_trait;
@@ -128,20 +128,26 @@ impl LLMProvider for OpenAIProvider {
         let mut full_content = String::new();
         let mut tool_calls_acc: Vec<ToolCall> = Vec::new();
         let mut current_tool_call: Option<ToolCall> = None;
+        let mut current_args_string = String::new();
         let mut finish_reason: Option<String> = None;
         let mut usage: Option<Usage> = None;
 
+        let mut line_buffer = String::new();
         let mut stream = response.bytes_stream();
+        
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
-            let text = String::from_utf8_lossy(&chunk);
-            for line in text.lines() {
-                let line = line.trim();
+            line_buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(newline_idx) = line_buffer.find('\n') {
+                let line = line_buffer[..newline_idx].trim().to_string();
+                line_buffer.drain(..=newline_idx);
+
                 let Some(data) = line.strip_prefix("data: ") else { continue };
                 if data == "[DONE]" {
                     continue;
                 }
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data) {
                     if let Some(choice) = val["choices"][0].as_object() {
                         if let Some(delta) = choice.get("delta").and_then(|d| d.as_object()) {
                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
@@ -157,26 +163,18 @@ impl LLMProvider for OpenAIProvider {
                                     let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
 
                                     if !id.is_empty() {
-                                        if let Some(prev) = current_tool_call.take() {
+                                        if let Some(mut prev) = current_tool_call.take() {
+                                            prev.arguments = serde_json::from_str(&current_args_string).unwrap_or_default();
                                             tool_calls_acc.push(prev);
                                         }
+                                        current_args_string = args;
                                         current_tool_call = Some(ToolCall {
                                             id,
                                             name,
-                                            arguments: serde_json::from_str(&args).unwrap_or_default(),
+                                            arguments: serde_json::Value::Null,
                                         });
-                                    } else if let Some(ref mut current) = current_tool_call {
-                                        if !args.is_empty() {
-                                            if let Ok(additional) = serde_json::from_str::<serde_json::Value>(&args) {
-                                                if let Some(existing) = current.arguments.as_object_mut() {
-                                                    if let Some(additional_obj) = additional.as_object() {
-                                                        for (k, v) in additional_obj {
-                                                            existing.insert(k.clone(), v.clone());
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                    } else if !args.is_empty() {
+                                        current_args_string.push_str(&args);
                                     }
                                 }
                             }
@@ -196,7 +194,8 @@ impl LLMProvider for OpenAIProvider {
             }
         }
 
-        if let Some(tc) = current_tool_call {
+        if let Some(mut tc) = current_tool_call {
+            tc.arguments = serde_json::from_str(&current_args_string).unwrap_or_default();
             tool_calls_acc.push(tc);
         }
 
@@ -216,13 +215,18 @@ fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse>
 
     let tool_calls = message["tool_calls"].as_array().map(|arr| {
         arr.iter()
-            .map(|tc| ToolCall {
-                id: tc["id"].as_str().unwrap_or("").to_string(),
-                name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                arguments: serde_json::from_str(
-                    tc["function"]["arguments"].as_str().unwrap_or("{}"),
-                )
-                .unwrap_or_default(),
+            .map(|tc| {
+                let args_val = &tc["function"]["arguments"];
+                let arguments = if args_val.is_string() {
+                    serde_json::from_str(args_val.as_str().unwrap_or("{}")).unwrap_or_default()
+                } else {
+                    args_val.clone()
+                };
+                ToolCall {
+                    id: tc["id"].as_str().unwrap_or("").to_string(),
+                    name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                    arguments,
+                }
             })
             .collect()
     });

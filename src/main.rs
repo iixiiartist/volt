@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+﻿use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -15,7 +15,7 @@ use volt::{sandbox, validation};
 
 #[derive(Parser, Debug)]
 #[command(name = "volt")]
-#[command(about = "Volt — agent tool runtime and registry CLI", long_about = None)]
+#[command(about = "Volt â€” agent tool runtime and registry CLI", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -299,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
             match agent.run(&input).await {
                 Ok(result) => {
                     println!();
-                    println!("{}", result);
+                    println!();
                 }
                 Err(e) => {
                     eprintln!("error: {}", e);
@@ -386,7 +386,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            println!("Volt agent chat — type /quit to exit");
+            println!("Volt agent chat - type /quit to exit");
             let mut input = String::new();
             loop {
                 input.clear();
@@ -398,8 +398,8 @@ async fn main() -> anyhow::Result<()> {
                 if input.is_empty() || input == "/quit" {
                     break;
                 }
-                let result = agent.run(input).await?;
-                println!("{}", result);
+                let _result = agent.run(input).await?;
+println!();
 
                 if let Some(ref sp) = sessions_pool {
                     let state = agent.state.lock().await;

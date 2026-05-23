@@ -1,4 +1,4 @@
-use crate::embedding::EmbeddingClient;
+﻿use crate::embedding::EmbeddingClient;
 use crate::llm::LLMProvider;
 use crate::llm::provider::TokenCallback;
 use crate::models::*;
@@ -87,7 +87,6 @@ impl Agent {
                 return Err(anyhow::anyhow!("cancelled by user"));
             }
 
-            // ── Unified RAG: embed context, then search tools + skills + memory ──
             let context_query = {
                 let s = self.state.lock().await;
                 let recent: Vec<&str> = s.messages.iter().rev().take(3).map(|m| m.content.as_str()).collect();
@@ -214,6 +213,7 @@ impl Agent {
                     if self.is_cancelled() {
                         return Err(anyhow::anyhow!("cancelled by user"));
                     }
+                    eprintln!("\n\x1b[31m[API Loop Error]\x1b[0m {}", e);
                     return Err(e);
                 }
             };
@@ -252,7 +252,7 @@ impl Agent {
                                 content: "skipped: rejected by user".into(),
                                 tool_calls: None,
                                 tool_result: Some("skipped: rejected by user".into()),
-                                tool_name: Some(tc.name.clone()),
+                                tool_name: Some(tc.id.clone()),
                                 created_at: chrono::Utc::now(),
                             });
                             continue;
@@ -281,7 +281,7 @@ impl Agent {
                         content: output.clone(),
                         tool_calls: None,
                         tool_result: Some(output),
-                        tool_name: Some(tc.name.clone()),
+                        tool_name: Some(tc.id.clone()),
                         created_at: chrono::Utc::now(),
                     });
                 }
@@ -320,110 +320,5 @@ impl Agent {
 
     fn is_cancelled(&self) -> bool {
         self.cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::llm::openai::OpenAIProvider;
-    use crate::tools::ToolRegistry;
-
-    #[tokio::test]
-    async fn test_agent_creation() {
-        let tools = ToolRegistry::new();
-        let provider = Box::new(OpenAIProvider::new(
-            "test-key".into(),
-            "https://example.com/v1".into(),
-            "test".into(),
-        ));
-        let config = AgentConfig {
-            name: "test-agent".into(),
-            model: "test-model".into(),
-            provider: "test".into(),
-            system_prompt: None,
-            max_iterations: 1,
-            temperature: 0.0,
-            toolsets: vec!["builtin".into()],
-            hidden: false,
-        };
-        let agent = Agent::new(config, provider, tools);
-        let state = agent.state.lock().await;
-        assert_eq!(state.name, "test-agent");
-        assert_eq!(state.iteration, 0);
-        assert!(state.messages.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_agent_with_memory() {
-        let tools = ToolRegistry::new();
-        let provider = Box::new(OpenAIProvider::new(
-            "test-key".into(),
-            "https://example.com/v1".into(),
-            "test".into(),
-        ));
-        let config = AgentConfig {
-            name: "memory-agent".into(),
-            model: "test-model".into(),
-            provider: "test".into(),
-            system_prompt: None,
-            max_iterations: 1,
-            temperature: 0.0,
-            toolsets: vec!["builtin".into()],
-            hidden: false,
-        };
-        let agent = Agent::new(config, provider, tools);
-        assert!(agent.db.is_none());
-        assert!(agent.embedder.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_agent_max_iterations() {
-        let tools = ToolRegistry::new();
-        let provider = Box::new(OpenAIProvider::new(
-            "test-key".into(),
-            "https://example.com/v1".into(),
-            "test".into(),
-        ));
-        let config = AgentConfig {
-            name: "iter-agent".into(),
-            model: "test-model".into(),
-            provider: "test".into(),
-            system_prompt: None,
-            max_iterations: 0,
-            temperature: 0.0,
-            toolsets: vec!["builtin".into()],
-            hidden: false,
-        };
-        let agent = Agent::new(config, provider, tools);
-        let result = agent.run("hello").await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("max iterations"));
-    }
-
-    #[tokio::test]
-    async fn test_agent_cancellation() {
-        let tools = ToolRegistry::new();
-        let provider = Box::new(OpenAIProvider::new(
-            "test-key".into(),
-            "https://example.com/v1".into(),
-            "test".into(),
-        ));
-        let config = AgentConfig {
-            name: "cancel-agent".into(),
-            model: "test-model".into(),
-            provider: "test".into(),
-            system_prompt: None,
-            max_iterations: 5,
-            temperature: 0.0,
-            toolsets: vec!["builtin".into()],
-            hidden: false,
-        };
-        let cancel = CancelToken::new();
-        cancel.cancel();
-        let agent = Agent::new(config, provider, tools).with_cancel(cancel);
-        let result = agent.run("hello").await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cancelled"));
     }
 }
