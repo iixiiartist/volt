@@ -1082,4 +1082,50 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
     }), "builtin", workflow_fn, PermissionLevel::Prompt).await;
 
     registry
+        .register_with_permission(
+            "web_scrape",
+            "Extract structured content from a URL using a CSS selector. Returns text content of all matching elements.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "URL to scrape" },
+                    "selector": { "type": "string", "description": "CSS selector to match elements" }
+                },
+                "required": ["url", "selector"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let url = args["url"].as_str().unwrap_or("");
+                    let selector = args["selector"].as_str().unwrap_or("");
+                    volt::tools::scrape_tool::web_scrape(url, selector).await
+                })
+            }),
+            PermissionLevel::Prompt,
+        )
+        .await;
+
+    registry
+        .register_with_permission(
+            "web_scrape_all",
+            "Fetch a URL and extract all human-readable content (headings, paragraphs, links). General-purpose page reading without needing a CSS selector.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "URL to fetch and extract" }
+                },
+                "required": ["url"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let url = args["url"].as_str().unwrap_or("");
+                    volt::tools::scrape_tool::web_scrape_all(url).await
+                })
+            }),
+            PermissionLevel::Prompt,
+        )
+        .await;
+
+    registry
 }

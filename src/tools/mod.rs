@@ -10,5 +10,6 @@ pub mod web_tool;
 pub mod memory_tool;
 pub mod delegate;
 pub mod todo_tool;
+pub mod scrape_tool;
 pub mod mcp_client;
 pub use registry::{ToolFn, ToolRegistry};

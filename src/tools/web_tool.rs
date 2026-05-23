@@ -48,7 +48,7 @@ fn is_ssrf_risk(host: &str) -> bool {
     false
 }
 
-fn validate_url(url_str: &str) -> Result<Url, String> {
+pub fn validate_url(url_str: &str) -> Result<Url, String> {
     let parsed = Url::parse(url_str).map_err(|e| format!("invalid URL: {}", e))?;
 
     match parsed.scheme() {
