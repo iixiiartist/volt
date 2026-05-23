@@ -624,7 +624,7 @@
             <div class="hero-grid">
                 <div class="hero-text">
                     <h1>The Autonomous <span>Systems Engine</span></h1>
-                    <p>A production-grade, database-driven agent control plane and kernel-isolated sandbox toolchain. Built entirely in async Rust for memory efficiency and raw execution speed.</p>
+                    <p>A database-driven AI agent control plane and kernel-isolated sandbox toolchain. Built entirely in async Rust for memory efficiency and execution speed.</p>
                     
                     <div class="cta-group">
                         <a href="https://github.com/iixiiartist/volt" class="btn btn-primary">cargo install volt</a>
@@ -633,12 +633,12 @@
 
                     <div class="hero-stats">
                         <div class="stat">
-                            <div class="stat-number">75% <span>-4x reduction</span></div>
-                            <div class="stat-label">Token window compression</div>
+                            <div class="stat-number">18MB</div>
+                            <div class="stat-label">Statically linked binary</div>
                         </div>
                         <div class="stat">
                             <div class="stat-number"><1ms</div>
-                            <div class="stat-label">HNSW vector registry match</div>
+                            <div class="stat-label">HNSW vector search</div>
                         </div>
                     </div>
                 </div>
@@ -678,7 +678,7 @@
                 <div class="feature-card">
                     <div class="feature-icon">🔄</div>
                     <h3>Unified RAG Loop</h3>
-                    <p>Tools, skills, and long-term memory are dynamically searched via pgvector cosine similarity. Filters out execution noise and drops input costs by up to 75%.</p>
+                    <p>Tools, skills, and long-term memory are dynamically searched via pgvector cosine similarity. Reduces context window usage by filtering irrelevant tools.</p>
                 </div>
                 
                 <div class="feature-card">
@@ -690,7 +690,7 @@
                 <div class="feature-card">
                     <div class="feature-icon">🔒</div>
                     <h3>Kernel-Level Isolation</h3>
-                    <p>Polyglot tools (Python, TS, Mojo, Bash) are executed within native Linux <code>unshare</code> namespaces and bound by strict <code>prlimit</code> guardrails.</p>
+                    <p>Polyglot tools (Python, TS, Mojo, Bash) are executed within native Linux <code>unshare</code> namespaces and bound by <code>prlimit</code> resource constraints.</p>
                 </div>
                 
                 <div class="feature-card">
@@ -776,8 +776,8 @@
             <div class="perf-grid">
                 <div class="perf-item">
                     <div class="perf-value"><1ms</div>
-                    <div class="perf-label">Registry Retrieval Latency</div>
-                    <div class="perf-desc">Calculated via indexed multi-dimensional cosine vectors.</div>
+                    <div class="perf-label">Vector Search Latency</div>
+                    <div class="perf-desc">Indexed multi-dimensional cosine similarity via HNSW.</div>
                 </div>
                 <div class="perf-item">
                     <div class="perf-value">18MB</div>
@@ -786,8 +786,8 @@
                 </div>
                 <div class="perf-item">
                     <div class="perf-value">75%</div>
-                    <div class="perf-label">Context Cost Compression</div>
-                    <div class="perf-desc">Achieved by removing unneeded framework schema payloads.</div>
+                    <div class="perf-label">Context Reduction</div>
+                    <div class="perf-desc">Achieved by pruning unneeded tool definitions from prompts.</div>
                 </div>
             </div>
         </div>
@@ -795,9 +795,9 @@
 
     <section class="cta-section">
         <div class="container">
-            <h2>Own Your Agent Infrastructure</h2>
-            <p>Deploy a localized, zero-dependency engine optimized for enterprise execution security.</p>
-            <a href="https://github.com/iixiiartist/volt" class="btn btn-primary">Deploy Core Architecture</a>
+            <h2>Build Your Agent Infrastructure</h2>
+            <p>Deploy a localized engine with dynamic tool selection and kernel-isolated execution.</p>
+            <a href="https://github.com/iixiiartist/volt" class="btn btn-primary">Get Started on GitHub</a>
         </div>
     </section>
 
