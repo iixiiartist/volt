@@ -250,7 +250,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::AgentRun { input, model } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL")
-                    .unwrap_or_else(|_| "phi4-mini:3.8b".into())
+                    .unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
             let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
@@ -311,7 +311,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::AgentChat { model } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL")
-                    .unwrap_or_else(|_| "phi4-mini:3.8b".into())
+                    .unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
             let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
@@ -426,7 +426,7 @@ println!();
         Commands::AgentTui { model } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL")
-                    .unwrap_or_else(|_| "phi4-mini:3.8b".into())
+                    .unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
             let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
@@ -509,7 +509,7 @@ println!();
 
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL")
-                    .unwrap_or_else(|_| "phi4-mini:3.8b".into())
+                    .unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
             let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
