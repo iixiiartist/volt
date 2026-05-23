@@ -14,10 +14,15 @@ fn should_skip(entry: &walkdir::DirEntry) -> bool {
             .is_some_and(|n| SKIP_DIRS.contains(&n))
 }
 
+fn is_windows() -> bool {
+    cfg!(target_os = "windows")
+}
+
 fn compile_glob(pattern: &str) -> Result<Regex, regex::Error> {
+    let separator = if is_windows() { r"[^/\\]" } else { r"[^/]" };
     let pat = pattern
         .replace("**", "__DOUBLE__")
-        .replace("*", "[^/]*")
+        .replace("*", separator)
         .replace("__DOUBLE__", ".*");
     Regex::new(&format!("^{}$", pat))
 }

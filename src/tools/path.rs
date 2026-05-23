@@ -3,10 +3,14 @@ use std::sync::OnceLock;
 
 static PROJECT_ROOT: OnceLock<Option<String>> = OnceLock::new();
 
+fn is_windows() -> bool {
+    cfg!(target_os = "windows")
+}
+
 fn find_project_root() -> Option<String> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
-        if dir.join("Cargo.toml").exists() {
+        if dir.join("Cargo.toml").exists() || dir.join(".git").exists() {
             return Some(dir.to_string_lossy().to_string());
         }
         if !dir.pop() {
@@ -32,7 +36,15 @@ pub fn sanitize_path(path: &str) -> Result<String, String> {
         root.join(p)
     };
 
-    let canonical = normalized.canonicalize().map_err(|_| format!("path does not exist: {}", path))?;
+    // On Windows, also try with extended-length prefix for long paths
+    let canonical = normalized.canonicalize().or_else(|_| {
+        if is_windows() {
+            let extended = Path::new(r"\\?\").join(&normalized);
+            extended.canonicalize()
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "path does not exist"))
+        }
+    }).map_err(|_| format!("path does not exist: {}", path))?;
 
     if canonical.starts_with(&root) {
         Ok(canonical.to_string_lossy().to_string())
@@ -49,7 +61,22 @@ pub fn resolve_path(path: &str) -> String {
         Some(r) => r,
         None => return path.to_string(),
     };
-    let candidate = Path::new(&root).join(path.trim_start_matches('/').trim_start_matches('\\'));
+    let trimmed = path.trim_start_matches('/').trim_start_matches('\\');
+    // Handle Windows absolute paths with drive letters (e.g., C:\path)
+    let trimmed = if is_windows() {
+        if let Some(drive) = trimmed.get(2..) {
+            if trimmed.len() > 2 && trimmed.as_bytes().get(1) == Some(&b':') {
+                drive.trim_start_matches('/').trim_start_matches('\\')
+            } else {
+                trimmed
+            }
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+    let candidate = Path::new(&root).join(trimmed);
     if let Ok(canonical) = candidate.canonicalize() {
         if canonical.starts_with(root) {
             return canonical.to_string_lossy().to_string();

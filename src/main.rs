@@ -1128,4 +1128,169 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
         .await;
 
     registry
+        .register(
+            "json_validate",
+            "Validate JSON string and return its type (object, array, string, number, boolean, null).",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "data": { "type": "string", "description": "JSON string to validate" }
+                },
+                "required": ["data"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let data = args["data"].as_str().unwrap_or("");
+                    volt::tools::json_tool::json_validate(data).await
+                })
+            }),
+        )
+        .await;
+
+    registry
+        .register(
+            "json_prettify",
+            "Format JSON with custom indentation for readability.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "data": { "type": "string", "description": "JSON string to format" },
+                    "indent": { "type": "integer", "description": "spaces per indent level (default: 2)" }
+                },
+                "required": ["data"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let data = args["data"].as_str().unwrap_or("");
+                    let indent = args["indent"].as_u64().unwrap_or(2) as u8;
+                    volt::tools::json_tool::json_prettify(data, indent).await
+                })
+            }),
+        )
+        .await;
+
+    registry
+        .register(
+            "json_query",
+            "Extract a value from JSON using a dot-separated path (e.g. 'store.book[0].title'). Supports nested objects and array indexing.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "data": { "type": "string", "description": "JSON string to query" },
+                    "path": { "type": "string", "description": "dot-separated path with optional array indices (e.g. 'items[0].name')" }
+                },
+                "required": ["data", "path"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let data = args["data"].as_str().unwrap_or("");
+                    let path = args["path"].as_str().unwrap_or("");
+                    volt::tools::json_tool::json_query(data, path).await
+                })
+            }),
+        )
+        .await;
+
+    registry
+        .register(
+            "csv_read",
+            "Read a CSV file and return its contents as formatted rows. Supports flexible column counts and optional headers.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "path to CSV file" },
+                    "has_header": { "type": "boolean", "description": "whether the CSV has a header row (default: true)" }
+                },
+                "required": ["path"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let path = args["path"].as_str().unwrap_or("");
+                    let has_header = args["has_header"].as_bool().unwrap_or(true);
+                    volt::tools::csv_tool::csv_read(path, has_header).await
+                })
+            }),
+        )
+        .await;
+
+    registry
+        .register(
+            "csv_write",
+            "Write data to a CSV file. Provide data as comma-separated lines, first line is header if has_header is true.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "path to CSV file" },
+                    "data": { "type": "string", "description": "CSV data, one row per line, comma-separated values" },
+                    "has_header": { "type": "boolean", "description": "whether first line is a header row (default: true)" }
+                },
+                "required": ["path", "data"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let path = args["path"].as_str().unwrap_or("");
+                    let data = args["data"].as_str().unwrap_or("");
+                    let has_header = args["has_header"].as_bool().unwrap_or(true);
+                    volt::tools::csv_tool::csv_write(path, data, has_header).await
+                })
+            }),
+        )
+        .await;
+
+    registry
+        .register(
+            "archive_extract",
+            "Extract an archive file (tar.gz, tgz, tar, gz) to a destination directory.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "path to archive file" },
+                    "dest": { "type": "string", "description": "destination directory to extract into" }
+                },
+                "required": ["path", "dest"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let path = args["path"].as_str().unwrap_or("");
+                    let dest = args["dest"].as_str().unwrap_or("");
+                    volt::tools::archive_tool::archive_extract(path, dest).await
+                })
+            }),
+        )
+        .await;
+
+    registry
+        .register(
+            "archive_create",
+            "Create a tar or tar.gz archive from a list of source files/directories.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "output archive path" },
+                    "sources": { "type": "array", "items": { "type": "string" }, "description": "list of files and directories to include" },
+                    "format": { "type": "string", "description": "archive format: 'tar' or 'tar.gz' (default: 'tar.gz')" }
+                },
+                "required": ["path", "sources"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let path = args["path"].as_str().unwrap_or("");
+                    let sources: Vec<String> = args["sources"].as_array()
+                        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let format = args["format"].as_str().unwrap_or("tar.gz");
+                    volt::tools::archive_tool::archive_create(path, &sources, format).await
+                })
+            }),
+        )
+        .await;
+
+    registry
 }

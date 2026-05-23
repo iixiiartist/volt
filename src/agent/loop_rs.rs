@@ -34,6 +34,8 @@ impl Agent {
             iteration: 0,
             context_injected: false,
             allow_session: false,
+            total_prompt_tokens: 0,
+            total_completion_tokens: 0,
             messages: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -138,6 +140,10 @@ impl Agent {
             let mut state = self.state.lock().await;
             state.iteration += 1;
             state.updated_at = chrono::Utc::now();
+            if let Some(ref usage) = response.usage {
+                state.total_prompt_tokens += usage.prompt_tokens as u64;
+                state.total_completion_tokens += usage.completion_tokens as u64;
+            }
 
             if let Some(tool_calls) = &response.tool_calls {
                 self.push_assistant_message(&mut state, &response, Some(tool_calls)).await;

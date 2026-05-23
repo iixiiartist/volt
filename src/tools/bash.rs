@@ -5,16 +5,27 @@ use tokio::time::{timeout, Duration};
 
 const BASH_TIMEOUT_SECS: u64 = 120;
 
+fn is_windows() -> bool {
+    cfg!(target_os = "windows")
+}
+
+fn build_shell_command(user_command: &str) -> Command {
+    if is_windows() {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.arg("/c").arg(user_command);
+        cmd
+    } else {
+        let mut cmd = Command::new("bash");
+        cmd.arg("-lc").arg(user_command);
+        cmd.env_clear().env("PATH", "/usr/bin:/bin");
+        cmd
+    }
+}
+
 pub async fn execute_bash(command: &str) -> ToolResult {
     let started = Instant::now();
     let output = timeout(Duration::from_secs(BASH_TIMEOUT_SECS), async {
-        Command::new("bash")
-            .arg("-lc")
-            .arg(command)
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .output()
-            .await
+        build_shell_command(command).output().await
     })
     .await;
 
@@ -34,13 +45,13 @@ pub async fn execute_bash(command: &str) -> ToolResult {
         Ok(Err(e)) => ToolResult {
             success: false,
             output: String::new(),
-            error: Some(format!("bash execution failed: {}", e)),
+            error: Some(format!("shell execution failed: {}", e)),
             duration_ms,
         },
         Err(_) => ToolResult {
             success: false,
             output: String::new(),
-            error: Some(format!("bash command timed out after {}s", BASH_TIMEOUT_SECS)),
+            error: Some(format!("command timed out after {}s", BASH_TIMEOUT_SECS)),
             duration_ms,
         },
     }

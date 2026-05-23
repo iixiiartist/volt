@@ -3,11 +3,16 @@ use std::time::Instant;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
+fn is_windows() -> bool {
+    cfg!(target_os = "windows")
+}
+
 fn sandbox_cmd(program: &str, policy: &SandboxPolicy) -> Command {
     let mut cmd = Command::new(program);
-    cmd.env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .kill_on_drop(true);
+    if !is_windows() {
+        cmd.env_clear().env("PATH", "/usr/bin:/bin");
+    }
+    cmd.kill_on_drop(true);
     if let Some(dir) = &policy.working_dir {
         cmd.current_dir(dir);
     }
@@ -63,13 +68,19 @@ async fn run_sandbox_output(
 }
 
 pub async fn run_command(command: &str, policy: &SandboxPolicy) -> anyhow::Result<SandboxResult> {
-    let shell = std::env::var("SANDBOX_SHELL").unwrap_or_else(|_| "bash".into());
+    let shell = std::env::var("SANDBOX_SHELL").unwrap_or_else(|_| {
+        if is_windows() { "cmd.exe".into() } else { "bash".into() }
+    });
     let mut cmd = Command::new(&shell);
-    cmd.arg("-lc")
-        .arg(command)
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .kill_on_drop(true);
+    if is_windows() {
+        cmd.arg("/c").arg(command);
+    } else {
+        cmd.arg("-lc")
+            .arg(command)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin");
+    }
+    cmd.kill_on_drop(true);
 
     if let Some(dir) = &policy.working_dir {
         cmd.current_dir(dir);

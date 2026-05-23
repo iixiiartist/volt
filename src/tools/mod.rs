@@ -11,5 +11,8 @@ pub mod memory_tool;
 pub mod delegate;
 pub mod todo_tool;
 pub mod scrape_tool;
+pub mod csv_tool;
+pub mod archive_tool;
+pub mod json_tool;
 pub mod mcp_client;
 pub use registry::{ToolFn, ToolRegistry};

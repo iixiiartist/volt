@@ -36,6 +36,8 @@ pub struct StepResult {
     pub output: String,
     pub duration_ms: u128,
     pub success: bool,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -212,24 +214,37 @@ impl Orchestrator {
                         output: String::new(),
                         duration_ms: 0,
                         success: false,
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
                     },
                 };
                 let step_started = Instant::now();
                 let agent = create_agent(spec, tools);
-                match agent.run(&task).await {
-                    Ok(output) => StepResult {
-                        agent_name,
-                        output,
-                        duration_ms: step_started.elapsed().as_millis(),
-                        success: true,
-                    },
-                    Err(e) => StepResult {
-                        agent_name,
-                        output: format!("error: {}", e),
-                        duration_ms: step_started.elapsed().as_millis(),
-                        success: false,
-                    },
-                }
+                let result = match agent.run(&task).await {
+                    Ok(output) => {
+                        let state = agent.state.lock().await;
+                        StepResult {
+                            agent_name,
+                            output,
+                            duration_ms: step_started.elapsed().as_millis(),
+                            success: true,
+                            prompt_tokens: state.total_prompt_tokens,
+                            completion_tokens: state.total_completion_tokens,
+                        }
+                    }
+                    Err(e) => {
+                        let state = agent.state.lock().await;
+                        StepResult {
+                            agent_name,
+                            output: format!("error: {}", e),
+                            duration_ms: step_started.elapsed().as_millis(),
+                            success: false,
+                            prompt_tokens: state.total_prompt_tokens,
+                            completion_tokens: state.total_completion_tokens,
+                        }
+                    }
+                };
+                result
             }));
         }
 
@@ -242,6 +257,8 @@ impl Orchestrator {
                     output: String::new(),
                     duration_ms: 0,
                     success: false,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
                 }),
             }
         }
@@ -264,20 +281,26 @@ impl Orchestrator {
             let agent = create_agent(spec, self.tools.clone());
             match agent.run(&task).await {
                 Ok(output) => {
+                    let state = agent.state.lock().await;
                     prev_output = output.clone();
                     step_results.push(StepResult {
                         agent_name,
                         output,
                         duration_ms: step_started.elapsed().as_millis(),
                         success: true,
+                        prompt_tokens: state.total_prompt_tokens,
+                        completion_tokens: state.total_completion_tokens,
                     });
                 }
                 Err(e) => {
+                    let state = agent.state.lock().await;
                     step_results.push(StepResult {
                         agent_name,
                         output: format!("error: {}", e),
                         duration_ms: step_started.elapsed().as_millis(),
                         success: false,
+                        prompt_tokens: state.total_prompt_tokens,
+                        completion_tokens: state.total_completion_tokens,
                     });
                     break;
                 }
@@ -362,6 +385,7 @@ impl Orchestrator {
 
         let supervisor = create_agent(supervisor_spec, self.tools.clone());
         let output = supervisor.run(task).await?;
+        let state = supervisor.state.lock().await;
 
         Ok(WorkflowResult {
             steps: vec![StepResult {
@@ -369,6 +393,8 @@ impl Orchestrator {
                 output: output.clone(),
                 duration_ms: started.elapsed().as_millis(),
                 success: true,
+                prompt_tokens: state.total_prompt_tokens,
+                completion_tokens: state.total_completion_tokens,
             }],
             final_output: output,
             total_duration_ms: started.elapsed().as_millis(),

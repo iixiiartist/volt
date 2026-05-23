@@ -33,6 +33,10 @@ pub struct AgentState {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub allow_session: bool,
+    #[serde(default)]
+    pub total_prompt_tokens: u64,
+    #[serde(default)]
+    pub total_completion_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,6 +354,8 @@ mod tests {
             messages: vec![],
             context_injected: false,
             allow_session: false,
+            total_prompt_tokens: 0,
+            total_completion_tokens: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
