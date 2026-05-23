@@ -15,11 +15,26 @@ pub struct OpenAIProvider {
 
 impl OpenAIProvider {
     pub fn new(api_key: String, base_url: String, name: String) -> Self {
+        let client = match Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build() 
+        {
+            Ok(c) => c,
+            Err(e) => {
+                println!("[Provider Init Error] Failed to build reqwest client: {}", e);
+                Client::new()
+            }
+        };
+
+        println!(
+            "[Provider Debug] Agent: '{}' | URL: '{}' | Key Length: {}", 
+            name, 
+            base_url, 
+            api_key.len()
+        );
+
         Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .unwrap_or_default(),
+            http: client,
             api_key,
             base_url,
             name,
@@ -93,10 +108,13 @@ impl LLMProvider for OpenAIProvider {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = build_request_body(request);
 
-        let resp: serde_json::Value = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+        let mut req = self.http.post(&url);
+        
+        if !self.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let resp: serde_json::Value = req
             .json(&body)
             .send()
             .await?
@@ -116,10 +134,13 @@ impl LLMProvider for OpenAIProvider {
         let mut body = build_request_body(request);
         body["stream"] = json!(true);
 
-        let response = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+        let mut req = self.http.post(&url);
+        
+        if !self.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = req
             .json(&body)
             .send()
             .await?

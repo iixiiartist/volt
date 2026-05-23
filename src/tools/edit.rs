@@ -1,9 +1,11 @@
 use crate::models::ToolResult;
+use crate::tools::path::resolve_path;
 use std::time::Instant;
 
 pub fn edit_file(path: &str, old_string: &str, new_string: &str) -> ToolResult {
+    let path = resolve_path(path);
     let started = Instant::now();
-    match std::fs::read_to_string(path) {
+    match std::fs::read_to_string(&path) {
         Ok(content) => {
             if !content.contains(old_string) {
                 return ToolResult {
@@ -14,7 +16,7 @@ pub fn edit_file(path: &str, old_string: &str, new_string: &str) -> ToolResult {
                 };
             }
             let new_content = content.replace(old_string, new_string);
-            match std::fs::write(path, &new_content) {
+            match std::fs::write(&path, &new_content) {
                 Ok(()) => ToolResult {
                     success: true,
                     output: format!("edited {} ({} replacements)", path, content.matches(old_string).count()),

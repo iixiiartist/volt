@@ -6,6 +6,8 @@ use volt::agent::loop_rs::Agent;
 use volt::config::Settings;
 use volt::db;
 use volt::embedding::EmbeddingClient;
+use volt::llm::anthropic::AnthropicProvider;
+use volt::llm::LLMProvider;
 use volt::llm::OpenAIProvider;
 use volt::mcp::MCPServer;
 use volt::models::*;
@@ -250,11 +252,7 @@ async fn main() -> anyhow::Result<()> {
                 std::env::var("LLM_MODEL")
                     .unwrap_or_else(|_| "phi4-mini:3.8b".into())
             });
-            let api_key = std::env::var("NVIDIA_API_KEY")
-                .or_else(|_| std::env::var("LLM_API_KEY"))
-                .unwrap_or_default();
-            let base_url = std::env::var("LLM_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+            let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
             let cancel = volt::models::CancelToken::new();
             let c = cancel.clone();
@@ -264,7 +262,11 @@ async fn main() -> anyhow::Result<()> {
                 c.cancel();
             });
 
-            let provider = Box::new(OpenAIProvider::new(api_key, base_url, "nvidia".into()));
+            let provider: Box<dyn LLMProvider> = if provider_kind == "anthropic" {
+                Box::new(AnthropicProvider::new(api_key, Some(base_url), "volt-agent".into()))
+            } else {
+                Box::new(OpenAIProvider::new(api_key, base_url, "volt-agent".into()))
+            };
             let embedder = EmbeddingClient::with_provider(
                 settings.embedding_api_key.clone(),
                 settings.embedding_model.clone(),
@@ -275,7 +277,7 @@ async fn main() -> anyhow::Result<()> {
             let config = AgentConfig {
                 name: "volt-agent".into(),
                 model,
-                provider: "nvidia".into(),
+                provider: provider_kind,
                 system_prompt: None,
                 max_iterations: 25,
                 temperature: 0.3,
@@ -297,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
             agent = agent.with_skills(skills);
             println!();
             match agent.run(&input).await {
-                Ok(result) => {
+                Ok(_) => {
                     println!();
                     println!();
                 }
@@ -311,11 +313,7 @@ async fn main() -> anyhow::Result<()> {
                 std::env::var("LLM_MODEL")
                     .unwrap_or_else(|_| "phi4-mini:3.8b".into())
             });
-            let api_key = std::env::var("NVIDIA_API_KEY")
-                .or_else(|_| std::env::var("LLM_API_KEY"))
-                .unwrap_or_default();
-            let base_url = std::env::var("LLM_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+            let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
             let cancel = volt::models::CancelToken::new();
             let c = cancel.clone();
@@ -325,12 +323,16 @@ async fn main() -> anyhow::Result<()> {
                 c.cancel();
             });
 
-            let provider = Box::new(OpenAIProvider::new(api_key, base_url, "nvidia".into()));
+            let provider: Box<dyn LLMProvider> = if provider_kind == "anthropic" {
+                Box::new(AnthropicProvider::new(api_key, Some(base_url), "volt-agent".into()))
+            } else {
+                Box::new(OpenAIProvider::new(api_key, base_url, "volt-agent".into()))
+            };
             let tools = register_all_tools().await;
             let config = AgentConfig {
                 name: "volt-agent".into(),
                 model,
-                provider: "nvidia".into(),
+                provider: provider_kind,
                 system_prompt: None,
                 max_iterations: 25,
                 temperature: 0.3,
@@ -426,18 +428,18 @@ println!();
                 std::env::var("LLM_MODEL")
                     .unwrap_or_else(|_| "phi4-mini:3.8b".into())
             });
-            let api_key = std::env::var("NVIDIA_API_KEY")
-                .or_else(|_| std::env::var("LLM_API_KEY"))
-                .unwrap_or_default();
-            let base_url = std::env::var("LLM_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+            let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
-            let provider = Box::new(OpenAIProvider::new(api_key, base_url, "nvidia".into()));
+            let provider: Box<dyn LLMProvider> = if provider_kind == "anthropic" {
+                Box::new(AnthropicProvider::new(api_key, Some(base_url), "volt-agent".into()))
+            } else {
+                Box::new(OpenAIProvider::new(api_key, base_url, "volt-agent".into()))
+            };
             let tools = register_all_tools().await;
             let config = AgentConfig {
                 name: "volt-agent".into(),
                 model,
-                provider: "nvidia".into(),
+                provider: provider_kind,
                 system_prompt: None,
                 max_iterations: 25,
                 temperature: 0.3,
@@ -509,18 +511,18 @@ println!();
                 std::env::var("LLM_MODEL")
                     .unwrap_or_else(|_| "phi4-mini:3.8b".into())
             });
-            let api_key = std::env::var("NVIDIA_API_KEY")
-                .or_else(|_| std::env::var("LLM_API_KEY"))
-                .unwrap_or_default();
-            let base_url = std::env::var("LLM_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+            let (provider_kind, base_url, api_key) = volt::orchestrator::resolve_provider(&model);
 
-            let provider = Box::new(volt::llm::OpenAIProvider::new(api_key, base_url, "nvidia".into()));
+            let provider: Box<dyn LLMProvider> = if provider_kind == "anthropic" {
+                Box::new(AnthropicProvider::new(api_key, Some(base_url), "eval-agent".into()))
+            } else {
+                Box::new(volt::llm::OpenAIProvider::new(api_key, base_url, "eval-agent".into()))
+            };
             let tools = register_all_tools().await;
             let config = AgentConfig {
                 name: "eval-agent".into(),
                 model,
-                provider: "nvidia".into(),
+                provider: provider_kind,
                 system_prompt: None,
                 max_iterations: 15,
                 temperature: 0.3,

@@ -1,11 +1,13 @@
 use crate::models::ToolResult;
+use crate::tools::path::resolve_path;
 use std::time::Instant;
 use walkdir::WalkDir;
 
 pub fn glob_files(pattern: &str, base: &str) -> ToolResult {
+    let base = resolve_path(base);
     let started = Instant::now();
     let mut matches = Vec::new();
-    for entry in WalkDir::new(base).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             let path = entry.path().to_string_lossy();
             if simple_glob_match(pattern, &path) {

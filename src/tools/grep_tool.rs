@@ -1,8 +1,10 @@
 use crate::models::ToolResult;
+use crate::tools::path::resolve_path;
 use regex::Regex;
 use std::time::Instant;
 
 pub fn grep_files(pattern: &str, path: &str) -> ToolResult {
+    let path = resolve_path(path);
     let started = Instant::now();
     let re = match Regex::new(pattern) {
         Ok(r) => r,

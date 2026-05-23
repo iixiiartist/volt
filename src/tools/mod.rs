@@ -1,6 +1,7 @@
 pub mod registry;
 pub mod bash;
 pub mod edit;
+pub mod path;
 pub mod read_tool;
 pub mod write_tool;
 pub mod glob_tool;

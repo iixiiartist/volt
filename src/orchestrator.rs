@@ -1,5 +1,7 @@
 use crate::agent::loop_rs::Agent;
+use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai::OpenAIProvider;
+use crate::llm::LLMProvider;
 use crate::models::*;
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
@@ -34,24 +36,117 @@ pub struct Orchestrator {
 }
 
 fn create_agent(spec: &AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
-    let api_key = std::env::var("NVIDIA_API_KEY")
-        .or_else(|_| std::env::var("LLM_API_KEY"))
-        .unwrap_or_default();
-    let base_url = std::env::var("LLM_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+    let (provider_kind, base_url, api_key) = resolve_provider(&spec.model);
 
-    let provider = Box::new(OpenAIProvider::new(api_key, base_url, spec.name.clone()));
+    let llm_provider: Box<dyn LLMProvider> = if provider_kind == "anthropic" {
+        Box::new(AnthropicProvider::new(api_key, Some(base_url.clone()), spec.name.clone()))
+    } else {
+        Box::new(OpenAIProvider::new(api_key, base_url.clone(), spec.name.clone()))
+    };
+
     let config = AgentConfig {
         name: spec.name.clone(),
         model: spec.model.clone(),
-        provider: "openai".into(),
+        provider: provider_kind,
         system_prompt: spec.system_prompt.clone(),
         max_iterations: spec.max_iterations,
         temperature: spec.temperature,
         toolsets: vec!["builtin".into()],
         hidden: true,
     };
-    Agent::new(config, provider, tools)
+    Agent::new(config, llm_provider, tools)
+}
+
+/// Resolve model name to (provider_kind, base_url, api_key).
+///
+/// Routing order:
+///   1. User-defined routes from `LLM_MODEL_ROUTES` env var (JSON array)
+///   2. Built-in model family detection (Anthropic, OpenAI, Nvidia)
+///   3. Default: Groq (set `LLM_DEFAULT_PROVIDER` env var to override)
+///
+/// NOTE: Ollama is NOT routed here. Ollama is used exclusively for
+/// embeddings via `src/embedding.rs` and is separate from text generation.
+pub fn resolve_provider(model: &str) -> (String, String, String) {
+    let m = model.to_lowercase();
+
+    // ── 1. User-defined overrides ─────────────────────────────────
+    if let Ok(routes_json) = std::env::var("LLM_MODEL_ROUTES") {
+        if let Ok(routes) = serde_json::from_str::<Vec<serde_json::Value>>(&routes_json) {
+            for route in &routes {
+                let prefixes = route["models"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                for prefix in &prefixes {
+                    if m.contains(prefix) {
+                        let provider = route["provider"].as_str().unwrap_or("openai").to_string();
+                        let base_url = route["base_url"].as_str().unwrap_or("").to_string();
+                        let api_key_env = route["api_key_env"].as_str().unwrap_or("LLM_API_KEY");
+                        let api_key = std::env::var(api_key_env).unwrap_or_default();
+                        return (provider, base_url, api_key);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 2. Built-in smart routing ─────────────────────────────────
+    // Claude → Anthropic
+    if m.contains("claude") {
+        let key = std::env::var("ANTHROPIC_API_KEY")
+            .or_else(|_| std::env::var("LLM_API_KEY"))
+            .unwrap_or_default();
+        return ("anthropic".into(), "https://api.anthropic.com".into(), key);
+    }
+
+    // GPT / O-series → OpenAI
+    if m.starts_with("gpt-") || m.starts_with("o1-") || m.starts_with("o3-") || m.contains("openai") {
+        let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+        return ("openai".into(), "https://api.openai.com/v1".into(), key);
+    }
+
+    // Nvidia NIM
+    if m.starts_with("nvlm") || m.contains("nvidia") {
+        let key = std::env::var("NVIDIA_API_KEY")
+            .or_else(|_| std::env::var("LLM_API_KEY"))
+            .unwrap_or_default();
+        return ("openai".into(), "https://integrate.api.nvidia.com/v1".into(), key);
+    }
+
+    // ── 3. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
+    let default_provider = std::env::var("LLM_DEFAULT_PROVIDER")
+        .unwrap_or_else(|_| "groq".into())
+        .to_lowercase();
+
+    match default_provider.as_str() {
+        "openai" => {
+            let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            ("openai".into(), "https://api.openai.com/v1".into(), key)
+        }
+        "anthropic" => {
+            let key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("LLM_API_KEY"))
+                .unwrap_or_default();
+            ("anthropic".into(), "https://api.anthropic.com".into(), key)
+        }
+        "nvidia" => {
+            let key = std::env::var("NVIDIA_API_KEY")
+                .or_else(|_| std::env::var("LLM_API_KEY"))
+                .unwrap_or_default();
+            ("openai".into(), "https://integrate.api.nvidia.com/v1".into(), key)
+        }
+        // Default to Groq
+        _ => {
+            let key = std::env::var("GROQ_API_KEY")
+                .or_else(|_| std::env::var("LLM_API_KEY"))
+                .unwrap_or_default();
+            ("openai".into(), "https://api.groq.com/openai/v1".into(), key)
+        }
+    }
 }
 
 impl Orchestrator {
@@ -201,7 +296,7 @@ impl Orchestrator {
         let supervisor_spec = AgentSpec {
             name: "supervisor".into(),
             model: std::env::var("LLM_MODEL")
-                .unwrap_or_else(|_| "phi4-mini:3.8b".into()),
+                .unwrap_or_else(|_| "llama-3.1-8b-instant".into()),
             system_prompt: Some(format!(
                 "You are a supervisor agent coordinating multiple workers.\n\n\
                 Available workers:\n{}\n\n\
@@ -243,7 +338,7 @@ pub fn parse_agent_specs(json: &str) -> anyhow::Result<Vec<AgentSpec>> {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| {
                         std::env::var("LLM_MODEL")
-                            .unwrap_or_else(|_| "phi4-mini:3.8b".into())
+                            .unwrap_or_else(|_| "llama-3.1-8b-instant".into())
                     }),
                 system_prompt: v["system_prompt"].as_str().map(|s| s.to_string()),
                 max_iterations: v["max_iterations"].as_u64().unwrap_or(10) as u32,
