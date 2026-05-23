@@ -1,94 +1,122 @@
 # Additional Benchmarks for Volt
 
-Research findings on benchmarks that can run with Volt's existing tool set
-(no Docker, no infrastructure beyond what Volt already has).
+Cost analysis for running on **Groq llama-3.1-8b-instant**
+($0.05/1M input, $0.08/1M output).
 
-## Candidate Benchmarks
+## Cost Summary
 
-### 1. GAIA (General AI Assistants) — RECOMMENDED
+| Benchmark | Cases | LLM Calls | Est. Input Tokens | Est. Output Tokens | **Cost (Groq)** |
+|---|---|---|---|---|---|
+| **BFCL non-live** | 1,240 | 1,240 | 2,480,000 | 124,000 | **$0.13** |
+| **BFCL live** | 800 | 800 | 2,000,000 | 120,000 | **$0.11** |
+| **BFCL multi-turn** | 200 | 1,000 | 4,000,000 | 300,000 | **$0.22** |
+| **GAIA dev** | 165 | 1,320 | 5,280,000 | 660,000 | **$0.32** |
+| **GAIA test** | 301 | 3,010 | 15,050,000 | 1,806,000 | **$0.90** |
+| **Tau-Bench** | 100 | 4,000 | 12,000,000 | 1,200,000 | **$0.70** |
+| **ProgramBench** | 50 | 400 | 1,200,000 | 160,000 | **$0.07** |
+| **SimpleQA** | 500 | 500 | 500,000 | 50,000 | **$0.03** |
+| **TOTAL** | — | — | — | — | **$2.48** |
 
-**URL:** https://huggingface.co/datasets/gaia-benchmark/GAIA
-**Tasks:** 466 total (165 validation + 301 test), 3 difficulty levels
+**Key takeaway:** Groq is so cheap ($0.05/$0.08 per million tokens) that
+even the most complex benchmark (GAIA test, 301 questions × 10 turns each)
+costs under $1 in LLM inference. The entire BFCL suite runs for under $0.50.
+
+**Additional costs:** Only GAIA web search may need a SerpAPI subscription
+(~$50/month). BFCL live_web_search also needs SerpAPI. Everything else is
+pure LLM calls.
+
+---
+
+## 1. BFCL Full (Extend existing harness)
+
+**Status:** Harness already built for non-live categories
+**Cost (Groq):** $0.46 (all 3 subsets)
+**Est. wall time:** 10-30 min
 **Docker:** No
-**Tools needed:** web_fetch, web_scrape, bash (code execution), read (PDF/txt), write
-**Est. API cost:** $80-200 for 165-dev set
-**Volt fit:** Excellent. Maps directly to existing tools. Tests multi-step reasoning.
+
+**To extend:**
+1. Add live categories to benchmark.py (`BFCL_v4_live_simple.json`, etc.)
+2. Add multi-turn categories (need state management in harness)
+3. Wire up full BFCL evaluator from `bfcl-eval` PyPI package (AST matching)
+
+---
+
+## 2. GAIA (General AI Assistants)
+
+**Status:** Not started
+**Cost (Groq):** $1.22 (dev + test)
+**Est. wall time:** 2-4 hours
+**Docker:** No
+**Needs:** SerpAPI or Firecrawl for web search (~$50/mo)
 
 **How to run:**
-1. Download the GAIA dataset (gated, requires HuggingFace login)
-2. For each question, Volt agent uses web_fetch/search to find info, bash to compute, read to parse attachments
-3. Answer is a short string — easy to evaluate
-4. Compare against published leaderboard scores
+1. Accept dataset terms on HuggingFace
+2. Download 165 dev + 301 test questions with attachments (PDFs, images, audio)
+3. For each question, Volt agent:
+   - Reads attachments via `read` tool
+   - Searches web via `web_fetch` / `web_scrape`
+   - Runs computations via `bash`
+   - Reports final answer
+4. Submit answers to leaderboard
 
-**Volt advantage:** Multi-agent orchestration can parallelize sub-questions. RAG tool selection reduces token overhead across many tool calls.
-
----
-
-### 2. BFCL V4 Full (Live + Multi-turn) — ALREADY PARTIALLY BUILT
-
-**URL:** https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard
-**Tasks:** 2,000+ (already built for non-live subset)
-**Docker:** No
-**Tools needed:** None for non-live (just LLM calls); SerpAPI for web_search category
-**Est. API cost:** $30-60 for full 2,000-case eval
-**Volt fit:** Already benchmarked on non-live. Extend to live + multi-turn categories.
-
-**How to extend:**
-1. Add `live_simple`, `live_parallel`, `live_multiple`, `live_irrelevance`, `live_relevance` categories
-2. Add multi-turn categories (need state management)
-3. Full AST/execution evaluation (need bfcl-eval package)
+**Volt advantage:** Multi-agent orchestration can parallelize sub-questions.
+Memory system helps retain context across long multi-step chains.
+RAG tool selection keeps per-turn costs low during extended reasoning.
 
 ---
 
-### 3. τ³-bench (Tau-Bench) — MULTI-TURN, NO DOCKER
+## 3. Tau-Bench (Multi-turn Agent Evaluation)
 
-**URL:** https://github.com/sierra-research/tau2-bench
-**Tasks:** ~100-200 per domain (airline, retail, telecom, banking)
-**Docker:** No (pip install)
-**Tools needed:** Domain-specific API tools, user simulator (LLM)
-**Est. API cost:** $150-400 full eval (agent + user simulator)
-**Volt fit:** Tests multi-turn reliability, policy adherence, long sessions.
+**Status:** Not started
+**Cost (Groq):** $0.70 (100 tasks)
+**Est. wall time:** 4-8 hours
+**Docker:** No (pip install tau-bench)
+**Needs:** LLM for user simulator (included in cost above)
 
 **How to run:**
 1. `pip install tau-bench`
-2. Implement Volt agent adapter that speaks tau-bench's JSON protocol
-3. Run eval with `tau-bench run --agent volt`
-4. Compares against published results (GPT-4, Claude)
+2. Implement Volt adapter that speaks tau-bench JSON protocol
+3. Run eval: `tau-bench run --agent volt --model groq/llama-3.1-8b`
+4. Compare against published results
 
-**Volt advantage:** Memory/skills system helps with long sessions. RAG keeps multi-turn costs low.
-
----
-
-### 4. ProgramBench — NEW SWE-BENCH VARIANT
-
-**URL:** https://mini-swe-agent.com/latest/usage/programbench/
-**Tasks:** Programming puzzles (from mini-SWE-agent paper)
-**Docker:** No (standalone)
-**Tools needed:** bash (code execution), read, write
-**Est. API cost:** $20-50
-**Volt fit:** Tests code generation and execution. Minimal overhead with RAG.
+**Volt advantage:** Tests multi-turn reliability. Memory/skills system
+helps with policy adherence across long conversations.
 
 ---
 
-### 5. SimpleQA / Factuality Benchmarks — QUICK TO RUN
+## 4. ProgramBench (Code Puzzles)
 
-**URL:** https://github.com/openai/simple-evals
-**Tasks:** 100-500 questions
+**Status:** Not started
+**Cost (Groq):** $0.07
+**Est. wall time:** 15-30 min
 **Docker:** No
-**Tools needed:** web_fetch (for search), maybe bash
-**Est. API cost:** $5-20
-**Volt fit:** Quick validation. Tests Volt's web search + reasoning capabilities.
+
+New benchmark from the mini-SWE-agent team. Programming puzzles solved
+via bash (code execution) + file I/O. Minimal overhead.
 
 ---
 
-## Recommended Path
+## 5. SimpleQA (Factuality)
 
-| Order | Benchmark | Est. Cost | Time | Why |
-|-------|-----------|-----------|------|-----|
-| 1 | **BFCL full (remaining categories)** | $30-60 | 1-2h | Already have the harness; extend coverage |
-| 2 | **GAIA validation set** | $80-200 | 4-8h | Highest impact, tests real tool use, no Docker |
-| 3 | **Tau-Bench** | $150-400 | 8-16h | Multi-turn, policy adherence, high signal |
-| 4 | **ProgramBench** | $20-50 | 1-2h | Code tasks, complements GAIA |
-| 5 | **SimpleQA** | $5-20 | 30min | Quick factuality check |
+**Status:** Not started
+**Cost (Groq):** $0.03
+**Est. wall time:** 5-10 min
+**Docker:** No
 
-Total est. cost for all: **$285-730**
+Quick validation of Volt's web search + reasoning. 500 questions,
+single-turn, cheap.
+
+---
+
+## Recommended Execution Order
+
+| Step | Benchmark | Cost | Time | Cumulative |
+|------|-----------|------|------|------------|
+| 1 | **BFCL full** (extend live + multi-turn) | $0.46 | 30 min | $0.46 |
+| 2 | **GAIA dev** (validation) | $0.32 | 2 h | $0.78 |
+| 3 | **ProgramBench** | $0.07 | 30 min | $0.85 |
+| 4 | **Tau-Bench** | $0.70 | 6 h | $1.55 |
+| 5 | **GAIA test** (if dev passes) | $0.90 | 4 h | $2.45 |
+| 6 | **SimpleQA** | $0.03 | 10 min | $2.48 |
+
+**Total: ~$2.50, ~13 hours wall time** (mostly the LLM responding).
