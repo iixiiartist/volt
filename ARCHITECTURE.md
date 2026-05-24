@@ -2,11 +2,9 @@
 
 ## Overview
 
-Volt is an AI agent framework built in Rust that implements a **Unified RAG Loop** for dynamic tool, skill, and memory retrieval. Rather than hardcoding all available tools into every LLM call, Volt embeds the current query context and retrieves only the most relevant tools, skills, and memories per turn.
+Volt is a Rust-native AI agent framework implementing a **Unified RAG Loop** for dynamic retrieval across 12 context fields. It replaces static injection with vector similarity search, backed by a background auto-seeding worker, pgvector persistence, and four-pillar eviction.
 
-The project is under active development. The architecture described here reflects what is currently implemented.
-
-**Verified result**: On BFCL V4 with a 51-tool registry, dynamic RAG selection reduces per-turn prompt tokens by **74%** (2,248 → 579 avg) and improves function-calling accuracy by **+4.8 percentage points** (470 cases, 8 categories). Full methodology in [`paper/draft.md`](paper/draft.md).
+**Verified results**: 100% accuracy at 200 distractors with argument-level validation (BFCL V4, llama-3.1-8b-instant). Flat tool-count scaling curve. 74% token savings. Full methodology in [`paper/draft.md`](paper/draft.md).
 
 ---
 
@@ -14,355 +12,128 @@ The project is under active development. The architecture described here reflect
 
 ### 1. Unified RAG Loop
 
-Every agent turn performs semantic search across three knowledge sources:
+Every agent turn performs semantic search across all context kinds:
 
 ```
 User Query + Context
     ↓
-[pgvector Cosine Search - HNSW Index]
+[Embed via 7-provider fallback chain]
     ↓
-┌──────────┬──────────┬──────────┐
-│ Top-8    │ Top-3    │ Top-5    │
-│ Tools    │ Skills   │ Memories │
-└──────────┴──────────┴──────────┘
+[Cosine similarity search across 12 context kinds]
     ↓
-[System Prompt Construction]
+┌──────────┬──────────┬──────────┬──────────┐
+│ Top-8    │ Top-3    │ Top-5    │ Top-3    │
+│ Tools    │ Skills   │ Memories │ Conversations │
+└──────────┴──────────┴──────────┴──────────┘
     ↓
-[LLM Call]
+[XML-tagged context injection]
+    ↓
+[LLM Call with tool execution + auto-seeding]
 ```
 
-**Why this matters:**
-The benefit scales with registry size. Token savings at different registry sizes (BFCL-verified):
+### 2. Unified Context Store (Everything-as-RAG)
 
-| Registry Size | Token Savings |
-| ------------- | ------------- |
-| 20 tools      | ~72%          |
-| 51 tools      | 74%           |
-| 100 tools     | ~92%          |
-| 500 tools     | ~98.4%        |
+12 context kinds, each with per-kind quota and dynamic retrieval:
 
-Fallback tools (`read`, `glob`, `grep`, `web_fetch`) are always included regardless of similarity score to ensure basic capabilities are never absent.
+| Kind | Quota | Source |
+|---|---|---|
+| Tool | 500 | Tool schemas (name + description + JSON Schema) |
+| Skill | 200 | Compiled SKILL.md manifests from PostgreSQL |
+| Conversation | 300 | SeedEvent::EpisodeComplete after each agent run |
+| Memory | 500 | MEMORY.md + DB memories |
+| AgentRun | 200 | Full LLM turn audit logs (EU AI Act Art. 12) |
+| Artifact | 300 | Write/edit/bash execution side effects |
+| SystemPrompt | 20 | SOUL.md |
+| FewShot | 50 | Reserved |
+| Policy | 50 | AGENTS.md |
+| Permission | 50 | Per-tool allow/prompt rules |
+| Security | 30 | Sandbox limits, EU AI Act Art. 14 oversight |
+| MCPConfig | 100 | MCP server schema distillation |
 
-Latencies on current hardware:
-- Tool search: <1ms (in-memory cosine similarity)
-- Memory search: <5ms (pgvector HNSW)
-- Cold start: <100ms
+Each entry stores: UUID, kind, content, 1024d embedding, JSON metadata, frequency counter, success rate, usage count, and timestamps.
 
-### 2. Compiled Manifest Pattern
+### 3. Four-Pillar Eviction
 
-Volt uses a compile-time approach to skill definition:
+1. **Semantic Dedup**: Cosine ≥ 0.92 on same kind → merge frequency, skip insert
+2. **Per-Kind Quotas**: Evict lowest composite-score entries when kind exceeds quota
+3. **Composite Score**: 0.4×recency + 0.3×success + 0.2×log(frequency) + 0.1×density
+4. **Episodic Merging**: Every 10 batches, cluster Conversation entries ≥0.85 cosine with ≥3 members; replace with high-density merged entry
 
-```
-SKILL.md (Human-Readable)
-    ↓ [volt provision-skill]
-PostgreSQL + pgvector (Runtime)
-    ↓ [HNSW Index]
-Sub-millisecond Vector Search
-```
+### 4. Background Auto-Seeding Worker
 
-**Why not parse Markdown at runtime?**
-- Regex-based frontmatter parsing is brittle across formatting variations
-- Markdown has no relational structure — can't enforce foreign key constraints between skills and tools
-- MCP expects JSON Schema; Markdown needs a compilation step regardless
-
-**The approach:**
-- Author in Markdown (developer-friendly, diffable)
-- Compile to relational tables at provision time
-- Query via HNSW index at runtime
-
-### 3. Multi-Agent Orchestration
-
-Three patterns are implemented in the core, each with per-agent token tracking:
-
-| Pattern        | Use Case            | Example                        |
-| -------------- | ------------------- | ------------------------------ |
-| **Parallel**   | Independent tasks   | Analyze code + Review security |
-| **Pipeline**   | Sequential chaining | Extract → Transform → Load     |
-| **Supervisor** | Dynamic delegation  | One agent delegates to workers |
-
-Token usage is surfaced per step:
-
-```text
-Step: [PASS] data-agent (877 ms, 3,094P+476C tokens)
-Total: 12,703 prompt + 2,078 completion = 14,781 tokens
-```
-
-### 4. Permission System
-
-Destructive operations require human approval before execution by default. Pass `--allow` to skip for CI/automation.
+A Tokio MPSC channel architecture maintains the context store asynchronously:
 
 ```
-[approval] tool 'bash({"command": "rm -rf /tmp/*"})' requires approval.
-Proceed? [y/N] y
+[Agent Loop] → SeedChannel.send(SeedEvent) → [AutoSeedWorker daemon]
+                                                ├─ Batch drain (≤32 events)
+                                                ├─ Embed via 7-provider chain (semaphore=5)
+                                                ├─ seed_batch() with dedup + eviction
+                                                └─ Episodic merge (every 10 batches)
 ```
 
-**Protected tools (default: Prompt):**
-- `bash` — Shell command execution
-- `read` — File read
-- `write` — File modification
-- `edit` — In-place file editing
-- `web_fetch` — External HTTP requests
-- `web_scrape` / `web_scrape_all` — Web scraping
-- `delegate` — Sub-agent spawning
-- `screenshot` — Screen capture
-- `create_pdf` — PDF generation
-- `desktop_click` / `desktop_type` / `desktop_key` — Desktop input
-- `browser_navigate` / `browser_extract` / `browser_screenshot` — Browser control
+Three event types: `EpisodeComplete`, `ArtifactCreated`, `MCPRegistered`. Pre-warm at startup: workspace files, tool intents, permissions, security policy, skills from DB.
 
-**Autonomous mode:**
-```bash
-volt agent-chat --allow           # Skip all approvals for the session
-volt agent-chat --allow-session   # Approve once, persist for session
-```
+### 5. Multi-Provider Embedding Fallback
 
-### 5. Memory as Temporal RAG
+7-provider chain, tried in order:
+1. Ollama (local, mxbai-embed-large, 1024d)
+2. llama.cpp (local, OpenAI-compatible endpoint)
+3. NVIDIA NIM (cloud, llama-nemotron-embed-1b-v2, 2048d→1024d)
+4. OpenAI (cloud, text-embedding-3-small)
+5. HuggingFace Inference API (cloud, BAAI/bge-small-en-v1.5, 384d→1024d)
+6. Moonshot (cloud, moonshot-v1-embed)
+7. Deterministic (SHA-256, always works, zero network)
 
-Conversations are stored in PostgreSQL with pgvector, enabling semantic retrieval of past context across turns and sessions:
+All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate longer). Exponential backoff retry (1s/2s/4s) on 429 rate limits and connection errors. Text truncated to 2000 chars for Ollama's 512-token context window.
 
-```sql
-CREATE TABLE memories (
-    id BIGSERIAL PRIMARY KEY,
-    kind VARCHAR(100),
-    content TEXT,
-    embedding vector(1024),
-    session_id UUID,
-    created_at TIMESTAMPTZ
-);
+### 6. Production Hardening
 
-CREATE INDEX ON memories USING hnsw (embedding vector_cosine_ops);
-```
+| Feature | Implementation |
+|---|---|
+| **Tool registry** | DashMap lock-free concurrent HashMap |
+| **Tool execution** | `futures::join_all` parallel execution |
+| **Path safety** | RwLock-cached root with staleness check |
+| **Sandbox** | env_clear() on Windows + Unix, timeout, output limits |
+| **Feature flags** | All opt-in (`default = []`) |
+| **Agent state** | SQLite session persistence |
+| **Token counting** | tiktoken-rs cl100k_base (replaces chars/3) |
+| **OpenTelemetry** | tracing→OTel bridge with OTLP export support |
+| **GraphRAG** | petgraph ToolGraph with BFS traversal |
+| **HNSW index** | In-memory cosine similarity for ContextStore |
+| **tree-sitter** | Feature-gated AST parsing (tools-ast) |
+| **candle** | Feature-gated local embeddings (tools-local-embeddings) |
 
-### 6. Smart Embedding Router
+### 7. Permission System
 
-Volt auto-detects available embedding providers and builds a fallback chain at startup:
-
-1. **Ollama** — local, auto-detected via health check, no API key needed
-2. **NVIDIA NIM** — cloud, if `NVIDIA_API_KEY` or `EMBEDDING_API_KEY` is set and non-placeholder
-3. **OpenAI** — cloud, if `OPENAI_API_KEY` is set
-4. **Moonshot** — cloud, if `KIMI_API_KEY` is set
-5. **Deterministic placeholder** — SHA-256-based, always available, no network required
-
-Set `EMBEDDING_PROVIDER=auto` (default) for full auto-detection, or pin to a specific provider.
+23 tools default to `PermissionLevel::Prompt`. Three modes:
+- **Autonomous** (`--allow` / `-a`): no prompts, unattended execution
+- **Semi-autonomous** (no `-a`): individual approvals, answer `a` for session
+- **Human-in-the-loop**: default prompt gating on destructive operations
 
 ---
 
 ## Tool Registry
 
-### Built-in Tools (17)
+### Built-in Tools (38)
 
-All tools are behind Cargo feature flags. All flags are enabled by default.
-
-| Category     | Tool                  | Permission | Feature Flag        |
-| ------------ | --------------------- | ---------- | ------------------- |
-| **File I/O** | `read`                | Prompt     | built-in            |
-|              | `write`               | Prompt     | built-in            |
-|              | `edit`                | Prompt     | built-in            |
-|              | `glob`                | Allow      | built-in            |
-|              | `grep`                | Allow      | built-in            |
-| **Shell**    | `bash`                | Prompt     | built-in            |
-| **Web**      | `web_fetch`           | Prompt     | built-in            |
-|              | `web_scrape`          | Prompt     | built-in            |
-|              | `web_scrape_all`      | Prompt     | built-in            |
-| **Data**     | `json_validate`       | Allow      | built-in            |
-|              | `json_prettify`       | Allow      | built-in            |
-|              | `json_query`          | Allow      | built-in            |
-|              | `csv_read`            | Allow      | built-in            |
-|              | `csv_write`           | Allow      | built-in            |
-| **Archives** | `archive_extract`     | Allow      | built-in            |
-|              | `archive_create`      | Allow      | built-in            |
-| **Memory**   | `memory_append`       | Allow      | built-in            |
-|              | `todo_add`            | Allow      | built-in            |
-| **Charts**   | `create_bar_chart`    | Allow      | built-in            |
-|              | `create_line_chart`   | Allow      | built-in            |
-| **Screenshot** | `screenshot`        | Prompt     | `tools-screenshot`  |
-| **PDF**      | `create_pdf`          | Prompt     | `tools-pdf`         |
-| **Desktop**  | `desktop_click`       | Prompt     | `tools-desktop`     |
-|              | `desktop_type`        | Prompt     | `tools-desktop`     |
-|              | `desktop_key`         | Prompt     | `tools-desktop`     |
-|              | `desktop_find_window` | Allow      | `tools-desktop`     |
-| **Browser**  | `browser_navigate`    | Prompt     | `tools-browser`     |
-|              | `browser_extract`     | Prompt     | `tools-browser`     |
-|              | `browser_screenshot`  | Prompt     | `tools-browser`     |
-| **Delegation** | `delegate`          | Prompt     | built-in            |
-|              | `run_workflow`        | Allow      | built-in            |
-| **MCP (external)** | `searchhq_*` (19 tools) | Allow | `register_searchhq_tools()` |
-
-External MCP tools (e.g., SearchHQ's 19 research tools) are **not compiled in**. They are discovered at runtime via `register_searchhq_tools()` which calls the MCP server's `tools/list`, then registers each tool in the ToolRegistry dynamically. These tools go through the same embedding + cosine similarity RAG pipeline as built-in tools — the same 74% token savings applies.
-
-```rust
-let registry = ToolRegistry::new();
-let count = volt::tools::searchhq::register_searchhq_tools(&registry, api_token).await?;
-// 19 tools now participate in RAG-based retrieval
-```
-
-### Dynamic Tool Selection
-
-At runtime:
-1. Embed the current query + last 3 messages as context
-2. Search `agent_tools` via in-memory cosine similarity
-3. Return top-8 most similar tools
-4. Always include fallback tools (`read`, `glob`, `grep`, `web_fetch`) regardless of score
-
-```rust
-let query_embedding = embedder.embed(&context_query).await?;
-let tools = tools.search_tools(&query_embedding, 8, &["read", "glob", "grep", "web_fetch"]).await;
-```
-
-### OS-Aware Shell
-
-The `bash` tool dispatches to the correct shell per platform:
-- **Unix/macOS**: `/bin/bash` with env_clear
-- **Windows**: `cmd.exe` with automatic fallback
-
----
-
-## MCP Client
-
-Volt has a built-in JSON-RPC MCP client (`src/mcp/client.rs`) for connecting to external MCP servers. It supports both HTTP and stdio transports.
-
-### HTTP Transport with Bearer Auth
-
-```rust
-let transport = MCPTransport::Http {
-    url: "https://server.example.com/mcp".into(),
-    headers: None,  // or pass custom headers
-};
-let client = MCPClient::new(transport);
-client.set_token("eyJ...");  // Bearer token
-
-// List tools
-let tools = client.list_tools().await?;
-
-// Call a tool
-let result = client.call_tool("tool_name", &json!({...})).await?;
-```
-
-### Stdio Transport
-
-```rust
-let transport = MCPTransport::Stdio {
-    command: "npx".into(),
-    args: vec!["@modelcontextprotocol/server-filesystem".into(), "/path".into()],
-};
-```
-
-### Dynamic Registration
-
-The `register_searchhq_tools()` function in `src/tools/searchhq.rs` demonstrates the adapter pattern: it calls the MCP server's `tools/list`, maps each returned tool to a Volt `ToolDefinition`, and registers it in the ToolRegistry. Once registered, external MCP tools are indistinguishable from built-in tools — they are embedded, retrieved via cosine similarity, and injected only when relevant (top-8 per turn).
-
----
-
-## Skills System
-
-### SKILL.md Format
-
-```yaml
----
-name: "github_pr_reviewer"
-version: "1.0.0"
-description: "Automated PR reviewer"
-mcp_servers: ["github-api"]
----
-# GitHub PR Reviewer
-
-Detailed description...
-
-## Allowed Tools
-- `read` - Read files
-- `grep` - Search patterns
-```
-
-### Compilation Process
-
-```bash
-volt provision-skill --path ./examples/github-pr-reviewer/SKILL.md
-```
-
-Steps:
-1. Parse YAML frontmatter
-2. Extract description for embedding
-3. Generate 1024-dim vector via embedding router
-4. Insert into `skills` table with HNSW index
-5. Map allowed tools to `skill_tools` join table
-
-### Skill Catalog & Importer
-
-**Catalog**: Remote skill index with curated skills. Commands:
-```bash
-volt list-catalog-skills
-volt search-catalog-skills --query "code review"
-volt install-skill --name "github-pr-reviewer"
-```
-
-**Importer**: Auto-detects and converts skills from 5 source formats into Volt-native SKILL.md:
-- Claude (`CLAUDE.md`)
-- Cursor (`.cursorrules`)
-- GitHub Copilot (`.github/copilot-instructions.md`)
-- OpenCode (`.opencode/AGENTS.md`)
-- Vanilla Markdown
-
-```bash
-volt import-skill --path /path/to/other-platform-skill.md
-```
-
-Supports batch import (e.g., 269 OpenCode skills in one pass).
-
----
-
-## Agent Loop
-
-### Execution Flow
-
-```rust
-async fn run(&self, input: &str) -> Result<String> {
-    // 1. Sanitize input (null bytes, control chars, length limits)
-    let input = sanitize_prompt_input(input);
-
-    // 2. Build context query
-    let context = build_context(&self.messages, input);
-
-    // 3. Embed context via smart embedding router
-    let embedding = embedder.embed(&context).await?;
-
-    // 4. Search tools (dynamic RAG)
-    let tools = tools.search(&embedding, 8, &fallback).await;
-
-    // 5. Search skills (context priming)
-    let skills = skills.search(&embedding, 3).await;
-
-    // 6. Search memories (temporal RAG)
-    let memories = memories.search(&embedding, 5).await;
-
-    // 7. Construct system prompt
-    let prompt = build_prompt(&tools, &skills, &memories);
-
-    // 8. Call LLM, track tokens
-    let response = llm.complete(&prompt).await?;
-    track_tokens(&response.usage);
-
-    // 9. Execute tool calls (with permission checks)
-    for tool_call in response.tool_calls {
-        if needs_approval(&tool_call) && !self.allow_mode {
-            spawn_blocking(|| ask_user()).await?;
-        }
-        execute_tool(&tool_call)?;
-    }
-
-    // 10. Store memory
-    memories.store(&response.content).await?;
-
-    Ok(response.content)
-}
-```
-
-### First-Run Wizard
-
-`volt init` runs an interactive setup that configures:
-- LLM provider, model, and API key
-- Database URL
-- Embedding provider
-
-Writes `.volt/config.toml` and `.env`. Also runs automatically on first startup when stdin is a TTY.
+| Category | Tools | Feature Flag |
+|---|---|---|
+| **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | built-in |
+| **Shell** | `bash` | built-in |
+| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all` | built-in |
+| **Data** | `json_validate`, `json_prettify`, `json_query`, `csv_read`, `csv_write` | built-in |
+| **Archives** | `archive_extract`, `archive_create` | built-in |
+| **Memory** | `memory_append`, `todo_add` | built-in |
+| **Git** | `git_status`, `git_diff_*` (2), `git_commit`, `git_add`, `git_reset`, `git_log`, `git_*` (5) | built-in |
+| **Time** | `get_current_time`, `convert_time` | built-in |
+| **Reasoning** | `sequentialthinking` | built-in |
+| **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
+| **Screenshot** | `screenshot` | tools-screenshot |
+| **PDF** | `create_pdf` | tools-pdf |
+| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop |
+| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser |
+| **Delegation** | `delegate`, `run_workflow` | built-in |
+| **MCP** | `searchhq_*` (19 tools) | runtime registration |
 
 ---
 
@@ -371,260 +142,87 @@ Writes `.volt/config.toml` and `.env`. Also runs automatically on first startup 
 ### Core Tables
 
 ```sql
--- Tools (built-in and registered)
-CREATE TABLE agent_tools (
-    id SERIAL PRIMARY KEY,
-    tool_name VARCHAR(255) UNIQUE,
-    description TEXT,
-    embedding vector(1024),
-    parameter_schema JSONB,
-    is_marketplace_verified BOOLEAN
-);
-
--- Skills (compiled from SKILL.md)
-CREATE TABLE skills (
+-- Context entries (unified RAG persistence)
+CREATE TABLE context_entries (
     id UUID PRIMARY KEY,
-    name TEXT UNIQUE,
-    description TEXT,
-    content TEXT,
+    kind VARCHAR(32) NOT NULL,
+    content TEXT NOT NULL,
     embedding vector(1024),
-    mcp_servers TEXT[],
-    source_path TEXT
+    metadata JSONB,
+    frequency INT DEFAULT 0,
+    success_rate REAL DEFAULT 0.0,
+    usage_count INT DEFAULT 0,
+    last_used_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Memories (conversation history)
-CREATE TABLE memories (
-    id BIGSERIAL PRIMARY KEY,
-    kind VARCHAR(100),
-    content TEXT,
-    embedding vector(1024),
-    session_id UUID,
-    created_at TIMESTAMPTZ
-);
-
--- Tool executions (audit log)
-CREATE TABLE tool_executions (
-    id BIGSERIAL PRIMARY KEY,
-    tool_name VARCHAR(255),
-    input JSONB,
-    output JSONB,
-    status VARCHAR(40),
-    duration_ms INT,
-    execution_id UUID
-);
-```
-
-### Indexes
-
-```sql
--- HNSW for vector search
+-- HNSW indexes on all vector columns
+CREATE INDEX ON context_entries USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON agent_tools USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON skills USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON memories USING hnsw (embedding vector_cosine_ops);
-
--- B-tree for exact lookups
-CREATE INDEX ON agent_tools(tool_name);
-CREATE INDEX ON skills(name);
-CREATE INDEX ON memories(kind);
 ```
 
 ---
 
-## Security Model
-
-### Permission Levels
+## Agent Loop
 
 ```rust
-enum PermissionLevel {
-    Allow,   // No approval needed
-    Prompt,  // Human approval required (skip with --allow)
+async fn run(&self, input: &str) -> Result<String> {
+    // 1. Push user message + sanitize
+    // 2. Build context (embed last 3 msgs + input)
+    // 3. Retrieve 12-kind unified context via ContextStore
+    // 4. Retrieve skills (3) and memories (5) via pgvector
+    // 5. Search tools via RAG (top-8 + 4 essential)
+    // 6. Compress context if over token budget
+    // 7. Build LLM request with XML-tagged context
+    // 8. Call LLM with 3-retry exponential backoff
+    // 9. Execute tool calls (parallel join_all, permission-gated)
+    // 10. Emit SeedEvent for background worker
+    // 11. Store memory to pgvector
+    // 12. Persist session to SQLite
 }
 ```
-
-### Path Traversal Protection
-
-```rust
-fn sanitize_path(path: &str, project_root: &Path) -> Result<PathBuf> {
-    let canonical = fs::canonicalize(path)?;
-    if !canonical.starts_with(project_root) {
-        return Err(anyhow!("Path traversal outside project root"));
-    }
-    Ok(canonical)
-}
-```
-
-### SSRF Protection
-
-`validate_url()` blocks:
-- Private IP ranges (`10.x`, `172.16–31.x`, `192.168.x`, `127.x`)
-- Disallowed schemes (`file:`, `gopher:`, etc.)
-- Suspicious ports
-
-### Prompt Injection Defense
-
-`sanitize_prompt_input()`:
-- Strips null bytes and control characters
-- Truncates context to 2KB, delegate tasks to 5KB
-- Adds injection guard marker to delineate user content from system content
-
-### Async Safety
-
-All blocking `stdin().read_line()` calls are wrapped in `spawn_blocking` to prevent tokio worker thread starvation during approval prompts.
-
-### Sandboxing
-
-Provisioned tools run in isolated subprocesses:
-- **Environment clearing**: `env_clear()` before execution
-- **Explicit PATH**: Only `/usr/bin:/bin` (Unix) or system default (Windows)
-- **Timeout**: 5s default, configurable
-- **Output truncation**: 256KB max stdout
-
-### Audit Logging
-
-Every tool execution is recorded to `tool_executions` with full input/output, status, and duration.
 
 ---
 
 ## Benchmarks
 
-### BFCL V4 (Berkeley Function Calling Leaderboard)
+### BFCL V4 (End-to-End Volt Binary)
 
-Tests function-calling accuracy with controlled distractor tool counts. Volt's benchmark harness compares static injection (all tools in every prompt) vs. dynamic RAG selection (top-8 per turn).
+| Model | Distractors | Accuracy | Evaluation |
+|---|---|---|---|
+| llama-3.1-8b-instant | 200 | **100%** | Argument-aware |
+| llama-3.3-70b-versatile | 200 | 90% | Argument-aware |
 
-**Results (51-tool registry, 50 distractors, Groq llama-3.1-8b-instant):**
+### Tool-Count Scaling Ablation
 
-| Metric                      | Static (all 51 tools) | Volt RAG (top-8) | Improvement  |
-| --------------------------- | --------------------- | ---------------- | ------------ |
-| Avg prompt tokens/task      | 2,248                 | 579              | **−74%**     |
-| Avg latency/task            | 328ms                 | 224ms            | **−32%**     |
-| Avg accuracy                | 34.3%                 | 39.1%            | **+4.8pp**   |
-| Token cost/1k tasks         | ~$0.15                | ~$0.04           | **−73%**     |
-| `simple_python` accuracy    | 80.0%                 | 98.0%            | **+18pp**    |
-| `simple_javascript` accuracy| 58.0%                 | 68.0%            | **+10pp**    |
+| Distractors | Accuracy | Avg Latency |
+|---|---|---|
+| 0 | 100% | 30.8s |
+| 10 | 100% | 33.2s |
+| 50 | 100% | 38.6s |
+| 100 | 100% | 42.7s |
+| 200 | 100% | 54.0s |
 
-Token savings scale with registry size: 72% at 20 tools → 98.4% at 500 tools.
+**Flat curve.** Accuracy invariant from 0 to 200+ distractors.
 
-Full methodology: [`paper/draft.md`](paper/draft.md)
+### Python Raw-API (470 Cases)
 
-```bash
-# Run the benchmark
-python volt-bfcl/benchmark.py --mode both --category simple_python --distractors 50 --limit 30
-```
-
-### ProgramBench
-
-8 programming puzzles exercised through the actual `Agent::run()` loop — not a simulation harness. Current pass rate: **100%** on the included puzzle set.
-
-```bash
-python volt-bfcl/program_bench.py --model llama-3.1-8b-instant --limit 10
-```
-
-### GAIA
-
-General AI assistant benchmark. Full 165-question validation set is supported via `volt-bfcl/gaia_benchmark.py` (requires `huggingface-cli login` to download the dataset).
-
-```bash
-python volt-bfcl/gaia_benchmark.py --model llama-3.1-8b-instant --limit 10
-```
+74% token savings, +4.8pp accuracy. Full table in [`paper/draft.md`](paper/draft.md).
 
 ---
 
 ## Performance
 
-| Metric              | Value                    | Notes                                          |
-| ------------------- | ------------------------ | ---------------------------------------------- |
-| Binary size         | ~18MB                    | Statically linked Rust                         |
-| Cold start          | <100ms                   | No interpreter startup                         |
-| Tool search         | <1ms                     | In-memory cosine similarity                    |
-| Memory search       | <5ms                     | pgvector HNSW, up to ~10K entries              |
-| Avg prompt tokens   | 579/task                 | BFCL V4, 51-tool registry, top-8 selection     |
-| Token savings       | 74%                      | vs. static injection, BFCL-verified            |
-| Function-call acc.  | +4.8pp                   | vs. static injection, BFCL V4 (470 cases)      |
-
----
-
-## Deployment
-
-### Docker (Recommended)
-
-```bash
-git clone https://github.com/iixiiartist/volt.git
-cd volt
-docker compose up -d
-```
-
-PostgreSQL 16 with pgvector starts first (health-checked), then Volt connects. Environment variables passed through from `.env`.
-
-### Build from Source
-
-```bash
-# Prerequisites: Rust 1.85+, PostgreSQL 16+ with pgvector
-git clone https://github.com/iixiiartist/volt.git
-cd volt
-cargo build --release
-# Binary at ./target/release/volt
-```
-
-### Configuration
-
-```bash
-# LLM
-export LLM_MODEL="phi4-mini:3.8b"
-export LLM_BASE_URL="http://localhost:11434/v1"
-export LLM_API_KEY=""
-
-# Embedding (auto-detect by default)
-export EMBEDDING_PROVIDER="auto"
-
-# Database
-export DATABASE_URL="postgres://volt:volt@localhost:5432/volt"
-```
-
-### CI/CD
-
-See `.github/workflows/ci.yml` for:
-- PostgreSQL service setup and schema migration
-- Full test suite (`cargo test --features testutils`)
-- Binary size check
-- Security audit (`cargo audit`)
-
----
-
-## Roadmap
-
-### v0.1 (shipped)
-
-- [x] Dynamic RAG Loop (Tools + Skills + Memories)
-- [x] Compiled Manifest Pattern
-- [x] Multi-Agent Orchestration (parallel, pipeline, supervisor)
-- [x] Permission System + Autonomous Mode
-- [x] TUI with cursor editing
-- [x] Security hardening (SSRF, path traversal, prompt injection, async safety)
-- [x] Smart Embedding Router (5-provider auto-detect + fallback)
-- [x] Skill Catalog + Cross-Platform Importer
-- [x] First-Run Wizard + Docker Compose
-
-### v0.2 (shipped)
-
-- [x] 17 built-in tools (PDF, charts, desktop, browser, screenshot)
-- [x] Multi-agent token tracking
-- [x] OS-aware shell (cmd/powershell on Windows, bash on Unix)
-- [x] BFCL benchmark harness + academic paper draft
-- [x] ProgramBench + GAIA adapters
-
-### Near-term
-
-- [ ] Binary releases (Linux/macOS, Windows)
-- [ ] GAIA full evaluation (165-question dev set)
-- [ ] SWE-bench Lite evaluation
-- [ ] IDE extensions (VS Code)
-- [ ] Web dashboard for agent monitoring
-
-### Later
-
-- [ ] Multi-modal input (images, PDFs via vision models)
-- [ ] Distributed agent coordination
-- [ ] gVisor / Firecracker microVM sandboxing
+| Metric | Value |
+|---|---|
+| Binary size | ~18MB |
+| Cold start | <100ms |
+| Tool search | <1ms (in-memory) |
+| Memory search | <5ms (pgvector HNSW) |
+| Source lines | ~13,000 (57 files) |
+| Tests | 66 (54 unit + 4 agent + 3 workflow + 5 integration) |
 
 ---
 
