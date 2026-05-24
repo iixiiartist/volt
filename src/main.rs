@@ -4,6 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use volt::agent::loop_rs::Agent;
 use volt::config::Settings;
+use volt::context::ContextStore;
 use volt::db;
 use volt::embedding::EmbeddingClient;
 use volt::llm::anthropic::AnthropicProvider;
@@ -13,7 +14,7 @@ use volt::mcp::MCPServer;
 use volt::models::*;
 use volt::registry::{provision_manifest, RegistryClient};
 use volt::tools::ToolRegistry;
-use volt::{sandbox, validation};
+use volt::{sandbox, validation, worker};
 
 #[derive(Parser, Debug)]
 #[command(name = "volt")]
@@ -85,6 +86,9 @@ enum Commands {
         model: Option<String>,
         #[arg(long, short = 'a', default_value_t = false)]
         allow: bool,
+        /// Load tool stubs from a JSONL file (one tool per line, BFCL format)
+        #[arg(long)]
+        load_tools: Option<String>,
     },
 
     /// Start an interactive agent chat session.
@@ -310,7 +314,7 @@ async fn main() -> anyhow::Result<()> {
             let result = sandbox::run_command(&command, &policy).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
-        Commands::AgentRun { input, model, allow } => {
+        Commands::AgentRun { input, model, allow, load_tools } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
@@ -326,6 +330,56 @@ async fn main() -> anyhow::Result<()> {
 
             let embedder = EmbeddingClient::new_smart().await;
             let tools = setup_tools(Some(&embedder)).await;
+
+            // Load tool stubs from a JSONL file (BFCL format)
+            if let Some(ref path) = load_tools {
+                match std::fs::read_to_string(path) {
+                    Ok(contents) => {
+                        let mut count = 0;
+                        for line in contents.lines() {
+                            let line = line.trim();
+                            if line.is_empty() { continue; }
+                            if let Ok(fn_def) = serde_json::from_str::<serde_json::Value>(line) {
+                                let name = fn_def["name"].as_str().unwrap_or("unknown");
+                                let desc = fn_def["description"].as_str().unwrap_or("No description");
+                                let schema = fn_def["parameters"].clone();
+                                if name != "unknown" {
+                                    let name_owned = name.to_string();
+                                    tools.register(
+                                        name,
+                                        desc,
+                                        schema,
+                                        "bfcl",
+                                        std::sync::Arc::new(move |_args| {
+                                            let msg = format!("[stub] {} called — no real implementation", name_owned);
+                                            Box::pin(async move {
+                                                volt::models::ToolResult {
+                                                    success: true,
+                                                    output: msg,
+                                                    error: None,
+                                                    duration_ms: 0,
+                                                }
+                                            })
+                                        }),
+                                    ).await;
+                                    count += 1;
+                                }
+                            }
+                        }
+                        eprintln!("[tools] loaded {} BFCL stubs from {}", count, path);
+                    }
+                    Err(e) => eprintln!("[tools] failed to load {}: {}", path, e),
+                }
+            }
+
+            // Clone before moves for worker wiring
+            let tools_for_agent = tools.clone();
+            let tools_for_seed = tools.clone();
+            let embedder_for_skills = embedder.clone();
+            let embedder_for_worker = embedder.clone();
+            let cancel_for_agent = cancel.clone();
+            let cancel_for_worker = cancel.clone();
+
             let config = AgentConfig {
                 name: "volt-agent".into(),
                 model,
@@ -337,8 +391,8 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: allow,
             };
-            let mut agent = Agent::new(config, provider, tools)
-                .with_cancel(cancel)
+            let mut agent = Agent::new(config, provider, tools_for_agent)
+                .with_cancel(cancel_for_agent)
                 .with_stream(std::sync::Arc::new(|token| {
                     print!("{}", token);
                 }));
@@ -355,8 +409,38 @@ async fn main() -> anyhow::Result<()> {
             if let Some(ref p) = pool {
                 agent = agent.with_memory(p.clone(), embedder.clone());
             }
-            let skills = setup_skills(pool, Some(embedder)).await;
+            let skills = setup_skills(pool.clone(), Some(embedder_for_skills)).await;
             agent = agent.with_skills(skills);
+
+            let context_store = ContextStore::new();
+
+            if let Some(ref pool) = pool {
+                let skill_store = context_store.clone();
+                let skill_pool = pool.clone();
+                let skill_emb = embedder.clone();
+                tokio::spawn(async move {
+                    worker::seed_skills_from_db(&skill_store, &skill_pool, &skill_emb).await;
+                });
+            }
+            let (seed_channel, seed_rx) = worker::create_seed_channel();
+            agent = agent
+                .with_context(context_store.clone())
+                .with_seed_channel(seed_channel);
+
+            worker::AutoSeedWorker::new(context_store.clone(), embedder_for_worker, cancel_for_worker)
+                .spawn(seed_rx);
+
+            let seed_store = context_store.clone();
+            let seed_embedder = embedder.clone();
+            let seed_tools = tools_for_seed.clone();
+            let seed_sandbox = settings.sandbox_policy.clone();
+            tokio::spawn(async move {
+                worker::seed_from_workspace(&seed_store, &seed_embedder).await;
+                worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
+                worker::seed_permissions(&seed_store, &seed_tools).await;
+                worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
+            });
+
             println!();
             match agent.run(&input).await {
                 Ok(_) => {

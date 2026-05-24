@@ -15,6 +15,7 @@ pub mod skills;
 pub mod tools;
 pub mod tui;
 pub mod validation;
+pub mod worker;
 
 #[cfg(any(test, feature = "testutils"))]
 pub mod test_utils;

@@ -5,6 +5,7 @@ use crate::llm::provider::TokenCallback;
 use crate::models::*;
 use crate::skills::SkillRegistry;
 use crate::tools::ToolRegistry;
+use crate::worker::SeedChannel;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,6 +20,7 @@ pub struct Agent {
     embedder: Option<EmbeddingClient>,
     skills: Option<Arc<SkillRegistry>>,
     context_store: Option<Arc<ContextStore>>,
+    seed_channel: Option<SeedChannel>,
     cancel: Option<CancelToken>,
     on_token: Option<TokenCallback>,
 }
@@ -51,6 +53,7 @@ impl Agent {
             embedder: None,
             skills: None,
             context_store: None,
+            seed_channel: None,
             cancel: None,
             on_token: None,
         }
@@ -69,6 +72,11 @@ impl Agent {
 
     pub fn with_context(mut self, context_store: Arc<ContextStore>) -> Self {
         self.context_store = Some(context_store);
+        self
+    }
+
+    pub fn with_seed_channel(mut self, seed_channel: SeedChannel) -> Self {
+        self.seed_channel = Some(seed_channel);
         self
     }
 
@@ -162,6 +170,7 @@ impl Agent {
             } else {
                 self.push_assistant_message(&mut state, &response, None).await;
                 self.store_memory(input, response.content.as_str(), &state, context_embedding.as_ref()).await;
+                self.seed_episode_complete(input, response.content.as_str(), &state).await;
                 return Ok(Arc::unwrap_or_clone(response.content));
             }
         }
@@ -416,11 +425,15 @@ impl Agent {
                 }
             }
 
+            let error_msg = result.error.clone();
             let output = if result.success {
-                result.output
+                result.output.clone()
             } else {
-                format!("error: {}", result.error.unwrap_or_default())
+                format!("error: {}", error_msg.unwrap_or_default())
             };
+
+            // Auto-seed artifact from tool execution
+            self.seed_artifact_if_applicable(&tc.name, &result).await;
 
             state.messages.push(Message {
                 role: "tool".into(),
@@ -449,6 +462,71 @@ impl Agent {
                     Some(state.session_id),
                 )
                 .await;
+            }
+        }
+    }
+
+    async fn seed_episode_complete(&self, input: &str, content: &str, state: &tokio::sync::MutexGuard<'_, AgentState>) {
+        if let Some(ref ch) = self.seed_channel {
+            let tools_used: Vec<String> = state.messages.iter()
+                .filter(|m| m.tool_name.is_some())
+                .filter_map(|m| m.tool_name.clone())
+                .collect();
+            let tools_used_dedup: Vec<String> = {
+                let mut seen = std::collections::HashSet::new();
+                tools_used.into_iter().filter(|t| seen.insert(t.clone())).collect()
+            };
+            let resolution = content.chars().take(500).collect::<String>();
+            ch.episode_complete(
+                state.session_id,
+                input,
+                &resolution,
+                tools_used_dedup,
+                true,
+                state.iteration,
+            );
+        }
+    }
+
+    async fn seed_artifact_if_applicable(&self, tool_name: &str, result: &ToolResult) {
+        if let Some(ref ch) = self.seed_channel {
+            if !result.success {
+                return;
+            }
+            match tool_name {
+                "write" | "edit" => {
+                    let output = &result.output;
+                    let file_path = output.lines()
+                        .find(|l| l.contains("Wrote to") || l.contains("Edited"))
+                        .map(|l| l.to_string())
+                        .unwrap_or_else(|| "unknown file".into());
+                    let ext = std::path::Path::new(&file_path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("txt");
+                    let language = match ext {
+                        "rs" => "Rust",
+                        "py" => "Python",
+                        "js" | "ts" | "tsx" => "JavaScript/TypeScript",
+                        "json" => "JSON",
+                        "toml" | "yaml" | "yml" => "Config",
+                        "md" => "Markdown",
+                        "sql" => "SQL",
+                        "html" => "HTML",
+                        "css" => "CSS",
+                        _ => ext,
+                    };
+                    ch.artifact_created(&file_path, &result.output, language, tool_name);
+                }
+                "bash" => {
+                    ch.artifact_created(
+                        "shell_execution",
+                        &result.output,
+                        "shell",
+                        tool_name,
+                    );
+                }
+                _ => {}
             }
         }
     }
