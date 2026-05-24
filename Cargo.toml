@@ -10,7 +10,8 @@ testutils = []
 tools-screenshot = ["windows-capture", "image", "base64"]
 tools-pdf = ["printpdf"]
 tools-desktop = ["enigo"]
-default = ["tools-screenshot", "tools-pdf", "tools-desktop"]
+tools-browser = ["headless_chrome"]
+default = ["tools-screenshot", "tools-pdf", "tools-desktop", "tools-browser"]
 
 [lib]
 name = "volt"
@@ -61,6 +62,7 @@ image = { version = "0.25", optional = true, default-features = false, features 
 base64 = { version = "0.22", optional = true }
 printpdf = { version = "0.8", optional = true }
 enigo = { version = "0.3", optional = true }
+headless_chrome = { version = "1.0", optional = true }
 
 
 [dev-dependencies]
