@@ -369,6 +369,36 @@ exact semantic matches rather than topical relevance.
     are based on 16--80 cases per condition. Confidence intervals are
     wide; these should be interpreted as provisional negative results.
 
+## Compliance Implications
+
+The architecture described above --- unified context retrieval with typed,
+persisted entries --- has implications beyond performance. Regulated
+industries (finance, healthcare, energy) face binding requirements under
+the EU AI Act (August 2026 enforcement), GLBA, and related frameworks.
+
+**Article 12 (Record-Keeping).** Volt logs every LLM turn as a typed
+`ContextEntry` with the complete prompt, response, tool calls, and token
+usage. This produces a mathematically verifiable audit trail: an auditor
+can reconstruct the exact context window at any timestamp and verify
+which tools, memories, and policies were injected.
+
+**Article 14 (Human Oversight).** Tool execution is gated by
+`PermissionLevel::Prompt` by default for destructive operations,
+enforcing human-in-the-loop at the retrieval level rather than relying
+on post-hoc review.
+
+**Data Minimization (GDPR synergy).** Dynamic RAG ensures that only
+relevant context (top-8 tools, top-5 memories, top-3 skills) is sent to
+the LLM, rather than the entire knowledge base. For a 200-tool registry,
+this is a 96% reduction in injected context --- keeping PII and
+proprietary data inside the trusted boundary.
+
+**Safe by Design (Rust).** The type system enforces that every context
+entry conforms to a strict schema at deserialization time. Malformed or
+injected entries are rejected before the LLM processes them, providing
+a compiler-enforced security boundary absent in dynamically-typed
+frameworks.
+
 ## Conclusion
 
 Volt demonstrates that RAG-based tool selection is not merely a token
