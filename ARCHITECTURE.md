@@ -185,6 +185,15 @@ All tools are behind Cargo feature flags. All flags are enabled by default.
 |              | `browser_screenshot`  | Prompt     | `tools-browser`     |
 | **Delegation** | `delegate`          | Prompt     | built-in            |
 |              | `run_workflow`        | Allow      | built-in            |
+| **MCP (external)** | `searchhq_*` (19 tools) | Allow | `register_searchhq_tools()` |
+
+External MCP tools (e.g., SearchHQ's 19 research tools) are **not compiled in**. They are discovered at runtime via `register_searchhq_tools()` which calls the MCP server's `tools/list`, then registers each tool in the ToolRegistry dynamically. These tools go through the same embedding + cosine similarity RAG pipeline as built-in tools — the same 74% token savings applies.
+
+```rust
+let registry = ToolRegistry::new();
+let count = volt::tools::searchhq::register_searchhq_tools(&registry, api_token).await?;
+// 19 tools now participate in RAG-based retrieval
+```
 
 ### Dynamic Tool Selection
 
@@ -204,6 +213,42 @@ let tools = tools.search_tools(&query_embedding, 8, &["read", "glob", "grep", "w
 The `bash` tool dispatches to the correct shell per platform:
 - **Unix/macOS**: `/bin/bash` with env_clear
 - **Windows**: `cmd.exe` with automatic fallback
+
+---
+
+## MCP Client
+
+Volt has a built-in JSON-RPC MCP client (`src/mcp/client.rs`) for connecting to external MCP servers. It supports both HTTP and stdio transports.
+
+### HTTP Transport with Bearer Auth
+
+```rust
+let transport = MCPTransport::Http {
+    url: "https://server.example.com/mcp".into(),
+    headers: None,  // or pass custom headers
+};
+let client = MCPClient::new(transport);
+client.set_token("eyJ...");  // Bearer token
+
+// List tools
+let tools = client.list_tools().await?;
+
+// Call a tool
+let result = client.call_tool("tool_name", &json!({...})).await?;
+```
+
+### Stdio Transport
+
+```rust
+let transport = MCPTransport::Stdio {
+    command: "npx".into(),
+    args: vec!["@modelcontextprotocol/server-filesystem".into(), "/path".into()],
+};
+```
+
+### Dynamic Registration
+
+The `register_searchhq_tools()` function in `src/tools/searchhq.rs` demonstrates the adapter pattern: it calls the MCP server's `tools/list`, maps each returned tool to a Volt `ToolDefinition`, and registers it in the ToolRegistry. Once registered, external MCP tools are indistinguishable from built-in tools — they are embedded, retrieved via cosine similarity, and injected only when relevant (top-8 per turn).
 
 ---
 
