@@ -17,4 +17,5 @@ pub mod json_tool;
 pub mod mcp_client;
 #[cfg(feature = "tools-screenshot")]
 pub mod screenshot;
+pub mod chart_tool;
 pub use registry::{ToolFn, ToolRegistry};

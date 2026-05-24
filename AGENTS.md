@@ -1,39 +1,40 @@
-## Handoff for next session (cleaned machine)
+## Handoff for next session
 
 ### First steps
 ```bash
 git pull
-cargo build --features "tools-screenshot"  # verify new screenshot tool compiles
-cargo test --features testutils            # run all tests
+cargo build --features "tools-screenshot"  # verify new tools compile
+cargo test --features testutils
 ```
 
 ### New tools added
-- **screenshot** (`src/tools/screenshot.rs`) — captures primary monitor, returns base64 PNG
-  - Feature: `tools-screenshot` (enabled by default)
-  - Dependencies: `windows-capture`, `image`, `base64`
-  - Tested: 937 KB PNG in 1.6s
+| Tool | Module | Description |
+|---|---|---|
+| **screenshot** | `src/tools/screenshot.rs` | Capture primary monitor, base64 PNG |
+| **create_bar_chart** | `src/tools/chart_tool.rs` | Bar chart from labels+values, saves HTML with Plotly.js |
+| **create_line_chart** | `src/tools/chart_tool.rs` | Line chart from labels+values, saves HTML with Plotly.js |
 
-### More tools ready to implement (see paper/tool_libraries_report.md)
-Priority order:
-1. `create_pdf` / `edit_pdf` — lopdf crate
-2. `create_chart` — plotly crate
-3. `desktop_*` — uiautomation + enigo crates
-4. `browser_*` — chromiumoxide crate
+Screenshot dependency: `windows-capture`, `image`, `base64` (feature `tools-screenshot`, default on).
+Charts are pure Rust + serde_json, no extra deps.
+
+### Tools not yet built (crate API issues on this toolchain)
+- PDF creation (lopdf API changed)
+- Desktop automation (enigo/uiautomation API mismatch)
+- Browser automation (chromiumoxide zip conflict)
+
+These can be added on the other machine — see `paper/tool_libraries_report.md` for specs.
 
 ### Benchmarks to run
-1. **BFCL full** — extend volt-bfcl/benchmark.py to live + multi-turn categories (~$0.46 on Groq)
+1. **BFCL full** — extend `volt-bfcl/benchmark.py` to live + multi-turn (~$0.46 on Groq)
 2. **GAIA** — implement adapter for 165 dev questions (~$0.32 on Groq)
-3. **ProgramBench** — code puzzles from mini-SWE-agent (~$0.07)
+3. **ProgramBench** — code puzzles (~$0.07)
 
-### Paper
-- Draft at paper/draft.md (arXiv-style)
-- BFCL results are real: 74% token savings, +6.7pp accuracy with RAG
+### Paper draft at `paper/draft.md`
+BFCL results: 74% token savings, +6.7pp accuracy with RAG. Ready for submission.
 
-### Environment
-- `.env` has GROQ_API_KEY (valid) and DATABASE_URL
-- Ollama needs `mxbai-embed-large` pulled for Volt's embedding pipeline
-- Pagefile set to system-managed (may eat disk under compilation load)
-- Docker WSL vhdx compacted to 3 GB (was 33 GB)
-- This machine: 15 GB RAM, Intel Core Ultra 5 135U + NPU, 98 GB free disk
-
-All prior work committed and pushed to main.
+### Environment notes
+- `.env` has working GROQ_API_KEY + DATABASE_URL
+- Ollama needs `mxbai-embed-large` for Volt's embedding pipeline (pull on other machine)
+- Pagefile is system-managed (will grow under compilation load)
+- Docker VHDX compacted to 3 GB (was 33 GB)
+- **98 GB free disk, 8 GB free RAM at idle**

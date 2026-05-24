@@ -1213,6 +1213,25 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
         )
         .await;
 
+    registry.register("create_bar_chart","Create a bar chart from labels and values, save as HTML.",
+        serde_json::json!({"type":"object","properties":{"title":{"type":"string"},"labels":{"type":"array","items":{"type":"string"}},"values":{"type":"array","items":{"type":"number"}},"output_path":{"type":"string"}},"required":["title","labels","values","output_path"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let t = args["title"].as_str().unwrap_or("Chart");
+            let l: Vec<String> = args["labels"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let v: Vec<f64> = args["values"].as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).collect()).unwrap_or_default();
+            let o = args["output_path"].as_str().unwrap_or("chart.html");
+            volt::tools::chart_tool::create_bar_chart(t, l, v, o).await
+        }))).await;
+
+    registry.register("create_line_chart","Create a line chart from labels and values, save as HTML.",
+        serde_json::json!({"type":"object","properties":{"title":{"type":"string"},"labels":{"type":"array","items":{"type":"string"}},"values":{"type":"array","items":{"type":"number"}},"output_path":{"type":"string"}},"required":["title","labels","values","output_path"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let t = args["title"].as_str().unwrap_or("Chart");
+            let l: Vec<String> = args["labels"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let v: Vec<f64> = args["values"].as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).collect()).unwrap_or_default();
+            let o = args["output_path"].as_str().unwrap_or("chart.html");
+            volt::tools::chart_tool::create_line_chart(t, l, v, o).await
+        }))).await;
     registry
         .register(
             "csv_read",

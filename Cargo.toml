@@ -58,6 +58,7 @@ windows-capture = { version = "2", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 base64 = { version = "0.22", optional = true }
 
+
 [dev-dependencies]
 tempfile = "3"
 mockall = "0.13"
