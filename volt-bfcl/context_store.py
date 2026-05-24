@@ -3,8 +3,9 @@
 Provides unified retrieval for all context types with enhanced ranking
 (cosine similarity + success_rate + frequency + recency).
 
-Uses Ollama mxbai-embed-large for proper dense embeddings when available,
-falls back to TF-IDF only if Ollama is unreachable.
+Uses Ollama mxbai-embed-large or sentence-transformers all-MiniLM-L6-v2
+for proper dense embeddings when available, falls back to TF-IDF only
+if neither is available.
 """
 
 import hashlib
@@ -14,41 +15,78 @@ import time
 from typing import Any
 from uuid import uuid4
 
-# ── Ollama embedding client ─────────────────────────────────────────────────
+# ── Embedding backend ───────────────────────────────────────────────────────
 
+import os
 import requests
 
 OLLAMA_EMBED_URL = "http://localhost:11434/api/embed"
 OLLAMA_MODEL = "mxbai-embed-large"
 
-_ollama_available = None
+# Hugging Face Inference API for all-MiniLM-L6-v2 (free tier, no local deps)
+# Hugging Face Inference API for embeddings (free tier, no local deps)
+# Using BAAI/bge-small-en-v1.5 which is supported by the HF router for feature extraction
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or ""
+
+_embed_backend = None  # "huggingface", "ollama", or "tfidf"
 
 
-def _check_ollama() -> bool:
-    global _ollama_available
-    if _ollama_available is not None:
-        return _ollama_available
+def _init_backend():
+    global _embed_backend
+    # Try Hugging Face Inference API first (no local deps, uses all-MiniLM-L6-v2)
+    if HF_TOKEN:
+        try:
+            r = requests.post(HF_API_URL, headers={"Authorization": f"Bearer {HF_TOKEN}"}, json={"inputs": ["test"]}, timeout=5)
+            if r.status_code == 200:
+                _embed_backend = "huggingface"
+                print("[context/embed] using Hugging Face API (BAAI/bge-small-en-v1.5, 384d)")
+                return
+            else:
+                print(f"[context/embed] HF API returned {r.status_code}, trying Ollama...")
+        except Exception as e:
+            print(f"[context/embed] HF API unavailable ({e}), trying Ollama...")
+    else:
+        print("[context/embed] No HF_TOKEN set, trying Ollama...")
+    # Try Ollama next
     try:
         r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        data = r.json()
-        models = [m["name"] for m in data.get("models", [])]
-        _ollama_available = any(OLLAMA_MODEL in m for m in models)
-        if _ollama_available:
-            print(f"[context/embed] Ollama {OLLAMA_MODEL} available")
-        else:
-            print(f"[context/embed] Ollama running but {OLLAMA_MODEL} not found, fallback to TF-IDF")
-        return _ollama_available
+        models = [m["name"] for m in r.json().get("models", [])]
+        if any(OLLAMA_MODEL in m for m in models):
+            _embed_backend = "ollama"
+            print(f"[context/embed] using Ollama {OLLAMA_MODEL}")
+            return
     except Exception:
-        _ollama_available = False
-        print("[context/embed] Ollama not available, using TF-IDF fallback")
-        return False
+        pass
+    # Fallback to TF-IDF
+    _embed_backend = "tfidf"
+    print("[context/embed] no API available, using TF-IDF fallback")
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts using Ollama or TF-IDF fallback."""
-    if _check_ollama():
+    global _embed_backend
+    if _embed_backend is None:
+        _init_backend()
+
+    if _embed_backend == "huggingface":
         try:
-            # Batch in chunks of 10 to avoid overwhelming Ollama
+            # Single string for feature extraction (not batch — HF router handles it)
+            input_data = {"inputs": texts[0]} if len(texts) == 1 else {"inputs": texts}
+            r = requests.post(HF_API_URL, headers={"Authorization": f"Bearer {HF_TOKEN}"}, json=input_data, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                # bge-small returns flat array for single input: [0.1, 0.2, ...]
+                # or list of arrays for batch: [[0.1, 0.2], [0.3, 0.4]]
+                if data and isinstance(data[0], (int, float)):
+                    return [data]
+                return data
+            else:
+                print(f"[context/embed] HF API returned {r.status_code}: {r.text[:100]}")
+        except Exception as e:
+            print(f"[context/embed] HF API error: {e}")
+
+    elif _embed_backend == "ollama":
+        try:
             all_embs = []
             for i in range(0, len(texts), 10):
                 batch = texts[i:i + 10]
@@ -60,8 +98,9 @@ def _embed(texts: list[str]) -> list[list[float]]:
                 all_embs.extend(r.json()["embeddings"])
             return all_embs
         except Exception as e:
-            print(f"[context/embed] Ollama error: {e}, falling back to TF-IDF")
-            _ollama_available = False
+            print(f"[context/embed] Ollama failed: {e}, falling back to TF-IDF")
+            _embed_backend = "tfidf"
+
     return [_fallback_embed(t) for t in texts]
 
 
@@ -133,8 +172,8 @@ class ContextEntry:
 class ContextStore:
     def __init__(self):
         self.entries: list[ContextEntry] = []
-        # Pre-check Ollama availability once
-        _check_ollama()
+        # Initialize embedding backend once
+        _init_backend()
 
     def add(self, kind: str, content: str, metadata: dict | None = None) -> str:
         entry = ContextEntry(kind, content, metadata)

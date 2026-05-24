@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import os
+import requests
 import sys
 import time
 from pathlib import Path
@@ -124,6 +125,22 @@ def get_embedder():
     global _embedder
     if _embedder is not None:
         return _embedder
+    # Try Hugging Face Inference API (free, fast, no local deps)
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or ""
+    if hf_token:
+        try:
+            test_r = requests.post(
+                "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5",
+                headers={"Authorization": f"Bearer {hf_token}"},
+                json={"inputs": "test"},
+                timeout=5
+            )
+            if test_r.status_code == 200:
+                _embedder = ("hf", hf_token)
+                print("[embed] using Hugging Face API (BAAI/bge-small-en-v1.5, 384d)")
+                return _embedder
+        except Exception:
+            pass
     _embedder = "fallback"
     print("[embed] using fallback TF-IDF (fast, no deps)")
     return _embedder
@@ -133,7 +150,28 @@ def embed_texts(texts: list[str]):
     emb = get_embedder()
     if emb == "fallback":
         return _fallback_embed(texts)
+    if isinstance(emb, tuple) and emb[0] == "hf":
+        return _hf_embed(texts, emb[1])
     return emb.encode(texts, show_progress_bar=False)
+
+
+def _hf_embed(texts: list[str], token: str) -> list[list[float]]:
+    """Embed via Hugging Face Inference API (BAAI/bge-small-en-v1.5)."""
+    try:
+        r = requests.post(
+            "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"inputs": texts},
+            timeout=15
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data and isinstance(data[0], (int, float)):
+                return [data]
+            return data
+    except Exception as e:
+        print(f"[embed] HF API error: {e}")
+    return _fallback_embed(texts)
 
 
 def _fallback_embed(texts: list[str]) -> list[list[float]]:
@@ -642,11 +680,12 @@ if __name__ == "__main__":
         print(f"[context] unified ContextStore enabled — will enrich with retrieved skills/memories/runs")
         if args.context_embed == "ollama":
             # Force Ollama check; if unavailable, falls back to TF-IDF
-            from context_store import _check_ollama
-            if _check_ollama():
-                print(f"[context] using Ollama mxbai-embed-large for dense embeddings")
+            from context_store import _init_backend, _embed_backend
+            _init_backend()
+            if _embed_backend is not None and _embed_backend != "tfidf":
+                print(f"[context] using dense embeddings ({type(_embed_backend).__name__})")
             else:
-                print(f"[context] Ollama unavailable, falling back to TF-IDF")
+                print(f"[context] dense embeddings unavailable, using TF-IDF")
 
     categories = list(BFCL_DATA_FILES.keys()) if args.category == "all" else [args.category]
 
