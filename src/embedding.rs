@@ -157,8 +157,17 @@ impl EmbeddingClient {
             return Ok(deterministic_placeholder_embedding(description));
         }
 
+        // Truncate to fit within typical embedding model context windows.
+        // mxbai-embed-large: 512 tokens, BGE-small: 512 tokens.
+        // ~2000 chars is a safe upper bound for most models.
+        let truncated = if description.len() > 2000 {
+            &description[..2000]
+        } else {
+            description
+        };
+
         for (i, config) in self.providers.iter().enumerate() {
-            match self.embed_with(config, description).await {
+            match self.embed_with(config, truncated).await {
                 Ok(embedding) => {
                     if i > 0 && self.verbose {
                         eprintln!(

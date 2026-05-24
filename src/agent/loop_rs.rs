@@ -432,6 +432,7 @@ impl Agent {
             let id = tc.id.clone();
             let store = self.context_store.clone();
             let embedder = self.embedder.clone();
+            info!("executing tool: {} with {}", name, args);
             async move {
                 let result = tools.execute(&name, &args).await.unwrap_or_else(|e| ToolResult {
                     success: false,
