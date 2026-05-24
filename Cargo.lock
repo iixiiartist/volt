@@ -4041,6 +4041,7 @@ dependencies = [
  "image",
  "lopdf",
  "mockall",
+ "rand 0.8.6",
  "ratatui",
  "regex",
  "reqwest",
