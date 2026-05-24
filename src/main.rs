@@ -459,9 +459,12 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) => {
                     println!();
                     println!();
+                    // Save agent state for session resume
+                    save_agent_session(&agent).await;
                 }
                 Err(e) => {
                     eprintln!("error: {}", e);
+                    save_agent_session(&agent).await;
                 }
             }
         }
@@ -935,6 +938,28 @@ fn build_provider(model: &str, agent_name: &str) -> (Box<dyn LLMProvider>, Strin
 async fn load_manifest(path: &PathBuf) -> anyhow::Result<RegistryManifest> {
     let body = tokio::fs::read_to_string(path).await?;
     Ok(serde_json::from_str::<RegistryManifest>(&body)?)
+}
+
+async fn save_agent_session(agent: &Agent) {
+    let sessions_path = std::path::PathBuf::from("volt_sessions.db");
+    if let Ok(sp) = volt::session::open_sessions(&sessions_path).await {
+        let state = agent.state.lock().await;
+        let title = state.messages.first()
+            .map(|m| m.content.chars().take(60).collect::<String>())
+            .unwrap_or_else(|| "unnamed".into());
+        let _ = volt::session::create_session(&sp, &Session {
+            id: state.session_id,
+            agent_name: state.name.clone(),
+            title,
+            message_count: state.messages.len() as u32,
+            created_at: state.created_at,
+            updated_at: chrono::Utc::now(),
+        }).await;
+        let _ = volt::session::delete_session_messages(&sp, state.session_id).await;
+        for msg in &state.messages {
+            let _ = volt::session::save_message(&sp, state.session_id, msg).await;
+        }
+    }
 }
 
 async fn setup_skills(

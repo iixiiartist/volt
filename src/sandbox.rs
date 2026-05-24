@@ -9,7 +9,12 @@ fn is_windows() -> bool {
 
 fn sandbox_cmd(program: &str, policy: &SandboxPolicy) -> Command {
     let mut cmd = Command::new(program);
-    if !is_windows() {
+    if is_windows() {
+        cmd.env_clear()
+            .env("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap_or_else(|_| "C:\\Windows".into()))
+            .env("TEMP", std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()))
+            .env("TMP", std::env::var("TMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()));
+    } else {
         cmd.env_clear().env("PATH", "/usr/bin:/bin");
     }
     cmd.kill_on_drop(true);

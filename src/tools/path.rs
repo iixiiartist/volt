@@ -1,7 +1,7 @@
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
-static PROJECT_ROOT: OnceLock<Option<String>> = OnceLock::new();
+static PROJECT_ROOT: RwLock<Option<String>> = RwLock::new(None);
 
 fn is_windows() -> bool {
     cfg!(target_os = "windows")
@@ -19,15 +19,25 @@ fn find_project_root() -> Option<String> {
     }
 }
 
-fn project_root() -> Option<&'static String> {
-    PROJECT_ROOT.get_or_init(|| find_project_root()).as_ref()
+fn project_root() -> Option<String> {
+    if let Ok(cached) = PROJECT_ROOT.read() {
+        if let Some(ref root) = *cached {
+            if Path::new(root).join("Cargo.toml").exists() || Path::new(root).join(".git").exists() {
+                return Some(root.clone());
+            }
+        }
+    }
+    let root = find_project_root();
+    if let Ok(mut cached) = PROJECT_ROOT.write() {
+        *cached = root.clone();
+    }
+    root
 }
 
 pub fn sanitize_path(path: &str) -> Result<String, String> {
-    let root = match project_root() {
-        Some(r) => Path::new(r).canonicalize().map_err(|e| format!("project root canonicalize: {}", e))?,
-        None => return Err("no project root found".into()),
-    };
+    let root_str = project_root().ok_or("no project root found")?;
+    let root = Path::new(&root_str).canonicalize()
+        .map_err(|e| format!("project root canonicalize: {}", e))?;
 
     let p = Path::new(path);
     let normalized = if p.is_absolute() {
@@ -36,7 +46,6 @@ pub fn sanitize_path(path: &str) -> Result<String, String> {
         root.join(p)
     };
 
-    // On Windows, also try with extended-length prefix for long paths
     let canonical = normalized.canonicalize().or_else(|_| {
         if is_windows() {
             let extended = Path::new(r"\\?\").join(&normalized);
@@ -62,7 +71,6 @@ pub fn resolve_path(path: &str) -> String {
         None => return path.to_string(),
     };
     let trimmed = path.trim_start_matches('/').trim_start_matches('\\');
-    // Handle Windows absolute paths with drive letters (e.g., C:\path)
     let trimmed = if is_windows() {
         if let Some(drive) = trimmed.get(2..) {
             if trimmed.len() > 2 && trimmed.as_bytes().get(1) == Some(&b':') {
@@ -78,7 +86,7 @@ pub fn resolve_path(path: &str) -> String {
     };
     let candidate = Path::new(&root).join(trimmed);
     if let Ok(canonical) = candidate.canonicalize() {
-        if canonical.starts_with(root) {
+        if canonical.starts_with(&root) {
             return canonical.to_string_lossy().to_string();
         }
     }
@@ -87,7 +95,7 @@ pub fn resolve_path(path: &str) -> String {
         let suffix = components[components.len()-i..].join("/");
         let candidate = Path::new(&root).join(&suffix);
         if let Ok(canonical) = candidate.canonicalize() {
-            if canonical.starts_with(root) {
+            if canonical.starts_with(&root) {
                 return canonical.to_string_lossy().to_string();
             }
         }
@@ -121,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_path_absolute_project_path() {
-        let root = project_root().cloned().unwrap();
+        let root = project_root().unwrap();
         let p = sanitize_path(&format!("{}/src/lib.rs", root));
         assert!(p.is_ok(), "absolute project path should be OK");
     }

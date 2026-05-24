@@ -1,13 +1,13 @@
 use crate::embedding::EmbeddingClient;
 use crate::models::{PermissionLevel, ToolDefinition, ToolResult};
+use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub type ToolFn = Arc<dyn Fn(Value) -> futures::future::BoxFuture<'static, ToolResult> + Send + Sync>;
 
 pub struct ToolRegistry {
-    tools: RwLock<std::collections::HashMap<String, RegisteredTool>>,
+    tools: DashMap<String, RegisteredTool>,
 }
 
 struct RegisteredTool {
@@ -20,7 +20,7 @@ struct RegisteredTool {
 impl ToolRegistry {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            tools: RwLock::new(std::collections::HashMap::new()),
+            tools: DashMap::new(),
         })
     }
 
@@ -45,8 +45,7 @@ impl ToolRegistry {
         exec: ToolFn,
         permission: PermissionLevel,
     ) {
-        let mut tools = self.tools.write().await;
-        tools.insert(
+        self.tools.insert(
             name.to_string(),
             RegisteredTool {
                 def: ToolDefinition {
@@ -63,26 +62,23 @@ impl ToolRegistry {
     }
 
     pub async fn get_definitions(&self) -> Vec<ToolDefinition> {
-        let tools = self.tools.read().await;
-        tools.values().map(|t| t.def.clone()).collect()
+        self.tools.iter().map(|r| r.value().def.clone()).collect()
     }
 
     pub async fn get_definition(&self, name: &str) -> Option<ToolDefinition> {
-        let tools = self.tools.read().await;
-        tools.get(name).map(|t| t.def.clone())
+        self.tools.get(name).map(|r| r.def.clone())
     }
 
     pub async fn get_permission(&self, name: &str) -> PermissionLevel {
-        let tools = self.tools.read().await;
-        tools
+        self.tools
             .get(name)
-            .map(|t| t.permission)
+            .map(|r| r.permission)
             .unwrap_or(PermissionLevel::Allow)
     }
 
     pub async fn execute(&self, name: &str, args: &Value) -> anyhow::Result<ToolResult> {
-        let tools = self.tools.read().await;
-        let tool = tools
+        let tool = self
+            .tools
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("tool '{}' not found", name))?;
         let result = tokio::time::timeout(
@@ -102,18 +98,17 @@ impl ToolRegistry {
     }
 
     pub async fn compute_embeddings(&self, embedder: &EmbeddingClient) {
-        let items: Vec<(String, String)> = {
-            let tools = self.tools.read().await;
-            tools
-                .values()
-                .map(|t| {
-                    let text = format!("{}: {}", t.def.name, t.def.description);
-                    (t.def.name.clone(), text)
-                })
-                .collect()
-        };
+        let items: Vec<(String, String)> = self
+            .tools
+            .iter()
+            .map(|r| {
+                let t = r.value();
+                let text = format!("{}: {}", t.def.name, t.def.description);
+                (t.def.name.clone(), text)
+            })
+            .collect();
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let sem = Arc::new(tokio::sync::Semaphore::new(5));
         let results: Vec<(String, Option<Vec<f32>>)> =
             futures::future::join_all(items.into_iter().map(|(name, text)| {
                 let sem = sem.clone();
@@ -125,9 +120,8 @@ impl ToolRegistry {
             }))
             .await;
 
-        let mut tools = self.tools.write().await;
         for (name, emb) in results {
-            if let Some(tool) = tools.get_mut(&name) {
+            if let Some(mut tool) = self.tools.get_mut(&name) {
                 tool.embedding = emb;
             }
         }
@@ -139,24 +133,24 @@ impl ToolRegistry {
         limit: usize,
         essential: &[&str],
     ) -> Vec<ToolDefinition> {
-        let tools = self.tools.read().await;
-        let mut scored: Vec<(f32, &RegisteredTool)> = tools
-            .values()
-            .filter_map(|t| {
+        let mut scored: Vec<(f32, ToolDefinition)> = self
+            .tools
+            .iter()
+            .filter_map(|r| {
+                let t = r.value();
                 t.embedding.as_ref().map(|e| {
                     let sim = cosine_similarity(e, query_embedding);
-                    (sim, t)
+                    (sim, t.def.clone())
                 })
             })
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut result: Vec<ToolDefinition> = scored.into_iter().take(limit).map(|(_, t)| t.def.clone()).collect();
+        let mut result: Vec<ToolDefinition> = scored.into_iter().take(limit).map(|(_, d)| d).collect();
 
-        // Ensure essential tools are always included
         for name in essential {
             if !result.iter().any(|d| d.name == *name) {
-                if let Some(t) = tools.get(*name) {
+                if let Some(t) = self.tools.get(*name) {
                     result.push(t.def.clone());
                 }
             }

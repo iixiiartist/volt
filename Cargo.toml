@@ -11,7 +11,7 @@ tools-screenshot = ["windows-capture", "image"]
 tools-pdf = []
 tools-desktop = ["enigo"]
 tools-browser = ["headless_chrome"]
-default = ["tools-screenshot", "tools-pdf", "tools-desktop", "tools-browser"]
+default = []
 
 [lib]
 name = "volt"
@@ -65,6 +65,7 @@ lopdf = { version = "0.35", optional = true }
 enigo = { version = "0.3", optional = true }
 headless_chrome = { version = "1.0", optional = true }
 tiktoken-rs = "0.11"
+dashmap = "6"
 
 
 [dev-dependencies]
