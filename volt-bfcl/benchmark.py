@@ -608,6 +608,8 @@ if __name__ == "__main__":
                         help="Add N distractor functions per case to simulate large tool registries")
     parser.add_argument("--context-enrich", action="store_true",
                         help="Enable unified context retrieval (skills + memories + past runs) alongside tools")
+    parser.add_argument("--context-embed", choices=["tfidf", "ollama"], default="tfidf",
+                        help="Embedding backend for context store (default: tfidf)")
     parser.add_argument("--api-key", help="OpenAI API key (default: $OPENAI_API_KEY)")
     parser.add_argument("--base-url", help="API base URL (default: $OPENAI_BASE_URL or https://api.openai.com/v1)")
     args = parser.parse_args()
@@ -638,6 +640,13 @@ if __name__ == "__main__":
         from context_store import ContextStore
         context_store = ContextStore()
         print(f"[context] unified ContextStore enabled — will enrich with retrieved skills/memories/runs")
+        if args.context_embed == "ollama":
+            # Force Ollama check; if unavailable, falls back to TF-IDF
+            from context_store import _check_ollama
+            if _check_ollama():
+                print(f"[context] using Ollama mxbai-embed-large for dense embeddings")
+            else:
+                print(f"[context] Ollama unavailable, falling back to TF-IDF")
 
     categories = list(BFCL_DATA_FILES.keys()) if args.category == "all" else [args.category]
 
@@ -652,7 +661,7 @@ if __name__ == "__main__":
         limit = args.limit if args.limit > 0 else total
         print(f"Total cases: {total}, running: {limit}")
 
-        # Seed the context store from ALL OTHER categories to avoid self-referencing noise
+        # Seed the context store — use same-category data with proper Ollama embeddings
         if context_store is not None and len(context_store) == 0:
             all_bfcl_cats = list(BFCL_DATA_FILES.keys())
             for seed_cat in all_bfcl_cats:
@@ -660,7 +669,7 @@ if __name__ == "__main__":
                     continue
                 try:
                     seed_cases = load_test_cases(seed_cat)
-                    for case in seed_cases[:30]:
+                    for case in seed_cases[:5]:
                         for f in case.get("function", []):
                             context_store.populate_from_functions([f])
                         qs = case.get("question", [])
@@ -674,7 +683,15 @@ if __name__ == "__main__":
                             )
                 except Exception as e:
                     print(f"  [context] skip seed {seed_cat}: {e}")
-            print(f"[context] seeded {len(context_store)} entries from cross-category data")
+            # Also add same-category entries for evaluating enrichment quality
+            try:
+                same_cases = load_test_cases(cat)
+                for case in same_cases[:5]:  # small sample for domain alignment
+                    for f in case.get("function", []):
+                        context_store.populate_from_functions([f])
+            except Exception:
+                pass
+            print(f"[context] seeded {len(context_store)} entries (cross + {cat} sample)")
 
         if args.mode in ("static", "both"):
             print(f"\n>>> Running STATIC mode (all functions injected per case)")

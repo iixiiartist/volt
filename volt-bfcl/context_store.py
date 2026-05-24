@@ -2,27 +2,74 @@
 
 Provides unified retrieval for all context types with enhanced ranking
 (cosine similarity + success_rate + frequency + recency).
+
+Uses Ollama mxbai-embed-large for proper dense embeddings when available,
+falls back to TF-IDF only if Ollama is unreachable.
 """
 
 import hashlib
 import json
 import math
 import time
-from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-# ── Context kinds ──────────────────────────────────────────────────────────
+# ── Ollama embedding client ─────────────────────────────────────────────────
 
-CONTEXT_KINDS = {
-    "skill", "memory", "agent_run", "artifact",
-    "system_prompt", "few_shot", "policy",
-}
+import requests
 
-# ── Embedding helpers (mirrors benchmark.py) ────────────────────────────────
+OLLAMA_EMBED_URL = "http://localhost:11434/api/embed"
+OLLAMA_MODEL = "mxbai-embed-large"
+
+_ollama_available = None
+
+
+def _check_ollama() -> bool:
+    global _ollama_available
+    if _ollama_available is not None:
+        return _ollama_available
+    try:
+        r = requests.get("http://localhost:11434/api/tags", timeout=3)
+        data = r.json()
+        models = [m["name"] for m in data.get("models", [])]
+        _ollama_available = any(OLLAMA_MODEL in m for m in models)
+        if _ollama_available:
+            print(f"[context/embed] Ollama {OLLAMA_MODEL} available")
+        else:
+            print(f"[context/embed] Ollama running but {OLLAMA_MODEL} not found, fallback to TF-IDF")
+        return _ollama_available
+    except Exception:
+        _ollama_available = False
+        print("[context/embed] Ollama not available, using TF-IDF fallback")
+        return False
+
+
+def _embed(texts: list[str]) -> list[list[float]]:
+    """Embed a batch of texts using Ollama or TF-IDF fallback."""
+    if _check_ollama():
+        try:
+            # Batch in chunks of 10 to avoid overwhelming Ollama
+            all_embs = []
+            for i in range(0, len(texts), 10):
+                batch = texts[i:i + 10]
+                r = requests.post(OLLAMA_EMBED_URL, json={
+                    "model": OLLAMA_MODEL,
+                    "input": batch,
+                }, timeout=30)
+                r.raise_for_status()
+                all_embs.extend(r.json()["embeddings"])
+            return all_embs
+        except Exception as e:
+            print(f"[context/embed] Ollama error: {e}, falling back to TF-IDF")
+            _ollama_available = False
+    return [_fallback_embed(t) for t in texts]
+
+
+# ── TF-IDF fallback embedding (mirrors benchmark.py) ────────────────────────
 
 VOCAB = {}
 VOCAB_COUNTER = 0
+
 
 def _fallback_embed(text: str) -> list[float]:
     global VOCAB, VOCAB_COUNTER
@@ -68,7 +115,7 @@ class ContextEntry:
 
     def compute_embedding(self):
         text = f"{self.kind}: {self.content}"
-        self.embedding = _fallback_embed(text)
+        self.embedding = _embed([text])[0]
 
     def to_dict(self) -> dict:
         return {
@@ -86,6 +133,8 @@ class ContextEntry:
 class ContextStore:
     def __init__(self):
         self.entries: list[ContextEntry] = []
+        # Pre-check Ollama availability once
+        _check_ollama()
 
     def add(self, kind: str, content: str, metadata: dict | None = None) -> str:
         entry = ContextEntry(kind, content, metadata)
@@ -95,7 +144,7 @@ class ContextStore:
 
     def search(self, query: str, limit: int = 8, kind_filter: str | None = None,
                min_score: float = 0.25) -> list[ContextEntry]:
-        query_emb = _fallback_embed(query)
+        query_emb = _embed([query])[0]
         scored = []
 
         for e in self.entries:
@@ -106,17 +155,11 @@ class ContextStore:
 
             sim = cosine_sim(query_emb, e.embedding)
 
-            # Recency: exp(-days_since_last_use / 30)
             days_since = (time.time() - e.last_used_at) / 86400.0
             recency = math.exp(-days_since / 30.0)
-
-            # Frequency: log(1 + count)
             freq = math.log(1.0 + e.frequency)
-
-            # Success rate: default 0.5 if no data
             success = e.success_rate if e.usage_count > 0 else 0.5
 
-            # Weighted score: same formula as Rust ContextStore
             score = 0.6 * sim + 0.2 * success + 0.1 * recency + 0.1 * freq
 
             if score >= min_score:
@@ -125,7 +168,6 @@ class ContextStore:
         scored.sort(key=lambda x: -x[0])
         results = [e for _, e in scored[:limit]]
 
-        # Update frequency/recency on retrieval
         for e in results:
             e.frequency += 1
             e.last_used_at = time.time()
@@ -150,7 +192,6 @@ class ContextStore:
         return eid
 
     def populate_from_functions(self, functions: list[dict]):
-        """Seed the store with tool definitions as skill + few_shot entries."""
         for f in functions:
             name = f.get("name", f.get("function", {}).get("name", ""))
             desc = f.get("description", f.get("function", {}).get("description", ""))
@@ -161,35 +202,10 @@ class ContextStore:
                      {"tool_name": name})
 
     def populate_from_runs(self, runs: list[dict]):
-        """Seed historical runs as memories."""
         for r in runs:
             self.add("memory",
                      f"Previous run: {r.get('query', '')} → used {r.get('tool', '')}: {r.get('result', '')}",
                      {"tool_name": r.get("tool", ""), "success": r.get("success", True)})
-
-    def enrich_tools(self, query: str, tool_defs: list[dict],
-                     top_k: int = 5) -> tuple[list[dict], str]:
-        """Enrich tool definitions with retrieved context. Returns (tools, context_text)."""
-        retrieved = self.search(query, limit=top_k)
-        context_parts = []
-        for e in retrieved:
-            if e.kind == "skill":
-                # Skills are already embedded in tool defs; just log
-                pass
-            elif e.kind == "memory":
-                context_parts.append(f"[Past Experience]\n{e.content}")
-            elif e.kind == "agent_run":
-                context_parts.append(f"[Previous Run]\n{e.content}")
-            elif e.kind == "few_shot":
-                context_parts.append(f"[Example]\n{e.content}")
-
-        context_text = "\n---\n".join(context_parts) if context_parts else ""
-
-        # Record this retrieval as a run
-        for td in tool_defs[:1]:  # log for first tool only to avoid spam
-            self.record_run(query, td.get("name", "unknown"), True)
-
-        return tool_defs, context_text
 
     def __len__(self):
         return len(self.entries)
