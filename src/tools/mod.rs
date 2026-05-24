@@ -18,4 +18,8 @@ pub mod mcp_client;
 #[cfg(feature = "tools-screenshot")]
 pub mod screenshot;
 pub mod chart_tool;
+#[cfg(feature = "tools-pdf")]
+pub mod pdf_tool;
+#[cfg(feature = "tools-desktop")]
+pub mod desktop_tool;
 pub use registry::{ToolFn, ToolRegistry};

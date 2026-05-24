@@ -1232,6 +1232,46 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
             let o = args["output_path"].as_str().unwrap_or("chart.html");
             volt::tools::chart_tool::create_line_chart(t, l, v, o).await
         }))).await;
+    #[cfg(feature = "tools-pdf")]
+    registry.register_with_permission("create_pdf","Create a PDF document from text content.",
+        serde_json::json!({"type":"object","properties":{"content":{"type":"string","description":"text content"},"output_path":{"type":"string","description":"output .pdf path"}},"required":["content","output_path"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let c = args["content"].as_str().unwrap_or(""); let o = args["output_path"].as_str().unwrap_or("output.pdf");
+            volt::tools::pdf_tool::create_pdf(c, o).await
+        })), PermissionLevel::Prompt).await;
+
+    #[cfg(feature = "tools-desktop")]
+    registry.register_with_permission("desktop_click","Click at screen coordinates.",
+        serde_json::json!({"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}},"required":["x","y"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let x = args["x"].as_i64().unwrap_or(0) as i32; let y = args["y"].as_i64().unwrap_or(0) as i32;
+            volt::tools::desktop_tool::desktop_click(x, y).await
+        })), PermissionLevel::Prompt).await;
+
+    #[cfg(feature = "tools-desktop")]
+    registry.register_with_permission("desktop_type","Type text at cursor position.",
+        serde_json::json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let t = args["text"].as_str().unwrap_or("");
+            volt::tools::desktop_tool::desktop_type(t).await
+        })), PermissionLevel::Prompt).await;
+
+    #[cfg(feature = "tools-desktop")]
+    registry.register_with_permission("desktop_key","Press a key (enter, tab, escape, up, down, etc.).",
+        serde_json::json!({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let k = args["key"].as_str().unwrap_or("");
+            volt::tools::desktop_tool::desktop_key(k).await
+        })), PermissionLevel::Prompt).await;
+
+    #[cfg(feature = "tools-desktop")]
+    registry.register("desktop_find_window","Find a window by title using Windows API.",
+        serde_json::json!({"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}),"builtin",
+        Arc::new(|args| Box::pin(async move {
+            let t = args["title"].as_str().unwrap_or("");
+            volt::tools::desktop_tool::desktop_find_window(t).await
+        }))).await;
+
     registry
         .register(
             "csv_read",
