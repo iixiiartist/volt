@@ -18,6 +18,7 @@ pub mod mcp_client;
 #[cfg(feature = "tools-screenshot")]
 pub mod screenshot;
 pub mod chart_tool;
+pub mod searchhq;
 #[cfg(feature = "tools-pdf")]
 pub mod pdf_tool;
 #[cfg(feature = "tools-desktop")]

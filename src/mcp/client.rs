@@ -31,13 +31,14 @@ impl MCPClient {
     }
 
     pub async fn list_tools(&self) -> anyhow::Result<Vec<String>> {
+        let tools = self.list_tools_full().await?;
+        Ok(tools.iter().filter_map(|t| t["name"].as_str().map(|s| s.to_string())).collect())
+    }
+
+    pub async fn list_tools_full(&self) -> anyhow::Result<Vec<Value>> {
         let body = jsonrpc_request("tools/list", None, self.request_id.fetch_add(1, Ordering::Relaxed) + 1);
         let resp = self.send(&body).await?;
-        let tools = resp["result"]["tools"]
-            .as_array()
-            .map(|arr| arr.iter().filter_map(|t| t["name"].as_str().map(|s| s.to_string())).collect())
-            .unwrap_or_default();
-        Ok(tools)
+        Ok(resp["result"]["tools"].as_array().cloned().unwrap_or_default())
     }
 
     pub async fn call_tool(&self, name: &str, args: &Value) -> anyhow::Result<Value> {
