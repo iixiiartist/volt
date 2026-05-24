@@ -12,6 +12,7 @@ pub enum EmbeddingProvider {
     Nvidia,
     OpenAI,
     Moonshot,
+    HuggingFace,
 }
 
 /// Configuration for a single embedding provider in the fallback chain
@@ -53,6 +54,12 @@ impl ProviderConfig {
                 model: if model.is_empty() { "moonshot-v1-embed".into() } else { model },
                 endpoint: if endpoint.is_empty() { "https://api.moonshot.cn/v1/embeddings".into() } else { endpoint },
                 api_key,
+            }),
+            "huggingface" | "hf" => Some(Self {
+                provider: EmbeddingProvider::HuggingFace,
+                model: if model.is_empty() { "BAAI/bge-small-en-v1.5".into() } else { model },
+                endpoint: if endpoint.is_empty() { "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5".into() } else { endpoint },
+                api_key: api_key.or_else(|| std::env::var("HF_TOKEN").ok().or_else(|| std::env::var("HUGGINGFACE_TOKEN").ok()).filter(|k| !k.is_empty())),
             }),
             _ => None,
         }
@@ -105,12 +112,13 @@ impl EmbeddingClient {
     /// is tried first, with auto-detected fallbacks behind it.
     /// If unset or "auto", full auto-detection runs.
     ///
-    /// Detection priority:
-    ///   1. Ollama (local, if running) — no API key needed
-    ///   2. NVIDIA NIM (cloud, if NVIDIA_API_KEY or EMBEDDING_API_KEY set and valid)
-    ///   3. OpenAI (cloud, if OPENAI_API_KEY set)
-    ///   4. Moonshot (cloud, if KIMI_API_KEY set)
-    ///   5. Deterministic placeholder (always works, no network)
+/// Detection priority:
+///   1. Ollama (local, if running) — no API key needed
+///   2. NVIDIA NIM (cloud, if NVIDIA_API_KEY or EMBEDDING_API_KEY set and valid)
+///   3. OpenAI (cloud, if OPENAI_API_KEY set)
+///   4. HuggingFace Inference API (cloud, free, if HF_TOKEN set)
+///   5. Moonshot (cloud, if KIMI_API_KEY set)
+///   6. Deterministic placeholder (always works, no network)
     ///
     /// ```ignore
     /// let client = EmbeddingClient::new_smart().await;
@@ -216,6 +224,9 @@ impl EmbeddingClient {
                 "model": config.model,
                 "input": description
             }),
+            EmbeddingProvider::HuggingFace => json!({
+                "inputs": description
+            }),
         };
 
         let mut req = self.http.post(&config.endpoint).json(&body);
@@ -223,21 +234,28 @@ impl EmbeddingClient {
             req = req.header("Authorization", format!("Bearer {}", api_key));
         }
 
-        let response: serde_json::Value = req
+        let response = req
             .send()
             .await
-            .context("failed to call embedding endpoint")?
-            .error_for_status()
-            .context("embedding endpoint returned an error")?
-            .json()
-            .await
+            .context("failed to call embedding endpoint")?;
+
+        let status = response.status();
+        let resp_text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("embedding endpoint returned {}: {}", status.as_u16(), &resp_text[..200.min(resp_text.len())]);
+        }
+        let response: serde_json::Value = serde_json::from_str(&resp_text)
             .context("failed to decode embedding response")?;
 
         let coords: Vec<f32> = serde_json::from_value(response["data"][0]["embedding"].clone())
             .or_else(|_| {
                 serde_json::from_value(response["embeddings"][0].clone())
             })
-            .context("embedding response did not include data[0].embedding or embeddings[0]")?;
+            .or_else(|_| {
+                // HuggingFace API returns flat array: [0.1, 0.2, ...]
+                serde_json::from_value(response.clone())
+            })
+            .context("embedding response did not include data[0].embedding, embeddings[0], or a flat array")?;
 
         Ok(coords)
     }
@@ -286,7 +304,21 @@ async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> {
         });
     }
 
-    // 4. Moonshot (cloud)
+    // 4. HuggingFace Inference API (cloud, free tier)
+    let hf_key = std::env::var("HF_TOKEN")
+        .or_else(|_| std::env::var("HUGGINGFACE_TOKEN"))
+        .ok()
+        .filter(|k| !k.is_empty());
+    if let Some(key) = hf_key {
+        providers.push(ProviderConfig {
+            provider: EmbeddingProvider::HuggingFace,
+            model: "BAAI/bge-small-en-v1.5".into(),
+            endpoint: "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5".into(),
+            api_key: Some(key),
+        });
+    }
+
+    // 5. Moonshot (cloud)
     let kimi_key = std::env::var("KIMI_API_KEY")
         .ok()
         .filter(|k| !k.is_empty());
