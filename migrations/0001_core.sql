@@ -18,7 +18,7 @@ CREATE TABLE agent_tools (
   language VARCHAR(50) NOT NULL,
   source_code TEXT NOT NULL,
   parameter_schema JSONB NOT NULL DEFAULT '{"type":"object"}'::jsonb,
-  embedding vector(384),
+  embedding vector(1024),
   is_marketplace_verified BOOLEAN DEFAULT false,
   cryptographic_signature VARCHAR(512),
   source_sha256 VARCHAR(64) NOT NULL,
@@ -70,7 +70,7 @@ CREATE TABLE memories (
   id BIGSERIAL PRIMARY KEY,
   kind VARCHAR(100) NOT NULL DEFAULT 'general',
   content TEXT NOT NULL,
-  embedding vector(384),
+  embedding vector(1024),
   session_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -85,7 +85,7 @@ CREATE TABLE skills (
   description TEXT NOT NULL DEFAULT '',
   version TEXT NOT NULL DEFAULT '1.0.0',
   content TEXT NOT NULL DEFAULT '',
-  embedding vector(384),
+  embedding vector(1024),
   mcp_servers JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_path TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

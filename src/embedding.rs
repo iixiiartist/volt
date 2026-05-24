@@ -3,12 +3,13 @@ use reqwest::Client;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-const EMBEDDING_DIMENSIONS: usize = 384;
+const EMBEDDING_DIMENSIONS: usize = 1024;
 
 /// All supported embedding providers
 #[derive(Debug, Clone, PartialEq)]
 pub enum EmbeddingProvider {
     Ollama,
+    LlamaCpp,
     Nvidia,
     OpenAI,
     Moonshot,
@@ -36,6 +37,12 @@ impl ProviderConfig {
                 model: if model.is_empty() { "mxbai-embed-large".into() } else { model },
                 endpoint: if endpoint.is_empty() { "http://localhost:11434/api/embed".into() } else { endpoint },
                 api_key: None,
+            }),
+            "llamacpp" | "llama.cpp" | "llama-cpp" => Some(Self {
+                provider: EmbeddingProvider::LlamaCpp,
+                model: if model.is_empty() { "mxbai-embed-large-v1".into() } else { model },
+                endpoint: if endpoint.is_empty() { "http://localhost:8080/v1/embeddings".into() } else { endpoint },
+                api_key: Some(api_key.unwrap_or_else(|| "not-needed".into())),
             }),
             "nvidia" => Some(Self {
                 provider: EmbeddingProvider::Nvidia,
@@ -186,8 +193,8 @@ impl EmbeddingClient {
             Some(key) if !key.is_empty() && key != "your_nvidia_api_key_here" => {
                 self.embed_remote(config, description, key).await
             }
-            // For Ollama, no API key needed — always attempt
-            _ if config.provider == EmbeddingProvider::Ollama => {
+            // For Ollama and LlamaCpp, no real API key needed — always attempt
+            _ if config.provider == EmbeddingProvider::Ollama || config.provider == EmbeddingProvider::LlamaCpp => {
                 self.embed_remote(config, description, "").await
             }
             _ => {
@@ -207,14 +214,12 @@ impl EmbeddingClient {
                 "model": config.model,
                 "input": description,
                 "input_type": "query",
-                "encoding_format": "float",
-                "dimensions": EMBEDDING_DIMENSIONS
+                "encoding_format": "float"
             }),
-            EmbeddingProvider::OpenAI => json!({
+            EmbeddingProvider::OpenAI | EmbeddingProvider::LlamaCpp => json!({
                 "model": config.model,
                 "input": description,
-                "encoding_format": "float",
-                "dimensions": EMBEDDING_DIMENSIONS
+                "encoding_format": "float"
             }),
             EmbeddingProvider::Moonshot => json!({
                 "model": config.model,
@@ -285,8 +290,20 @@ impl EmbeddingClient {
             })
             .context("embedding response did not include data[0].embedding, embeddings[0], or a flat array")?;
 
-        Ok(coords)
+        // Normalize to canonical dimension: pad if shorter, truncate if longer
+        Ok(normalize_dims(coords))
     }
+}
+
+/// Normalize embedding dimensions to the canonical EMBEDDING_DIMENSIONS.
+/// Pads shorter vectors with zeros, truncates longer ones.
+fn normalize_dims(mut coords: Vec<f32>) -> Vec<f32> {
+    if coords.len() < EMBEDDING_DIMENSIONS {
+        coords.resize(EMBEDDING_DIMENSIONS, 0.0);
+    } else if coords.len() > EMBEDDING_DIMENSIONS {
+        coords.truncate(EMBEDDING_DIMENSIONS);
+    }
+    coords
 }
 
 // ─── Auto-Detection ──────────────────────────────────────────────
