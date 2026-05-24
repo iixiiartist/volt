@@ -153,6 +153,9 @@ impl Agent {
                 state.total_completion_tokens += usage.completion_tokens as u64;
             }
 
+            // Audit log: record this complete LLM turn (request + response) in ContextStore
+            self.audit_turn(&request, &response, &state).await;
+
             if let Some(tool_calls) = &response.tool_calls {
                 self.push_assistant_message(&mut state, &response, Some(tool_calls)).await;
                 self.execute_tool_calls(tool_calls, &mut state).await;
@@ -164,6 +167,34 @@ impl Agent {
         }
 
         Err(anyhow::anyhow!("max iterations reached without final response"))
+    }
+
+    /// Audit log: store the complete LLM turn (request + response) as a ContextEntry.
+    /// Enables full traceability for EU AI Act Article 12 compliance.
+    async fn audit_turn(&self, request: &LLMRequest, response: &LLMResponse, state: &tokio::sync::MutexGuard<'_, AgentState>) {
+        if let Some(ref store) = self.context_store {
+            let prompt_text: String = request.messages.iter()
+                .map(|m| format!("[{}]\n{}", m.role, m.content.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let response_text = response.content.as_str();
+            let tool_info: Vec<String> = response.tool_calls.as_ref()
+                .map(|calls| calls.iter().map(|tc| format!("{}={}", tc.name, tc.arguments)).collect())
+                .unwrap_or_default();
+            let audit = serde_json::json!({
+                "model": request.model,
+                "iteration": state.iteration,
+                "session_id": state.session_id,
+                "prompt_tokens": response.usage.as_ref().map(|u| u.prompt_tokens),
+                "completion_tokens": response.usage.as_ref().map(|u| u.completion_tokens),
+                "tool_calls": tool_info,
+                "finish_reason": response.finish_reason,
+            });
+            store.add(crate::context::ContextKind::AgentRun, &format!(
+                "## Turn {}\n### Prompt\n{}\n### Response\n{}\n",
+                state.iteration, prompt_text, response_text
+            ), audit).await;
+        }
     }
 
     async fn push_user_message(&self, input: &str) {
