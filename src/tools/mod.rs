@@ -25,4 +25,7 @@ pub mod pdf_tool;
 pub mod desktop_tool;
 #[cfg(feature = "tools-browser")]
 pub mod browser_tool;
+pub mod git_tool;
+pub mod time_tool;
+pub mod sequential_thinking;
 pub use registry::{ToolFn, ToolRegistry};

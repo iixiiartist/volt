@@ -1394,5 +1394,191 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
         )
         .await;
 
+    // ── Git tools ─────────────────────────────────────────────────────────
+    registry.register("git_status", "Show the working tree status (porcelain format).", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
+        }
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        volt::tools::git_tool::git_status(repo).await
+    }))).await;
+
+    registry.register("git_diff_unstaged", "Show unstaged changes in the working directory.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
+        }
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        volt::tools::git_tool::git_diff_unstaged(repo).await
+    }))).await;
+
+    registry.register("git_diff_staged", "Show staged changes (diff --cached).", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
+        }
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        volt::tools::git_tool::git_diff_staged(repo).await
+    }))).await;
+
+    registry.register("git_diff", "Show differences between branches or commits.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "target": { "type": "string", "description": "branch, commit, or range to diff against" }
+        },
+        "required": ["target"]
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let target = args["target"].as_str().unwrap_or("HEAD");
+        volt::tools::git_tool::git_diff(repo, target).await
+    }))).await;
+
+    registry.register("git_commit", "Record changes to the repository.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "message": { "type": "string", "description": "commit message" }
+        },
+        "required": ["message"]
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let msg = args["message"].as_str().unwrap_or("");
+        volt::tools::git_tool::git_commit(repo, msg).await
+    }))).await;
+
+    registry.register("git_add", "Add file contents to the staging area.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "files": { "type": "array", "items": { "type": "string" }, "description": "files to stage" }
+        },
+        "required": ["files"]
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let files: Vec<String> = args["files"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        volt::tools::git_tool::git_add(repo, &files).await
+    }))).await;
+
+    registry.register("git_reset", "Unstage all staged changes.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
+        }
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        volt::tools::git_tool::git_reset(repo).await
+    }))).await;
+
+    registry.register("git_log", "Show commit logs (oneline format).", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "max_count": { "type": "number", "description": "maximum number of commits to show (default: 20)" }
+        }
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let count = args["max_count"].as_u64().unwrap_or(20) as u32;
+        volt::tools::git_tool::git_log(repo, count).await
+    }))).await;
+
+    registry.register("git_create_branch", "Create a new branch.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "branch": { "type": "string", "description": "name of the new branch" },
+            "base": { "type": "string", "description": "optional base branch or commit" }
+        },
+        "required": ["branch"]
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let branch = args["branch"].as_str().unwrap_or("");
+        let base = args["base"].as_str();
+        volt::tools::git_tool::git_create_branch(repo, branch, base).await
+    }))).await;
+
+    registry.register("git_checkout", "Switch branches.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "branch": { "type": "string", "description": "branch to switch to" }
+        },
+        "required": ["branch"]
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let branch = args["branch"].as_str().unwrap_or("");
+        volt::tools::git_tool::git_checkout(repo, branch).await
+    }))).await;
+
+    registry.register("git_show", "Show the contents of a commit.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
+            "revision": { "type": "string", "description": "revision (commit hash, branch, tag)" }
+        },
+        "required": ["revision"]
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        let rev = args["revision"].as_str().unwrap_or("HEAD");
+        volt::tools::git_tool::git_show(repo, rev).await
+    }))).await;
+
+    registry.register("git_branch", "List git branches.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
+        }
+    }), "git", Arc::new(|args| Box::pin(async move {
+        let repo = args["repo_path"].as_str().unwrap_or(".");
+        volt::tools::git_tool::git_branch(repo).await
+    }))).await;
+
+    // ── Time tools ─────────────────────────────────────────────────────────
+    registry.register("get_current_time", "Get the current time in a specific timezone.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "timezone": { "type": "string", "description": "IANA timezone (e.g. 'America/New_York', 'UTC', 'Asia/Tokyo')" }
+        },
+        "required": ["timezone"]
+    }), "utilities", Arc::new(|args| Box::pin(async move {
+        let tz = args["timezone"].as_str().unwrap_or("UTC");
+        volt::tools::time_tool::get_current_time(tz).await
+    }))).await;
+
+    registry.register("convert_time", "Convert time between timezones.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "timezone": { "type": "string", "description": "source IANA timezone" },
+            "timezone_to": { "type": "string", "description": "target IANA timezone" }
+        },
+        "required": ["timezone", "timezone_to"]
+    }), "utilities", Arc::new(|args| Box::pin(async move {
+        let from = args["timezone"].as_str().unwrap_or("UTC");
+        let to = args["timezone_to"].as_str().unwrap_or("UTC");
+        volt::tools::time_tool::convert_time(from, to).await
+    }))).await;
+
+    // ── Sequential thinking ────────────────────────────────────────────────
+    registry.register("sequentialthinking", "A detailed tool for dynamic and reflective problem-solving through structured thoughts. Use when the task requires careful reasoning, multi-step analysis, or exploring alternative solutions.", serde_json::json!({
+        "type": "object",
+        "properties": {
+            "thought": { "type": "string", "description": "your current thought or reasoning step" },
+            "next_thought_needed": { "type": "boolean", "description": "whether another thought step is needed" },
+            "branch_id": { "type": "string", "description": "optional branch ID to explore alternative reasoning paths" },
+            "branch_from_thought": { "type": "number", "description": "optional thought number to branch from" }
+        },
+        "required": ["thought", "next_thought_needed"]
+    }), "reasoning", Arc::new(|args| Box::pin(async move {
+        let thought = args["thought"].as_str().unwrap_or("");
+        let next = args["next_thought_needed"].as_bool().unwrap_or(true);
+        let branch_id = args["branch_id"].as_str();
+        let branch_from = args["branch_from_thought"].as_u64().map(|n| n as u32);
+        volt::tools::sequential_thinking::sequentialthinking(thought, next, branch_id, branch_from).await
+    }))).await;
+
     registry
 }

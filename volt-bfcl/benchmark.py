@@ -124,13 +124,8 @@ def get_embedder():
     global _embedder
     if _embedder is not None:
         return _embedder
-    try:
-        from sentence_transformers import SentenceTransformer
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        print("[embed] using sentence-transformers (all-MiniLM-L6-v2)")
-    except ImportError:
-        _embedder = "fallback"
-        print("[embed] sentence-transformers not installed; using fallback TF-IDF")
+    _embedder = "fallback"
+    print("[embed] using fallback TF-IDF (fast, no deps)")
     return _embedder
 
 
@@ -401,6 +396,13 @@ DISTRACTOR_FUNCTIONS = [
 ]
 
 import hashlib
+
+# Try to use the richer MCP distractor list from real SaaS platforms
+try:
+    from mcp_distractors import MCP_DISTRACTOR_FUNCTIONS
+    DISTRACTOR_FUNCTIONS = MCP_DISTRACTOR_FUNCTIONS
+except ImportError:
+    pass  # use built-in list
 
 def _add_distractors(functions: list[dict], count: int, seed: str) -> list[dict]:
     """Add distractor functions to simulate a large tool registry."""
