@@ -219,27 +219,27 @@ Current release binary is ~18MB. Adding candle (+15MB for model weights + libtor
 
 ---
 
-## 7. Summary Matrix
+## 7. Summary Matrix (Updated May 24, 2026)
 
-| Gap | Severity | Effort | Crate Required | Paper Impact |
-|---|---|---|---|---|
-| Embedding dimension mismatch | **Critical** | Small | — | High (bug) |
-| ContextStore no persistence | **Critical** | Medium | — | Medium |
-| AgentChat/TUI no RAG | **High** | Small | — | Medium |
-| No HF API 429 retry | **High** | Small | — | Low |
-| Migration schema drift | **High** | Small | — | Low |
-| Token counting heuristic | Medium | Small | `tiktoken-rs` | Medium |
-| O(n) brute-force search | Medium | Medium | `usearch` or `hnsw_rs` | Low |
-| No local embedding model | Medium | Large | `candle-core` | High |
-| Sequential tool execution | Medium | Small | — | Medium |
-| Agent state not persisted | Medium | Medium | — | Low |
-| BFCL name-only eval | Medium | Medium | — | **High** |
-| No multi-turn benchmarks | Medium | Large | — | **High** |
-| Missing ablation studies | Low | Large | — | **High** |
-| Observability gaps | Low | Medium | `opentelemetry` | Low |
-| Tool registry contention | Low | Small | `dashmap` | Low |
-| Global path root staleness | Low | Small | — | Low |
-| Sandbox env leak on Windows | Low | Small | — | Low |
-| Heavy default features | Low | Small | — | Low |
-| GraphRAG relationships | Low | Large | `petgraph` | Medium |
-| AST artifact extraction | Low | Large | `tree-sitter` | Medium |
+| Gap | Severity | Status |
+|---|---|---|
+| Embedding dimension mismatch | Critical | ✅ Fixed (1024d canonical, normalize_dims) |
+| ContextStore no persistence | Critical | ✅ Fixed (pgvector context_entries table) |
+| AgentChat/TUI no RAG | High | ✅ Fixed (ContextStore + Worker wired) |
+| No HF API 429 retry | High | ✅ Fixed (exponential backoff 1s/2s/4s) |
+| Migration schema drift | High | ✅ Fixed (0002 merged into 0001) |
+| Token counting heuristic | Medium | ✅ Fixed (tiktoken-rs cl100k_base) |
+| Sequential tool execution | Medium | ✅ Fixed (futures::join_all) |
+| BFCL name-only eval | Medium | ✅ Fixed (argument-aware evaluator) |
+| No multi-turn benchmarks | Medium | ✅ Scaffold (multi_turn_bench.py) |
+| Missing ablation studies | Low | ✅ Tool-count sweep (100% at 0-200) |
+| Tool registry contention | Low | ✅ Fixed (DashMap, lock-free) |
+| Global path root staleness | Low | ✅ Fixed (RwLock + staleness check) |
+| Sandbox env leak on Windows | Low | ✅ Fixed (env_clear + minimal whitelist) |
+| Heavy default features | Low | ✅ Fixed (opt-in, default=[]) |
+| Agent state not persisted | Low | ✅ Fixed (SQLite session save in AgentRun) |
+| O(n) brute-force search | Low | Open — HNSW or usearch |
+| No local embedding model | Medium | Open — candle for air-gapped mode |
+| Observability gaps | Low | Open — OpenTelemetry |
+| GraphRAG relationships | Low | Open — petgraph |
+| AST artifact extraction | Low | Open — tree-sitter |
