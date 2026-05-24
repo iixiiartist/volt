@@ -15,4 +15,6 @@ pub mod csv_tool;
 pub mod archive_tool;
 pub mod json_tool;
 pub mod mcp_client;
+#[cfg(feature = "tools-screenshot")]
+pub mod screenshot;
 pub use registry::{ToolFn, ToolRegistry};

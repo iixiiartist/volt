@@ -1194,6 +1194,25 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
         )
         .await;
 
+    #[cfg(feature = "tools-screenshot")]
+    registry
+        .register_with_permission(
+            "screenshot",
+            "Capture a screenshot of the primary monitor. Returns a base64-encoded PNG image. Use this to see what's on screen.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            "builtin",
+            Arc::new(|_args| {
+                Box::pin(async move {
+                    volt::tools::screenshot::capture_screenshot().await
+                })
+            }),
+            PermissionLevel::Prompt,
+        )
+        .await;
+
     registry
         .register(
             "csv_read",
