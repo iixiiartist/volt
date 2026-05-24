@@ -6,7 +6,7 @@ Volt is an AI agent framework built in Rust that implements a **Unified RAG Loop
 
 The project is under active development. The architecture described here reflects what is currently implemented.
 
-**Verified result**: On BFCL V4 with a 51-tool registry, dynamic RAG selection reduces per-turn prompt tokens by **74%** (2,248 → 579 avg) and improves function-calling accuracy by **+6.7 percentage points**. Full methodology in [`paper/draft.md`](paper/draft.md).
+**Verified result**: On BFCL V4 with a 51-tool registry, dynamic RAG selection reduces per-turn prompt tokens by **74%** (2,248 → 579 avg) and improves function-calling accuracy by **+4.8 percentage points** (470 cases, 8 categories). Full methodology in [`paper/draft.md`](paper/draft.md).
 
 ---
 
@@ -497,7 +497,7 @@ Tests function-calling accuracy with controlled distractor tool counts. Volt's b
 | --------------------------- | --------------------- | ---------------- | ------------ |
 | Avg prompt tokens/task      | 2,248                 | 579              | **−74%**     |
 | Avg latency/task            | 328ms                 | 224ms            | **−32%**     |
-| Avg accuracy                | 34.3%                 | 41.0%            | **+6.7pp**   |
+| Avg accuracy                | 34.3%                 | 39.1%            | **+4.8pp**   |
 | Token cost/1k tasks         | ~$0.15                | ~$0.04           | **−73%**     |
 | `simple_python` accuracy    | 80.0%                 | 98.0%            | **+18pp**    |
 | `simple_javascript` accuracy| 58.0%                 | 68.0%            | **+10pp**    |
@@ -521,7 +521,7 @@ python volt-bfcl/program_bench.py --model llama-3.1-8b-instant --limit 10
 
 ### GAIA
 
-General AI assistant benchmark. Currently validated on 3 QA questions via `Agent::run()`. Full 165-question dev set evaluation is on the roadmap (requires `huggingface-cli login`).
+General AI assistant benchmark. Full 165-question validation set is supported via `volt-bfcl/gaia_benchmark.py` (requires `huggingface-cli login` to download the dataset).
 
 ```bash
 python volt-bfcl/gaia_benchmark.py --model llama-3.1-8b-instant --limit 10
@@ -539,7 +539,7 @@ python volt-bfcl/gaia_benchmark.py --model llama-3.1-8b-instant --limit 10
 | Memory search       | <5ms                     | pgvector HNSW, up to ~10K entries              |
 | Avg prompt tokens   | 579/task                 | BFCL V4, 51-tool registry, top-8 selection     |
 | Token savings       | 74%                      | vs. static injection, BFCL-verified            |
-| Function-call acc.  | +6.7pp                   | vs. static injection, BFCL V4                  |
+| Function-call acc.  | +4.8pp                   | vs. static injection, BFCL V4 (470 cases)      |
 
 ---
 
