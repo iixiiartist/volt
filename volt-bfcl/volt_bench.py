@@ -234,6 +234,49 @@ def _normalize_params(params: dict) -> dict:
     return result
 
 
+def run_sweep(args):
+    """Run tool-count scaling ablation: sweep distractor counts."""
+    counts = [0, 10, 50, 100, 200]
+    results = []
+    cases = load_test_cases(args.category)
+    cases = cases[:args.limit] if args.limit > 0 else cases
+
+    print(f"=== Tool-Count Scaling Sweep ===")
+    print(f"Category: {args.category} | Model: {args.model} | Cases: {len(cases)}")
+    print(f"{'Distractors':<12} {'Acc':<8} {'Latency':<10} {'Pass/Fail':<10}")
+    print("-" * 50)
+
+    for dist in counts:
+        passed = 0
+        total_latency = 0
+        for i, case in enumerate(cases):
+            query = _get_question(case)
+            functions = case.get("function", [])
+            if dist > 0:
+                functions = _add_distractors(functions, dist, case.get("id", str(i)))
+            prompt = f"Use the available tools to answer this question. You MUST call the appropriate function.\n\nQuestion: {query}"
+            output, latency = run_volt(prompt, functions, args.model)
+            ok, reason, _details = evaluate_case(case, output)
+            total_latency += latency
+            if ok:
+                passed += 1
+
+        acc = passed / len(cases) * 100 if cases else 0
+        avg_lat = total_latency / len(cases) if cases else 0
+        results.append({"distractors": dist, "accuracy": acc, "avg_latency_s": avg_lat, "passed": passed, "total": len(cases)})
+        print(f"{dist:<12} {acc:<8.1f}% {avg_lat:<10.1f}s {passed}/{len(cases)}")
+
+    print(f"\n--- Scaling Curve ---")
+    for r in results:
+        print(f"  {r['distractors']:>4} tools -> {r['accuracy']:.0f}%")
+    if args.output:
+        full = {"sweep": results, "category": args.category, "model": args.model}
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(RESULTS_DIR / args.output, "w") as f:
+            json.dump(full, f, indent=2)
+        print(f"Saved to {RESULTS_DIR / args.output}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="BFCL benchmark via Volt binary")
     parser.add_argument("--category", default="simple_python")
@@ -242,7 +285,13 @@ def main():
     parser.add_argument("--distractors", type=int, default=0,
                         help="Add N distractor tools per case to simulate large registries")
     parser.add_argument("--output", help="Save results to JSON file")
+    parser.add_argument("--sweep", action="store_true",
+                        help="Run tool-count scaling sweep at [0,10,50,100,200] distractors")
     args = parser.parse_args()
+
+    if args.sweep:
+        run_sweep(args)
+        return
 
     cases = load_test_cases(args.category)
     cases = cases[:args.limit] if args.limit > 0 else cases
