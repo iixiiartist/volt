@@ -422,12 +422,17 @@ def _add_distractors(functions: list[dict], count: int, seed: str) -> list[dict]
     return all_funcs
 
 
-def run_benchmark(mode: str, category: str, model: str, top_k: int = 8, limit: int = 0, distractors: int = 0):
+def run_benchmark(mode: str, category: str, model: str, top_k: int = 8, limit: int = 0,
+                  distractors: int = 0, context_store=None):
     all_cases = load_test_cases(category)
     cases = all_cases[:limit] if limit > 0 else all_cases
-    distractor_note = f" (+{distractors} distractors)" if distractors else ""
+    parts = [f"Mode: {mode.upper()}", f"Model: {model}"]
+    if distractors:
+        parts.append(f"+{distractors} distractors")
+    if context_store:
+        parts.append(f"context({len(context_store)} entries)")
     print(f"\n{SEP}")
-    print(f"Category: {category}  |  Mode: {mode.upper()}  |  Model: {model}{distractor_note}")
+    print(f"Category: {category}  |  {'  |  '.join(parts)}")
     print(f"Cases: {len(cases)}")
     print(f"{SEP}\n")
 
@@ -475,6 +480,22 @@ def run_benchmark(mode: str, category: str, model: str, top_k: int = 8, limit: i
                     "parameters": _fix_parameters(f.get("parameters", {"type": "object", "properties": {}})),
                 },
             })
+
+        # Enrich with retrieved context (everything-as-RAG) — wrapped in XML tags
+        # to clearly separate historical context from the current task instructions.
+        if context_store:
+            rag_query = " ".join(m["content"] for m in messages[-3:]) if is_multi_turn else user_msg
+            retrieved = context_store.search(rag_query, limit=4, min_score=0.2)
+            if retrieved:
+                context_parts = []
+                for e in retrieved:
+                    tag = e.kind.replace("_", "-")
+                    context_parts.append(f"<{tag}>\n{e.content[:500]}\n</{tag}>")
+                context_text = "\n".join(context_parts)
+                messages.insert(0, {
+                    "role": "system",
+                    "content": f"<retrieved_context>\n{context_text}\n</retrieved_context>\n\nUse the above as reference only. Your task is below."
+                })
 
         # Call LLM
         try:
@@ -585,6 +606,8 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=0, help="Run only N cases per category (0 = all)")
     parser.add_argument("--distractors", type=int, default=0,
                         help="Add N distractor functions per case to simulate large tool registries")
+    parser.add_argument("--context-enrich", action="store_true",
+                        help="Enable unified context retrieval (skills + memories + past runs) alongside tools")
     parser.add_argument("--api-key", help="OpenAI API key (default: $OPENAI_API_KEY)")
     parser.add_argument("--base-url", help="API base URL (default: $OPENAI_BASE_URL or https://api.openai.com/v1)")
     args = parser.parse_args()
@@ -609,6 +632,13 @@ if __name__ == "__main__":
     if not os.getenv("OPENAI_BASE_URL") and os.getenv("LLM_BASE_URL"):
         os.environ["OPENAI_BASE_URL"] = os.environ["LLM_BASE_URL"]
 
+    # Initialize context store if enrichment is enabled
+    context_store = None
+    if args.context_enrich:
+        from context_store import ContextStore
+        context_store = ContextStore()
+        print(f"[context] unified ContextStore enabled — will enrich with retrieved skills/memories/runs")
+
     categories = list(BFCL_DATA_FILES.keys()) if args.category == "all" else [args.category]
 
     for cat in categories:
@@ -622,14 +652,38 @@ if __name__ == "__main__":
         limit = args.limit if args.limit > 0 else total
         print(f"Total cases: {total}, running: {limit}")
 
+        # Seed the context store from ALL OTHER categories to avoid self-referencing noise
+        if context_store is not None and len(context_store) == 0:
+            all_bfcl_cats = list(BFCL_DATA_FILES.keys())
+            for seed_cat in all_bfcl_cats:
+                if seed_cat == cat:
+                    continue
+                try:
+                    seed_cases = load_test_cases(seed_cat)
+                    for case in seed_cases[:30]:
+                        for f in case.get("function", []):
+                            context_store.populate_from_functions([f])
+                        qs = case.get("question", [])
+                        if qs:
+                            q = qs[0] if isinstance(qs, list) else qs
+                            if isinstance(q, dict):
+                                q = q.get("body", str(q))
+                            context_store.record_run(
+                                str(q)[:100], "historical", True,
+                                {"category": seed_cat, "source": "benchmark"}
+                            )
+                except Exception as e:
+                    print(f"  [context] skip seed {seed_cat}: {e}")
+            print(f"[context] seeded {len(context_store)} entries from cross-category data")
+
         if args.mode in ("static", "both"):
             print(f"\n>>> Running STATIC mode (all functions injected per case)")
-            results, summary = run_benchmark("static", cat, args.model, args.top_k, limit, args.distractors)
+            results, summary = run_benchmark("static", cat, args.model, args.top_k, limit, args.distractors, context_store)
             static_data = {"results": results, "summary": summary}
 
         if args.mode in ("rag", "both"):
             print(f"\n>>> Running RAG mode (top-{args.top_k} functions via embedding similarity)")
-            results, summary = run_benchmark("rag", cat, args.model, args.top_k, limit, args.distractors)
+            results, summary = run_benchmark("rag", cat, args.model, args.top_k, limit, args.distractors, context_store)
             rag_data = {"results": results, "summary": summary}
 
         if static_data and rag_data:
