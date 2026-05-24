@@ -34,7 +34,7 @@ impl ProviderConfig {
             "ollama" => Some(Self {
                 provider: EmbeddingProvider::Ollama,
                 model: if model.is_empty() { "mxbai-embed-large".into() } else { model },
-                endpoint: if endpoint.is_empty() { "http://localhost:11434/v1".into() } else { endpoint },
+                endpoint: if endpoint.is_empty() { "http://localhost:11434/api/embed".into() } else { endpoint },
                 api_key: None,
             }),
             "nvidia" => Some(Self {
@@ -269,10 +269,11 @@ async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> {
 
     // 1. Ollama (local, no key needed) — ping health endpoint
     if is_ollama_running(http).await {
+        let model = std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "mxbai-embed-large".into());
         providers.push(ProviderConfig {
             provider: EmbeddingProvider::Ollama,
-            model: "mxbai-embed-large".into(),
-            endpoint: "http://localhost:11434/v1".into(),
+            model: model.clone(),
+            endpoint: format!("http://localhost:11434/api/embed"),
             api_key: None,
         });
     }

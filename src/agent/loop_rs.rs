@@ -224,17 +224,21 @@ impl Agent {
             None
         };
 
-        // Always retrieve relevant context via unified ContextStore (no one-shot flag)
+        // Always retrieve relevant context via unified ContextStore with XML tags
         if let (Some(ref emb), Some(ref store)) = (&context_embedding, &self.context_store) {
             let retrieved = store.search(emb, 8, None, 0.25).await;
             if !retrieved.is_empty() {
                 let blocks: Vec<String> = retrieved.iter().map(|e| {
-                    format!("[{}]\n{}", e.kind.as_str(), e.content)
+                    let tag = e.kind.as_str().replace("_", "-");
+                    format!("<{tag}>\n{}\n</{tag}>", e.content)
                 }).collect();
                 let mut state = self.state.lock().await;
                 state.messages.push(Message {
                     role: "system".into(),
-                    content: Arc::new(format!("## Relevant Context\n{}", blocks.join("\n---\n"))),
+                    content: Arc::new(format!(
+                        "<retrieved_context>\n{}\n</retrieved_context>\n\nUse the above as reference only. Your task is below.",
+                        blocks.join("\n")
+                    )),
                     tool_calls: None,
                     tool_result: None,
                     tool_name: None,
@@ -247,12 +251,12 @@ impl Agent {
         if let (Some(ref emb), Some(ref skills)) = (&context_embedding, &self.skills) {
             let matched = skills.search(emb, 3).await;
             if !matched.is_empty() {
-                let block: Vec<String> = matched.iter().map(|s| format!("[{0}]\n{1}", s.name, s.content)).collect();
+                let block: Vec<String> = matched.iter().map(|s| format!("<skill name=\"{0}\">\n{1}\n</skill>", s.name, s.content)).collect();
                 if !block.is_empty() {
                     let mut state = self.state.lock().await;
                     state.messages.push(Message {
                         role: "system".into(),
-                        content: Arc::new(format!("## Relevant Skills\n{}", block.join("\n---\n"))),
+                        content: Arc::new(format!("<retrieved_skills>\n{}\n</retrieved_skills>", block.join("\n"))),
                         tool_calls: None,
                         tool_result: None,
                         tool_name: None,
