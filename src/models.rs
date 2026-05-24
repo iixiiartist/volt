@@ -307,7 +307,15 @@ impl ModelContext {
     }
 
     pub fn estimate_tokens(text: &str) -> u32 {
-        (text.len() / 3).max(1) as u32
+        // Try accurate tokenization via tiktoken-rs (cl100k_base for GPT/Llama models)
+        // Falls back to chars/3 heuristic if tokenizer unavailable
+        static TOKENIZER: std::sync::OnceLock<Option<tiktoken_rs::CoreBPE>> = std::sync::OnceLock::new();
+        let bpe = TOKENIZER.get_or_init(|| tiktoken_rs::cl100k_base().ok());
+        if let Some(bpe) = bpe {
+            bpe.encode_ordinary(text).len() as u32
+        } else {
+            (text.len() / 3).max(1) as u32
+        }
     }
 }
 
@@ -323,7 +331,11 @@ mod tests {
     #[test]
     fn test_estimate_tokens_long() {
         let s = "a".repeat(300);
-        assert_eq!(ModelContext::estimate_tokens(&s), 100);
+        let tokens = ModelContext::estimate_tokens(&s);
+        // tiktoken-rs cl100k_base: repeated chars tokenize efficiently (~38)
+        // Fallback heuristic: chars/3 = 100
+        assert!(tokens <= 100, "expected <=100, got {}", tokens);
+        assert!(tokens > 0, "expected >0, got {}", tokens);
     }
 
     #[test]

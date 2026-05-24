@@ -48,40 +48,123 @@ def _get_question(case: dict) -> str:
     return str(q)
 
 
-def _get_expected_functions(case: dict) -> set[str]:
-    """Expected functions = the function list in the test case."""
-    expected = set()
+def _get_expected_functions(case: dict) -> dict[str, dict]:
+    """Expected functions with their schemas from the test case."""
+    expected = {}
     for f in case.get("function", []):
         name = f.get("name", f.get("function", {}).get("name", ""))
+        params = f.get("parameters", f.get("function", {}).get("parameters", {}))
         if name:
-            expected.add(name)
+            expected[name] = _normalize_params(params)
     return expected
 
 
-def evaluate_case(case: dict, output: str) -> tuple[bool, str]:
-    """Check if Volt called the expected function."""
+def _extract_calls(output: str) -> list[tuple[str, dict]]:
+    """Extract tool name and arguments from Volt agent output."""
     import re
-    expected = _get_expected_functions(case)
-    called = set()
+    calls = []
     for line in output.split("\n"):
-        m = re.search(r"executing tool:\s*(\S+)", line)
+        m = re.search(r"executing tool:\s*(\S+)\s+with\s+(.+)", line)
         if m:
-            called.add(m.group(1))
+            name = m.group(1)
+            try:
+                args = json.loads(m.group(2).replace("'", '"'))
+            except json.JSONDecodeError:
+                args = {}
+            calls.append((name, args))
+    return calls
 
-    if not expected:
-        return called != set(), f"called {called}" if called else "no expected functions"
 
-    matched = expected & called
-    if matched:
-        return True, f"called {matched}"
-    elif called:
-        return False, f"called {called} but expected {expected}"
+def _validate_args(args: dict, schema: dict) -> list[str]:
+    """Validate arguments against JSON Schema. Returns list of issues."""
+    issues = []
+    props = schema.get("properties", {})
+    required = schema.get("required", [])
+
+    # Check required fields present
+    for req in required:
+        if isinstance(req, str) and req not in args:
+            issues.append(f"missing required param '{req}'")
+        elif isinstance(req, list):
+            for r in req:
+                if isinstance(r, str) and r not in args:
+                    issues.append(f"missing required param '{r}'")
+
+    # Check argument types
+    for key, val in args.items():
+        if key in props:
+            prop_schema = props[key]
+            expected_type = prop_schema.get("type", "string")
+            type_ok = _check_type(val, expected_type)
+            if not type_ok:
+                issues.append(f"param '{key}' type mismatch: got {type(val).__name__}, expected {expected_type}")
+
+    # Check for hallucinated params (not in schema)
+    for key in args:
+        if key not in props and key not in ("unit", "units"):
+            issues.append(f"hallucinated param '{key}'")
+
+    return issues
+
+
+def _check_type(val, expected: str) -> bool:
+    """Check if value matches expected JSON Schema type."""
+    type_map = {
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+    if expected in type_map:
+        expected_types = type_map[expected]
+        return isinstance(val, expected_types) if not isinstance(expected_types, tuple) else isinstance(val, expected_types)
+    return True  # unknown types pass
+
+
+def evaluate_case(case: dict, output: str) -> tuple[bool, str, dict]:
+    """Check if Volt called the expected function with valid arguments.
+    Returns (passed, reason, details_dict)."""
+    expected_funcs = _get_expected_functions(case)
+    calls = _extract_calls(output)
+    called_names = set(name for name, _ in calls)
+
+    details = {
+        "expected": list(expected_funcs.keys()),
+        "called": [{"name": n, "args": a} for n, a in calls],
+        "arg_issues": [],
+    }
+
+    if not expected_funcs:
+        ok = len(calls) > 0
+        return ok, f"called {called_names}" if ok else "no expected functions", details
+
+    # Check name match
+    matched_names = expected_funcs.keys() & called_names
+    if matched_names:
+        # Check arguments for matched functions
+        all_issues = []
+        for name in matched_names:
+            schema = expected_funcs[name]
+            matching_calls = [c for c in calls if c[0] == name]
+            for _, args in matching_calls:
+                issues = _validate_args(args, schema)
+                if issues:
+                    all_issues.extend(f"{name}: {i}" for i in issues)
+        details["arg_issues"] = all_issues
+
+        if all_issues:
+            return False, f"name match ok but arg issues: {'; '.join(all_issues[:3])}", details
+        return True, f"called {matched_names} with valid args", details
+
+    elif called_names:
+        return False, f"called {called_names} but expected {set(expected_funcs.keys())}", details
     else:
-        # Check if the answer string contains expected output patterns
         lower = output.lower()
         if "error" not in lower and len(output) > 20:
-            return True, "produced answer (no tool needed)"
-        return False, "no tool calls detected"
+            return True, "produced answer (no tool needed)", details
+        return False, "no tool calls detected", details
 
 
 def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-instant") -> tuple[str, float]:
@@ -186,7 +269,7 @@ def main():
         )
 
         output, latency = run_volt(prompt, functions, args.model)
-        ok, reason = evaluate_case(case, output)
+        ok, reason, details = evaluate_case(case, output)
         total_latency += latency
 
         # Track token usage from agent output
@@ -198,6 +281,8 @@ def main():
         extra = ""
         if p_tok + c_tok > 0:
             extra = f" | {p_tok}+{c_tok} tok"
+        if details.get("arg_issues"):
+            extra += f" | args: {details['arg_issues'][:1]}"
         print(f"  [{status}] {reason} ({latency:.1f}s{extra})")
 
         if ok:
@@ -206,9 +291,11 @@ def main():
         results.append({
             "id": case.get("id", f"case_{i}"),
             "query": query,
-            "expected": list(_get_expected_functions(case)),
+            "expected": list(_get_expected_functions(case).keys()),
             "passed": ok,
             "reason": reason,
+            "arg_issues": details.get("arg_issues", []),
+            "calls": details.get("called", []),
             "latency_s": latency,
             "output": output[:500],
         })
