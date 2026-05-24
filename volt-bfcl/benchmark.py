@@ -24,13 +24,30 @@ RESULTS_DIR = Path(__file__).parent / "results"
 
 # Map from short names to BFCL data filenames
 BFCL_DATA_FILES = {
+    # Static (non-live) categories
     "simple_python": "BFCL_v4_simple_python.json",
     "simple_java": "BFCL_v4_simple_java.json",
     "simple_javascript": "BFCL_v4_simple_javascript.json",
     "parallel": "BFCL_v4_parallel.json",
     "multiple": "BFCL_v4_multiple.json",
     "irrelevance": "BFCL_v4_irrelevance.json",
+    # Live categories
+    "live_simple": "BFCL_v4_live_simple.json",
+    "live_parallel": "BFCL_v4_live_parallel.json",
+    "live_multiple": "BFCL_v4_live_multiple.json",
+    "live_irrelevance": "BFCL_v4_live_irrelevance.json",
+    "live_relevance": "BFCL_v4_live_relevance.json",
+    "live_parallel_multiple": "BFCL_v4_live_parallel_multiple.json",
+    # Multi-turn categories
+    "multi_turn_base": "BFCL_v4_multi_turn_base.json",
+    "multi_turn_long_context": "BFCL_v4_multi_turn_long_context.json",
+    "multi_turn_miss_func": "BFCL_v4_multi_turn_miss_func.json",
+    "multi_turn_miss_param": "BFCL_v4_multi_turn_miss_param.json",
 }
+
+# GitHub raw data URL for downloading if bfcl_eval package is not installed
+BFCL_GITHUB_BASE = "https://raw.githubusercontent.com/ShishirPatil/gorilla/main/berkeley-function-call-leaderboard/bfcl_eval/data"
+LOCAL_DATA_DIR = Path(__file__).parent / "data"
 
 # Default model — change via --model flag
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -38,10 +55,13 @@ DEFAULT_TOP_K = 8
 
 
 # -- Data Loading ------------------------------------------------------
-def _bfcl_data_dir() -> Path:
-    """Return the path to BFCL's data directory (installed via pip)."""
-    import bfcl_eval
-    return Path(bfcl_eval.__path__[0]) / "data"
+def _bfcl_data_dir() -> Path | None:
+    """Return the path to BFCL's data directory (installed via pip), or None."""
+    try:
+        import bfcl_eval
+        return Path(bfcl_eval.__path__[0]) / "data"
+    except ImportError:
+        return None
 
 
 def _resolve_category(name: str) -> str:
@@ -49,16 +69,44 @@ def _resolve_category(name: str) -> str:
     return BFCL_DATA_FILES.get(name, name)
 
 
-def load_test_cases(category: str) -> list[dict]:
-    """Load BFCL test cases for a given category from the installed package."""
-    data_dir = _bfcl_data_dir()
-    filename = _resolve_category(category)
-    path = data_dir / filename
-    if not path.exists():
-        print(f"Error: data file not found: {path}")
-        print(f"Available categories: {', '.join(sorted(BFCL_DATA_FILES.keys()))}")
+def _download_data_file(filename: str) -> Path:
+    """Download a BFCL data file from GitHub and cache it locally."""
+    LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOCAL_DATA_DIR / filename
+    if path.exists():
+        return path
+    url = f"{BFCL_GITHUB_BASE}/{filename}"
+    print(f"  Downloading {filename} from GitHub...")
+    import urllib.request
+    try:
+        urllib.request.urlretrieve(url, path)
+        print(f"  Saved to {path}")
+    except Exception as e:
+        print(f"  Error downloading {filename}: {e}")
         sys.exit(1)
+    return path
 
+
+def load_test_cases(category: str) -> list[dict]:
+    """Load BFCL test cases for a given category from the installed package or GitHub."""
+    filename = _resolve_category(category)
+
+    # Try pip-installed package first
+    data_dir = _bfcl_data_dir()
+    if data_dir:
+        path = data_dir / filename
+        if path.exists():
+            cases = []
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        cases.append(json.loads(line))
+            print(f"Loaded {len(cases)} cases from {path.name}")
+            return cases
+
+    # Fallback: download from GitHub
+    path = _download_data_file(filename)
     cases = []
     with open(path) as f:
         for line in f:
@@ -269,8 +317,26 @@ def _fix_parameters(params: dict) -> dict:
     return result
 
 
+def _get_conversation_messages(question: list) -> list[dict]:
+    """Build full conversation message list from BFCL's question format.
+
+    For simple (single-turn): question is [[{role, content}, ...]]
+    For multi-turn: question is [[{role, content}], [{role, content}], ...]
+    Each inner list represents one turn.
+    """
+    messages = []
+    if not question:
+        return messages
+    for turn in question:
+        if isinstance(turn, list):
+            for msg in turn:
+                if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+    return messages
+
+
 def _get_user_message(question: list) -> str:
-    """Extract the user message from BFCL's nested question format."""
+    """Extract the first user message from BFCL's nested question format."""
     if not question or not question[0]:
         return ""
     first_turn = question[0]
@@ -377,14 +443,22 @@ def run_benchmark(mode: str, category: str, model: str, top_k: int = 8, limit: i
 
         user_msg = _get_user_message(questions)
 
-        # Build messages
-        messages = [{"role": "user", "content": user_msg}]
+        # Build messages (supports multi-turn conversations)
+        is_multi_turn = category.startswith("multi_turn")
+        if is_multi_turn:
+            messages = _get_conversation_messages(questions)
+            if not messages:
+                messages = [{"role": "user", "content": user_msg}]
+        else:
+            messages = [{"role": "user", "content": user_msg}]
 
         # Apply RAG filtering if in rag mode
         tools_to_send = functions
         rag_info = {"original_count": len(functions), "selected_count": len(functions)}
         if mode == "rag" and len(functions) > top_k:
-            selected = select_top_k(user_msg, functions, k=top_k)
+            # Use the full conversation text for embedding in multi-turn
+            rag_query = " ".join(m["content"] for m in messages[-3:]) if is_multi_turn else user_msg
+            selected = select_top_k(rag_query, functions, k=top_k)
             tools_to_send = selected
             rag_info["selected_count"] = len(selected)
 

@@ -8,7 +8,7 @@ description = "Volt — Rust agent framework with MCP, memory, sandboxed tools, 
 [features]
 testutils = []
 tools-screenshot = ["windows-capture", "image", "base64"]
-tools-pdf = ["printpdf"]
+tools-pdf = []
 tools-desktop = ["enigo"]
 tools-browser = ["headless_chrome"]
 default = ["tools-screenshot", "tools-pdf", "tools-desktop", "tools-browser"]
@@ -60,7 +60,7 @@ flate2 = "1.1"
 windows-capture = { version = "2", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 base64 = { version = "0.22", optional = true }
-printpdf = { version = "0.8", optional = true }
+lopdf = { version = "0.35", optional = true }
 enigo = { version = "0.3", optional = true }
 headless_chrome = { version = "1.0", optional = true }
 

@@ -1,40 +1,47 @@
 ## Handoff for next session
 
-### First steps
-```bash
-git pull
-cargo build --features "tools-screenshot"  # verify new tools compile
-cargo test --features testutils
-```
+### What was done this session
 
-### New tools added
+**BFCL benchmark extended** (volt-bfcl/benchmark.py):
+- Added 6 live categories + 4 multi-turn categories
+- GitHub download fallback (no bfcl-eval pip package needed)
+- Multi-turn conversation support
+- Results: 73-78% token savings across all 16 categories
+
+**ProgramBench** — Volt integration test (tests/program_bench.rs):
+- 8 programming puzzles through Volt's actual Agent::run()
+- 100% pass rate
+
+**GAIA** — Volt integration test (tests/gaia_bench.rs):
+- 3 QA questions through Volt's actual Agent::run()
+- All pass (keyword matching)
+- For full GAIA dataset: huggingface-cli login (token configured)
+
+**Python benchmarks** (volt-bfcl/*.py):
+- Simulation harnesses for cost estimation and paper data
+- Actual Volt validation uses Rust integration tests above
+
+### New tools added (from repo pull)
 | Tool | Module | Description |
 |---|---|---|
-| **screenshot** | `src/tools/screenshot.rs` | Capture primary monitor, base64 PNG |
-| **create_bar_chart** | `src/tools/chart_tool.rs` | Bar chart from labels+values, saves HTML with Plotly.js |
-| **create_line_chart** | `src/tools/chart_tool.rs` | Line chart from labels+values, saves HTML with Plotly.js |
+| screenshot | src/tools/screenshot.rs | Capture primary monitor, base64 PNG |
+| create_bar_chart | src/tools/chart_tool.rs | Bar chart from labels+values, saves HTML with Plotly.js |
+| create_line_chart | src/tools/chart_tool.rs | Line chart from labels+values, saves HTML with Plotly.js |
 
-Screenshot dependency: `windows-capture`, `image`, `base64` (feature `tools-screenshot`, default on).
-Charts are pure Rust + serde_json, no extra deps.
-
-### Tools not yet built (crate API issues on this toolchain)
-- PDF creation (lopdf API changed)
-- Desktop automation (enigo/uiautomation API mismatch)
+### Tools not yet working (API mismatch on this toolchain)
+- PDF creation (lopdf API changed) — src/tools/pdf_tool.rs
+- Desktop automation (enigo/uiautomation) — src/tools/desktop_tool.rs
 - Browser automation (chromiumoxide zip conflict)
 
-These can be added on the other machine â€” see `paper/tool_libraries_report.md` for specs.
+### Environment
+- .env has working GROQ_API_KEY, LLM set to Groq
+- Ollama needs mxbai-embed-large for Volt's embedding pipeline
+- Rust: stable-x86_64-pc-windows-gnu (MinGW at D:\Dev\msys64\mingw64\bin)
+- Cargo: D:\Dev\.cargo\bin\cargo.exe
 
-### Benchmarks to run
-1. **BFCL full** â€” extend `volt-bfcl/benchmark.py` to live + multi-turn (~$0.46 on Groq)
-2. **GAIA** â€” implement adapter for 165 dev questions (~$0.32 on Groq)
-3. **ProgramBench** â€” code puzzles (~$0.07)
+### Test commands
+powershell
+C:\Python313\Scripts\;C:\Python313\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\;C:\ProgramData\chocolatey\bin;C:\Program Files\Git\cmd;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files\Docker\Docker\resources\bin;C:\Users\iixii\AppData\Local\Microsoft\WindowsApps;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\iixii\AppData\Roaming\npm;C:\Users\iixii\AppData\Local\Programs\Ollama;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin;;C:\Users\iixii\.cargo\bin = "D:\Dev\msys64\mingw64\bin;C:\Python313\Scripts\;C:\Python313\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\;C:\ProgramData\chocolatey\bin;C:\Program Files\Git\cmd;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files\Docker\Docker\resources\bin;C:\Users\iixii\AppData\Local\Microsoft\WindowsApps;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\iixii\AppData\Roaming\npm;C:\Users\iixii\AppData\Local\Programs\Ollama;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin;;C:\Users\iixii\.cargo\bin"
+& "D:\Dev\.cargo\bin\cargo.exe" test --features testutils
 
-### Paper draft at `paper/draft.md`
-BFCL results: 74% token savings, +6.7pp accuracy with RAG. Ready for submission.
-
-### Environment notes
-- `.env` has working GROQ_API_KEY + DATABASE_URL
-- Ollama needs `mxbai-embed-large` for Volt's embedding pipeline (pull on other machine)
-- Pagefile is system-managed (will grow under compilation load)
-- Docker VHDX compacted to 3 GB (was 33 GB)
-- **98 GB free disk, 8 GB free RAM at idle**
+All prior work committed and pushed to main.
