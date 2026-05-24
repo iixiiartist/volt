@@ -10,7 +10,7 @@ mod browser_impl {
         let started = Instant::now();
         match Browser::new(LaunchOptions::default()) {
             Ok(browser) => {
-                match browser.wait_for_initial_tab() {
+                match browser.new_tab() {
                     Ok(tab) => {
                         match tab.navigate_to(url) {
                             Ok(t) => {
@@ -31,7 +31,7 @@ mod browser_impl {
         let started = Instant::now();
         match Browser::new(LaunchOptions::default()) {
             Ok(browser) => {
-                match browser.wait_for_initial_tab() {
+                match browser.new_tab() {
                     Ok(tab) => {
                         if let Err(e) = tab.navigate_to(url) {
                             return ToolResult { success: false, output: String::new(), error: Some(format!("navigate: {}", e)), duration_ms: started.elapsed().as_millis() };
@@ -52,7 +52,7 @@ mod browser_impl {
         let started = Instant::now();
         match Browser::new(LaunchOptions::default()) {
             Ok(browser) => {
-                match browser.wait_for_initial_tab() {
+                match browser.new_tab() {
                     Ok(tab) => {
                         if let Err(e) = tab.navigate_to(url) {
                             return ToolResult { success: false, output: String::new(), error: Some(format!("navigate: {}", e)), duration_ms: started.elapsed().as_millis() };
