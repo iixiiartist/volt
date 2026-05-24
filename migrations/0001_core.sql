@@ -109,6 +109,24 @@ CREATE TABLE skill_tools (
 
 CREATE INDEX IF NOT EXISTS skill_tools_skill_id_idx ON skill_tools(skill_id);
 
+-- Unified context store persistence (everything-as-RAG)
+CREATE TABLE context_entries (
+  id UUID PRIMARY KEY,
+  kind VARCHAR(32) NOT NULL,
+  content TEXT NOT NULL,
+  embedding vector(1024),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  frequency INT NOT NULL DEFAULT 0,
+  success_rate REAL NOT NULL DEFAULT 0.0,
+  usage_count INT NOT NULL DEFAULT 0,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS context_entries_kind_idx ON context_entries(kind);
+CREATE INDEX IF NOT EXISTS context_entries_embedding_idx
+  ON context_entries USING hnsw (embedding vector_cosine_ops);
+
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN

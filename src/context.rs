@@ -95,6 +95,7 @@ impl ContextEntry {
 pub struct ContextStore {
     pub entries: RwLock<Vec<StoredEntry>>,
     insert_count: RwLock<usize>,
+    db: std::sync::OnceLock<sqlx::PgPool>,
 }
 
 pub struct StoredEntry {
@@ -106,7 +107,26 @@ impl ContextStore {
         Arc::new(Self {
             entries: RwLock::new(Vec::new()),
             insert_count: RwLock::new(0),
+            db: std::sync::OnceLock::new(),
         })
+    }
+
+    pub fn new_with_db(pool: sqlx::PgPool) -> Arc<Self> {
+        let db = std::sync::OnceLock::new();
+        let _ = db.set(pool);
+        Arc::new(Self {
+            entries: RwLock::new(Vec::new()),
+            insert_count: RwLock::new(0),
+            db,
+        })
+    }
+
+    pub fn set_db(&self, pool: sqlx::PgPool) {
+        let _ = self.db.set(pool);
+    }
+
+    fn db(&self) -> Option<&sqlx::PgPool> {
+        self.db.get()
     }
 
     pub async fn add(&self, kind: ContextKind, content: &str, metadata: Value) -> Uuid {
@@ -232,6 +252,18 @@ impl ContextStore {
         id
     }
 
+    /// Load existing context entries from PostgreSQL into the in-memory store.
+    pub async fn hydrate_from_db(&self, limit: i64) -> anyhow::Result<usize> {
+        let db = self.db().ok_or_else(|| anyhow::anyhow!("no database connection configured"))?;
+        let entries = crate::db::load_context_entries(db, limit).await?;
+        let count = entries.len();
+        let mut store = self.entries.write().await;
+        for entry in entries {
+            store.push(StoredEntry { entry });
+        }
+        Ok(count)
+    }
+
     pub async fn len(&self) -> usize {
         self.entries.read().await.len()
     }
@@ -269,8 +301,19 @@ impl ContextStore {
                 }
             }
 
-            store.push(StoredEntry { entry });
+            store.push(StoredEntry { entry: entry.clone() });
             inserted += 1;
+
+            // Persist to PostgreSQL if available
+            if let Some(ref db) = self.db() {
+                if entry.embedding.is_some() {
+                    let _ = crate::db::insert_context_entry(db, &entry).await;
+                }
+            }
+        }
+
+        if inserted > 0 && self.db().is_some() {
+            // Persistence complete — background write handled above
         }
 
         // 2. Track insert count; evict periodically

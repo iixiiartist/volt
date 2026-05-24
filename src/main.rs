@@ -415,7 +415,17 @@ async fn main() -> anyhow::Result<()> {
             let skills = setup_skills(pool.clone(), Some(embedder_for_skills)).await;
             agent = agent.with_skills(skills);
 
-            let context_store = ContextStore::new();
+            let context_store = if let Some(ref p) = pool {
+                let store = ContextStore::new_with_db(p.clone());
+                match store.hydrate_from_db(2000).await {
+                    Ok(n) if n > 0 => eprintln!("[context] hydrated {} entries from DB", n),
+                    Err(_) => {}
+                    _ => {}
+                }
+                store
+            } else {
+                ContextStore::new()
+            };
 
             if let Some(ref pool) = pool {
                 let skill_store = context_store.clone();
@@ -514,6 +524,7 @@ async fn main() -> anyhow::Result<()> {
             });
 
             if let Ok(pool) = db::connect(&settings.database_url).await {
+                context_store.set_db(pool.clone());
                 agent = agent.with_memory(pool.clone(), embedder.clone());
                 let skill_store = context_store.clone();
                 let skill_emb = embedder.clone();
@@ -662,6 +673,7 @@ async fn main() -> anyhow::Result<()> {
             });
 
             if let Ok(pool) = db::connect(&settings.database_url).await {
+                context_store.set_db(pool.clone());
                 agent = agent.with_memory(pool.clone(), embedder.clone());
                 let skill_store = context_store.clone();
                 let skill_emb = embedder.clone();
