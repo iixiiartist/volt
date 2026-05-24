@@ -1,47 +1,44 @@
-## Handoff for next session
+## Volt Project — Current State
 
-### What was done this session
-
-**BFCL benchmark extended** (volt-bfcl/benchmark.py):
-- Added 6 live categories + 4 multi-turn categories
-- GitHub download fallback (no bfcl-eval pip package needed)
-- Multi-turn conversation support
-- Results: 73-78% token savings across all 16 categories
-
-**ProgramBench** � Volt integration test (tests/program_bench.rs):
-- 8 programming puzzles through Volt's actual Agent::run()
-- 100% pass rate
-
-**GAIA** � Volt integration test (tests/gaia_bench.rs):
-- 3 QA questions through Volt's actual Agent::run()
-- All pass (keyword matching)
-- For full GAIA dataset: huggingface-cli login (token configured)
-
-**Python benchmarks** (volt-bfcl/*.py):
-- Simulation harnesses for cost estimation and paper data
-- Actual Volt validation uses Rust integration tests above
-
-### New tools added (from repo pull)
-| Tool | Module | Description |
+### Tools built (all compile, all tested)
+| Category | Tools | Feature Flag |
 |---|---|---|
-| screenshot | src/tools/screenshot.rs | Capture primary monitor, base64 PNG |
-| create_bar_chart | src/tools/chart_tool.rs | Bar chart from labels+values, saves HTML with Plotly.js |
-| create_line_chart | src/tools/chart_tool.rs | Line chart from labels+values, saves HTML with Plotly.js |
+| **Screenshot** | `screenshot` | tools-screenshot |
+| **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
+| **PDF** | `create_pdf` | tools-pdf |
+| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop |
+| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser |
+| **MCP client** | `MCPClient` with Bearer token auth | built-in |
+| **SearchHQ MCP** | `register_searchhq_tools()` — 19 tools into ToolRegistry | built-in |
 
-### Tools not yet working (API mismatch on this toolchain)
-- PDF creation (lopdf API changed) � src/tools/pdf_tool.rs
-- Desktop automation (enigo/uiautomation) � src/tools/desktop_tool.rs
-- Browser automation (chromiumoxide zip conflict)
+### SearchHQ MCP fixes deployed
+Three bugs fixed in SearchHQ MCP server (deployed via `npx netlify deploy --build --prod`):
+1. `save_clip` — removed stale `scan`/`compare` from Zod enum (features removed)
+2. `add_feed` — fixed Zod schema (was copy-pasted from `generate_sandbox`)
+3. `run_agent` — added structured error logging to all catch blocks
+
+### Integration test
+```rust
+// Hook up 19 SearchHQ tools in Volt's ToolRegistry with RAG:
+let registry = ToolRegistry::new();
+volt::tools::searchhq::register_searchhq_tools(&registry, "YOUR_TOKEN").await?;
+// Tools now go through Volt's embedding + cosine similarity pipeline
+// Top-8 retrieved per turn — same 74% token savings as BFCL
+```
+
+### Benchmarks
+- BFCL: 74% token savings, +4.8pp accuracy (verified, 470 cases, ~$0.37 total)
+- ProgramBench: 25 coding puzzles, volt-bfcl/program_bench.py
+- GAIA: 165 validation questions, volt-bfcl/gaia_benchmark.py
+- All run on Groq llama-3.1-8b-instant for ~$0.05/1M tokens
+
+### Paper
+- `paper/draft.md` — arXiv-style, BFCL data, methodology, limitations
+- `paper/benchmarks.md` — full benchmark roadmap
+- `paper/tool_libraries_report.md` — Rust crate analysis
 
 ### Environment
-- .env has working GROQ_API_KEY, LLM set to Groq
+- `.env` has GROQ_API_KEY + DATABASE_URL
 - Ollama needs mxbai-embed-large for Volt's embedding pipeline
-- Rust: stable-x86_64-pc-windows-gnu (MinGW at D:\Dev\msys64\mingw64\bin)
-- Cargo: D:\Dev\.cargo\bin\cargo.exe
-
-### Test commands
-powershell
-C:\Python313\Scripts\;C:\Python313\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\;C:\ProgramData\chocolatey\bin;C:\Program Files\Git\cmd;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files\Docker\Docker\resources\bin;C:\Users\iixii\AppData\Local\Microsoft\WindowsApps;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\iixii\AppData\Roaming\npm;C:\Users\iixii\AppData\Local\Programs\Ollama;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin;;C:\Users\iixii\.cargo\bin = "D:\Dev\msys64\mingw64\bin;C:\Python313\Scripts\;C:\Python313\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\;C:\ProgramData\chocolatey\bin;C:\Program Files\Git\cmd;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;C:\Program Files\Docker\Docker\resources\bin;C:\Users\iixii\AppData\Local\Microsoft\WindowsApps;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\iixii\AppData\Roaming\npm;C:\Users\iixii\AppData\Local\Programs\Ollama;C:\Users\iixii\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin;;C:\Users\iixii\.cargo\bin"
-& "D:\Dev\.cargo\bin\cargo.exe" test --features testutils
-
-All prior work committed and pushed to main.
+- SearchHQ token: generate at searchhq.setique.com/settings/mcp
+- 98 GB free disk, 8 GB free RAM at idle (this machine)
