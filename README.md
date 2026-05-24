@@ -392,6 +392,9 @@ cargo clippy -- -D warnings
 ## Performance
 
 Benchmarked on BFCL V4 with Groq llama-3.1-8b-instant (50 distractor tools).
+All evaluations ran from a single consumer laptop (Intel Core Ultra 5 135U, 16GB RAM, no GPU)
+for embedding computation and the Volt agent loop. LLM inference via the Groq API — no
+specialized hardware required.
 
 | Metric | Static (all 51 tools) | Volt RAG (top-8) |
 |---|---|---|
