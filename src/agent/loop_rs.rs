@@ -1,4 +1,5 @@
-﻿use crate::embedding::EmbeddingClient;
+﻿use crate::context::ContextStore;
+use crate::embedding::EmbeddingClient;
 use crate::llm::LLMProvider;
 use crate::llm::provider::TokenCallback;
 use crate::models::*;
@@ -17,6 +18,7 @@ pub struct Agent {
     db: Option<PgPool>,
     embedder: Option<EmbeddingClient>,
     skills: Option<Arc<SkillRegistry>>,
+    context_store: Option<Arc<ContextStore>>,
     cancel: Option<CancelToken>,
     on_token: Option<TokenCallback>,
 }
@@ -48,6 +50,7 @@ impl Agent {
             db: None,
             embedder: None,
             skills: None,
+            context_store: None,
             cancel: None,
             on_token: None,
         }
@@ -61,6 +64,11 @@ impl Agent {
 
     pub fn with_skills(mut self, skills: Arc<SkillRegistry>) -> Self {
         self.skills = Some(skills);
+        self
+    }
+
+    pub fn with_context(mut self, context_store: Arc<ContextStore>) -> Self {
+        self.context_store = Some(context_store);
         self
     }
 
@@ -185,14 +193,26 @@ impl Agent {
             None
         };
 
-        {
-            let mut state = self.state.lock().await;
-            if state.context_injected {
-                return context_embedding;
+        // Always retrieve relevant context via unified ContextStore (no one-shot flag)
+        if let (Some(ref emb), Some(ref store)) = (&context_embedding, &self.context_store) {
+            let retrieved = store.search(emb, 8, None, 0.25).await;
+            if !retrieved.is_empty() {
+                let blocks: Vec<String> = retrieved.iter().map(|e| {
+                    format!("[{}]\n{}", e.kind.as_str(), e.content)
+                }).collect();
+                let mut state = self.state.lock().await;
+                state.messages.push(Message {
+                    role: "system".into(),
+                    content: Arc::new(format!("## Relevant Context\n{}", blocks.join("\n---\n"))),
+                    tool_calls: None,
+                    tool_result: None,
+                    tool_name: None,
+                    created_at: chrono::Utc::now(),
+                });
             }
-            state.context_injected = true;
         }
 
+        // Also retrieve skills from the dedicated registry for backward compat
         if let (Some(ref emb), Some(ref skills)) = (&context_embedding, &self.skills) {
             let matched = skills.search(emb, 3).await;
             if !matched.is_empty() {
@@ -211,6 +231,7 @@ impl Agent {
             }
         }
 
+        // DB memories — still here for backward compat with pgvector store
         if let (Some(ref emb), Some(ref db)) = (&context_embedding, &self.db) {
             if let Ok(memories) = crate::db::search_memories(db, emb, 5, None).await {
                 if !memories.is_empty() {
@@ -347,6 +368,18 @@ impl Agent {
                     error: Some(format!("tool error: {}", e)),
                     duration_ms: 0,
                 });
+
+            // rag_learn: record this tool execution outcome
+            if let (Some(ref store), Some(ref emb)) = (&self.context_store, &self.embedder) {
+                if let Ok(_emb) = emb.embed_description(&tc.name).await {
+                    let query = tc.arguments.to_string();
+                    store.record_run(&query, &tc.name, result.success, serde_json::json!({
+                        "tool_name": tc.name,
+                        "duration_ms": result.duration_ms,
+                        "error": result.error,
+                    })).await;
+                }
+            }
 
             let output = if result.success {
                 result.output
