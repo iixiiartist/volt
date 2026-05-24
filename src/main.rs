@@ -367,6 +367,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                         eprintln!("[tools] loaded {} BFCL stubs from {}", count, path);
+                        tools.compute_embeddings(&embedder).await;
                     }
                     Err(e) => eprintln!("[tools] failed to load {}: {}", path, e),
                 }
@@ -385,7 +386,7 @@ async fn main() -> anyhow::Result<()> {
                 model,
                 provider: provider_kind,
                 system_prompt: None,
-                max_iterations: 25,
+                max_iterations: 8,
                 temperature: 0.3,
                 toolsets: vec!["builtin".into()],
                 hidden: false,
@@ -408,6 +409,8 @@ async fn main() -> anyhow::Result<()> {
             };
             if let Some(ref p) = pool {
                 agent = agent.with_memory(p.clone(), embedder.clone());
+            } else {
+                agent = agent.with_memory_embedder_only(embedder.clone());
             }
             let skills = setup_skills(pool.clone(), Some(embedder_for_skills)).await;
             agent = agent.with_skills(skills);

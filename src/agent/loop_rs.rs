@@ -65,6 +65,11 @@ impl Agent {
         self
     }
 
+    pub fn with_memory_embedder_only(mut self, embedder: EmbeddingClient) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
     pub fn with_skills(mut self, skills: Arc<SkillRegistry>) -> Self {
         self.skills = Some(skills);
         self

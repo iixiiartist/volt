@@ -237,7 +237,10 @@ impl EmbeddingClient {
         let response = req
             .send()
             .await
-            .context("failed to call embedding endpoint")?;
+            .map_err(|e| {
+                let msg = format!("failed to call embedding endpoint ({}): {}", config.endpoint, e);
+                anyhow::anyhow!(msg)
+            })?;
 
         let status = response.status();
         let resp_text = response.text().await.unwrap_or_default();

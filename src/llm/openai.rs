@@ -97,13 +97,19 @@ impl LLMProvider for OpenAIProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let resp: serde_json::Value = req
+        let resp_val = req
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
+
+        let status = resp_val.status();
+        if !status.is_success() {
+            let err_body = resp_val.text().await.unwrap_or_default();
+            let trunc = &err_body[..500.min(err_body.len())];
+            anyhow::bail!("HTTP {}: {}", status.as_u16(), trunc);
+        }
+
+        let resp: serde_json::Value = resp_val.json().await?;
 
         parse_openai_response(resp)
     }
@@ -126,8 +132,14 @@ impl LLMProvider for OpenAIProvider {
         let response = req
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let err_body = response.text().await.unwrap_or_default();
+            let trunc = &err_body[..500.min(err_body.len())];
+            anyhow::bail!("HTTP {}: {}", status.as_u16(), trunc);
+        }
 
         let mut full_content = String::new();
         let mut tool_calls_acc: Vec<ToolCall> = Vec::new();
