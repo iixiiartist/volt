@@ -470,6 +470,12 @@ async fn main() -> anyhow::Result<()> {
             });
 
             let tools = register_all_tools().await;
+            let embedder = EmbeddingClient::new_smart().await;
+            tools.compute_embeddings(&embedder).await;
+
+            let cancel_for_agent = cancel.clone();
+            let cancel_for_worker = cancel.clone();
+
             let config = AgentConfig {
                 name: "volt-agent".into(),
                 model,
@@ -481,14 +487,41 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: allow,
             };
-            let mut agent = Agent::new(config, provider, tools)
-                .with_cancel(cancel)
+            let mut agent = Agent::new(config, provider, tools.clone())
+                .with_cancel(cancel_for_agent)
                 .with_stream(std::sync::Arc::new(|token| {
                     print!("{}", token);
                 }));
+
+            let context_store = ContextStore::new();
+            let (seed_channel, seed_rx) = worker::create_seed_channel();
+            agent = agent
+                .with_context(context_store.clone())
+                .with_seed_channel(seed_channel);
+
+            worker::AutoSeedWorker::new(context_store.clone(), embedder.clone(), cancel_for_worker)
+                .spawn(seed_rx);
+
+            let seed_store = context_store.clone();
+            let seed_embedder = embedder.clone();
+            let seed_tools = tools.clone();
+            let seed_sandbox = settings.sandbox_policy.clone();
+            tokio::spawn(async move {
+                worker::seed_from_workspace(&seed_store, &seed_embedder).await;
+                worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
+                worker::seed_permissions(&seed_store, &seed_tools).await;
+                worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
+            });
+
             if let Ok(pool) = db::connect(&settings.database_url).await {
-                let embedder = EmbeddingClient::new_smart().await;
-                agent = agent.with_memory(pool, embedder);
+                agent = agent.with_memory(pool.clone(), embedder.clone());
+                let skill_store = context_store.clone();
+                let skill_emb = embedder.clone();
+                tokio::spawn(async move {
+                    worker::seed_skills_from_db(&skill_store, &pool, &skill_emb).await;
+                });
+            } else {
+                agent = agent.with_memory_embedder_only(embedder.clone());
             }
 
             let sessions_pool =
@@ -591,6 +624,9 @@ async fn main() -> anyhow::Result<()> {
             });
             let (provider, provider_kind) = build_provider(&model, "volt-agent");
             let tools = register_all_tools().await;
+            let embedder = EmbeddingClient::new_smart().await;
+            tools.compute_embeddings(&embedder).await;
+
             let config = AgentConfig {
                 name: "volt-agent".into(),
                 model,
@@ -602,10 +638,38 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: allow,
             };
-            let mut agent = Agent::new(config, provider, tools);
+            let mut agent = Agent::new(config, provider, tools.clone());
+
+            let context_store = ContextStore::new();
+            let (seed_channel, seed_rx) = worker::create_seed_channel();
+            agent = agent
+                .with_context(context_store.clone())
+                .with_seed_channel(seed_channel);
+
+            let cancel_tui = CancelToken::new();
+            worker::AutoSeedWorker::new(context_store.clone(), embedder.clone(), cancel_tui)
+                .spawn(seed_rx);
+
+            let seed_store = context_store.clone();
+            let seed_embedder = embedder.clone();
+            let seed_tools = tools.clone();
+            let seed_sandbox = settings.sandbox_policy.clone();
+            tokio::spawn(async move {
+                worker::seed_from_workspace(&seed_store, &seed_embedder).await;
+                worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
+                worker::seed_permissions(&seed_store, &seed_tools).await;
+                worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
+            });
+
             if let Ok(pool) = db::connect(&settings.database_url).await {
-                let embedder = EmbeddingClient::new_smart().await;
-                agent = agent.with_memory(pool, embedder);
+                agent = agent.with_memory(pool.clone(), embedder.clone());
+                let skill_store = context_store.clone();
+                let skill_emb = embedder.clone();
+                tokio::spawn(async move {
+                    worker::seed_skills_from_db(&skill_store, &pool, &skill_emb).await;
+                });
+            } else {
+                agent = agent.with_memory_embedder_only(embedder);
             }
 
             if let Ok(sp) =

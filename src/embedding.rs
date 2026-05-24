@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-const EMBEDDING_DIMENSIONS: usize = 1024;
+const EMBEDDING_DIMENSIONS: usize = 384;
 
 /// All supported embedding providers
 #[derive(Debug, Clone, PartialEq)]
@@ -229,24 +229,49 @@ impl EmbeddingClient {
             }),
         };
 
-        let mut req = self.http.post(&config.endpoint).json(&body);
-        if config.provider != EmbeddingProvider::Ollama && !api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", api_key));
-        }
+        let (_status, resp_text) = 'retry: loop {
+            let max_retries = 3;
+            for attempt in 0..max_retries {
+                let req = self.http.post(&config.endpoint).json(&body);
+                let req = if config.provider != EmbeddingProvider::Ollama && !api_key.is_empty() {
+                    req.header("Authorization", format!("Bearer {}", api_key))
+                } else {
+                    req
+                };
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| {
-                let msg = format!("failed to call embedding endpoint ({}): {}", config.endpoint, e);
-                anyhow::anyhow!(msg)
-            })?;
-
-        let status = response.status();
-        let resp_text = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            anyhow::bail!("embedding endpoint returned {}: {}", status.as_u16(), &resp_text[..200.min(resp_text.len())]);
-        }
+                match req.send().await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let text = resp.text().await.unwrap_or_default();
+                        if status.is_success() {
+                            break 'retry (status, text);
+                        }
+                        if status.as_u16() == 429 && attempt + 1 < max_retries {
+                            let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                            if self.verbose {
+                                eprintln!("[embed] {:?} rate limited (429), retrying in {:?}", config.provider, delay);
+                            }
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        anyhow::bail!("embedding endpoint returned {}: {}", status.as_u16(), &text[..200.min(text.len())]);
+                    }
+                    Err(e) => {
+                        if attempt + 1 < max_retries && (e.is_timeout() || e.is_connect()) {
+                            let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                            if self.verbose {
+                                eprintln!("[embed] {:?} connection issue (attempt {}/{}), retrying in {:?}: {}", config.provider, attempt + 1, max_retries, delay, e);
+                            }
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        let msg = format!("failed to call embedding endpoint ({}): {}", config.endpoint, e);
+                        anyhow::bail!(msg);
+                    }
+                }
+            }
+            anyhow::bail!("{:?} embedding failed after {} attempts", config.provider, max_retries);
+        };
         let response: serde_json::Value = serde_json::from_str(&resp_text)
             .context("failed to decode embedding response")?;
 

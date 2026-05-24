@@ -3,14 +3,22 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE IF NOT EXISTS agent_tools (
+DROP TABLE IF EXISTS skill_tools CASCADE;
+DROP TABLE IF EXISTS asset_relationships CASCADE;
+DROP TABLE IF EXISTS tool_executions CASCADE;
+DROP TABLE IF EXISTS registry_events CASCADE;
+DROP TABLE IF EXISTS agent_tools CASCADE;
+DROP TABLE IF EXISTS skills CASCADE;
+DROP TABLE IF EXISTS memories CASCADE;
+
+CREATE TABLE agent_tools (
   id SERIAL PRIMARY KEY,
   tool_name VARCHAR(255) UNIQUE NOT NULL,
   description TEXT NOT NULL,
   language VARCHAR(50) NOT NULL,
   source_code TEXT NOT NULL,
   parameter_schema JSONB NOT NULL DEFAULT '{"type":"object"}'::jsonb,
-  embedding vector(1024),
+  embedding vector(384),
   is_marketplace_verified BOOLEAN DEFAULT false,
   cryptographic_signature VARCHAR(512),
   source_sha256 VARCHAR(64) NOT NULL,
@@ -19,7 +27,7 @@ CREATE TABLE IF NOT EXISTS agent_tools (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS asset_relationships (
+CREATE TABLE asset_relationships (
   parent_id INT REFERENCES agent_tools(id) ON DELETE CASCADE,
   child_id INT REFERENCES agent_tools(id) ON DELETE CASCADE,
   relationship_type VARCHAR(100) NOT NULL,
@@ -27,7 +35,7 @@ CREATE TABLE IF NOT EXISTS asset_relationships (
   PRIMARY KEY (parent_id, child_id, relationship_type)
 );
 
-CREATE TABLE IF NOT EXISTS tool_executions (
+CREATE TABLE tool_executions (
   id BIGSERIAL PRIMARY KEY,
   tool_id INT REFERENCES agent_tools(id) ON DELETE SET NULL,
   tool_name VARCHAR(255) NOT NULL,
@@ -40,7 +48,7 @@ CREATE TABLE IF NOT EXISTS tool_executions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS registry_events (
+CREATE TABLE registry_events (
   id BIGSERIAL PRIMARY KEY,
   pkg_id VARCHAR(255) NOT NULL,
   tool_name VARCHAR(255),
@@ -58,11 +66,11 @@ CREATE INDEX IF NOT EXISTS tool_executions_tool_name_idx ON tool_executions(tool
 CREATE INDEX IF NOT EXISTS tool_executions_created_at_idx ON tool_executions(created_at DESC);
 CREATE INDEX IF NOT EXISTS registry_events_pkg_id_idx ON registry_events(pkg_id);
 
-CREATE TABLE IF NOT EXISTS memories (
+CREATE TABLE memories (
   id BIGSERIAL PRIMARY KEY,
   kind VARCHAR(100) NOT NULL DEFAULT 'general',
   content TEXT NOT NULL,
-  embedding vector(1024),
+  embedding vector(384),
   session_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -71,21 +79,35 @@ CREATE INDEX IF NOT EXISTS memories_kind_idx ON memories(kind);
 CREATE INDEX IF NOT EXISTS memories_embedding_idx
   ON memories USING hnsw (embedding vector_cosine_ops);
 
-CREATE TABLE IF NOT EXISTS skills (
+CREATE TABLE skills (
   id UUID PRIMARY KEY,
-  name VARCHAR(255) UNIQUE NOT NULL,
+  name TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '',
-  version VARCHAR(50) NOT NULL DEFAULT '1.0.0',
+  version TEXT NOT NULL DEFAULT '1.0.0',
   content TEXT NOT NULL DEFAULT '',
-  embedding vector(1024),
+  embedding vector(384),
   mcp_servers JSONB NOT NULL DEFAULT '[]'::jsonb,
-  source_path VARCHAR(1024),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  source_path TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS skills_name_idx ON skills(name);
 CREATE INDEX IF NOT EXISTS skills_embedding_idx
   ON skills USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE skill_tools (
+  id UUID PRIMARY KEY,
+  skill_id UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  input_schema JSONB,
+  requires_sandbox BOOLEAN NOT NULL DEFAULT false,
+  mcp_server TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS skill_tools_skill_id_idx ON skill_tools(skill_id);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -98,4 +120,9 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS set_agent_tools_updated_at ON agent_tools;
 CREATE TRIGGER set_agent_tools_updated_at
 BEFORE UPDATE ON agent_tools
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS set_skills_updated_at ON skills;
+CREATE TRIGGER set_skills_updated_at
+BEFORE UPDATE ON skills
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();

@@ -370,12 +370,11 @@ impl Agent {
     }
 
     async fn execute_tool_calls(&self, tool_calls: &[ToolCall], state: &mut tokio::sync::MutexGuard<'_, AgentState>) {
+        // Check permissions upfront
         for tc in tool_calls {
             if self.is_cancelled() {
                 return;
             }
-            info!("executing tool: {} with {:?}", tc.name, tc.arguments);
-
             let needs_approval = self.tools.get_permission(&tc.name).await == PermissionLevel::Prompt
                 && !self.config.allow_all
                 && !state.allow_session;
@@ -403,49 +402,79 @@ impl Agent {
                         tool_name: Some(tc.id.clone()),
                         created_at: chrono::Utc::now(),
                     });
-                    continue;
                 }
             }
+        }
 
-            let result = self
-                .tools
-                .execute(&tc.name, &tc.arguments)
-                .await
-                .unwrap_or_else(|e| ToolResult {
+        if self.is_cancelled() {
+            return;
+        }
+
+        // Collect approved tool calls
+        let approved: Vec<&ToolCall> = tool_calls.iter()
+            .filter(|tc| {
+                state.messages.iter().rev()
+                    .find(|m| m.tool_name.as_deref() == Some(&tc.id))
+                    .map(|m| !m.content.contains("skipped"))
+                    .unwrap_or(true)
+            })
+            .collect();
+
+        if approved.is_empty() {
+            return;
+        }
+
+        // Execute approved tools concurrently
+        let futures: Vec<_> = approved.iter().map(|tc| {
+            let tools = self.tools.clone();
+            let name = tc.name.clone();
+            let args = tc.arguments.clone();
+            let id = tc.id.clone();
+            let store = self.context_store.clone();
+            let embedder = self.embedder.clone();
+            async move {
+                let result = tools.execute(&name, &args).await.unwrap_or_else(|e| ToolResult {
                     success: false,
                     output: String::new(),
                     error: Some(format!("tool error: {}", e)),
                     duration_ms: 0,
                 });
 
-            // rag_learn: record this tool execution outcome
-            if let (Some(ref store), Some(ref emb)) = (&self.context_store, &self.embedder) {
-                if let Ok(_emb) = emb.embed_description(&tc.name).await {
-                    let query = tc.arguments.to_string();
-                    store.record_run(&query, &tc.name, result.success, serde_json::json!({
-                        "tool_name": tc.name,
-                        "duration_ms": result.duration_ms,
-                        "error": result.error,
-                    })).await;
+                // rag_learn in background
+                if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
+                    if let Ok(_emb) = emb.embed_description(&name).await {
+                        let query = args.to_string();
+                        store.record_run(&query, &name, result.success, serde_json::json!({
+                            "tool_name": name,
+                            "duration_ms": result.duration_ms,
+                            "error": result.error,
+                        })).await;
+                    }
                 }
+
+                let error_msg = result.error.clone();
+                let output = if result.success {
+                    result.output.clone()
+                } else {
+                    format!("error: {}", error_msg.unwrap_or_default())
+                };
+
+                (id, output, result)
             }
+        }).collect();
 
-            let error_msg = result.error.clone();
-            let output = if result.success {
-                result.output.clone()
-            } else {
-                format!("error: {}", error_msg.unwrap_or_default())
-            };
+        let results = futures::future::join_all(futures).await;
 
-            // Auto-seed artifact from tool execution
-            self.seed_artifact_if_applicable(&tc.name, &result).await;
+        for (id, output, result) in results {
+            // Auto-seed artifact
+            self.seed_artifact_if_applicable(&id, &result).await;
 
             state.messages.push(Message {
                 role: "tool".into(),
                 content: Arc::new(output.clone()),
                 tool_calls: None,
                 tool_result: Some(output),
-                tool_name: Some(tc.id.clone()),
+                tool_name: Some(id),
                 created_at: chrono::Utc::now(),
             });
         }
