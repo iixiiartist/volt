@@ -159,7 +159,7 @@ impl LLMProvider for OpenAIProvider {
                 if data == "[DONE]" {
                     continue;
                 }
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
                     if let Some(choice) = val["choices"][0].as_object() {
                         if let Some(delta) = choice.get("delta").and_then(|d| d.as_object()) {
                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {

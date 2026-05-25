@@ -10,6 +10,12 @@ pub struct RegistryClient {
     http: Client,
 }
 
+impl Default for RegistryClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegistryClient {
     pub fn new() -> Self {
         Self {

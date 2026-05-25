@@ -132,16 +132,15 @@ pub fn parse_skill_manifest(path: &Path) -> anyhow::Result<SkillManifest> {
                 "name" => name = value.to_string(),
                 "version" => version = value.to_string(),
                 "description" => description = value.to_string(),
-                "mcp_servers" => {
+                "mcp_servers"
                     // Parse array: ["server1", "server2"]
-                    if value.starts_with('[') && value.ends_with(']') {
+                    if value.starts_with('[') && value.ends_with(']') => {
                         mcp_servers = value[1..value.len() - 1]
                             .split(',')
                             .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
                             .filter(|s| !s.is_empty())
                             .collect();
                     }
-                }
                 _ => {}
             }
         }

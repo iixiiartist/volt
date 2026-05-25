@@ -264,7 +264,7 @@ impl AutoSeedWorker {
                 self.context_store.seed_batch(embedded_entries).await;
 
                 batch_count += 1;
-                if batch_count % MERGE_EVERY_N_BATCHES == 0 {
+                if batch_count.is_multiple_of(MERGE_EVERY_N_BATCHES) {
                     self.run_episodic_merge().await;
                 }
             }

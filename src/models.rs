@@ -268,6 +268,12 @@ pub enum PermissionLevel {
 #[derive(Debug, Clone)]
 pub struct CancelToken(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
 
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CancelToken {
     pub fn new() -> Self {
         Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(

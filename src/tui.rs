@@ -108,16 +108,15 @@ impl TuiChat {
                 continue;
             }
 
-            if !matches!(event::poll(std::time::Duration::from_millis(100))?, true) {
+            if !event::poll(std::time::Duration::from_millis(100))? {
                 continue;
             }
 
             if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    if chat.handle_key_event(key) {
+                if key.kind == KeyEventKind::Press
+                    && chat.handle_key_event(key) {
                         break;
                     }
-                }
             }
         }
 
@@ -213,17 +212,15 @@ impl TuiChat {
                 self.is_thinking = true;
                 self.stream_buffer.clear();
             }
-            KeyCode::Backspace => {
-                if self.cursor_pos > 0 {
+            KeyCode::Backspace
+                if self.cursor_pos > 0 => {
                     self.cursor_pos -= 1;
                     self.input.remove(self.cursor_pos);
                 }
-            }
-            KeyCode::Delete => {
-                if self.cursor_pos < self.input.len() {
+            KeyCode::Delete
+                if self.cursor_pos < self.input.len() => {
                     self.input.remove(self.cursor_pos);
                 }
-            }
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += 1;

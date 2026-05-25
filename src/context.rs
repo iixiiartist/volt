@@ -201,7 +201,7 @@ impl ContextStore {
             .iter()
             .filter(|s| {
                 s.entry.embedding.is_some()
-                    && kind_filter.as_ref().map_or(true, |k| s.entry.kind == *k)
+                    && kind_filter.as_ref().is_none_or(|k| s.entry.kind == *k)
             })
             .map(|s| {
                 let emb = s.entry.embedding.as_ref().unwrap();
@@ -309,7 +309,7 @@ impl ContextStore {
             inserted += 1;
 
             // Persist to PostgreSQL if available
-            if let Some(ref db) = self.db() {
+            if let Some(db) = self.db() {
                 if entry.embedding.is_some() {
                     let _ = crate::db::insert_context_entry(db, &entry).await;
                 }

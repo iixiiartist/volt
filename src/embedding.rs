@@ -420,7 +420,7 @@ async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> {
         providers.push(ProviderConfig {
             provider: EmbeddingProvider::Ollama,
             model: model.clone(),
-            endpoint: format!("http://localhost:11434/api/embed"),
+            endpoint: "http://localhost:11434/api/embed".to_string(),
             api_key: None,
         });
     }

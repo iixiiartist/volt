@@ -8,6 +8,12 @@ pub struct ToolGraph {
     name_to_node: RwLock<HashMap<String, petgraph::graph::NodeIndex>>,
 }
 
+impl Default for ToolGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolGraph {
     pub fn new() -> Self {
         Self {
@@ -64,9 +70,7 @@ impl ToolGraph {
                 continue;
             }
             for neighbor in g.neighbors(node) {
-                if !distances.contains_key(&neighbor) {
-                    distances.insert(neighbor, dist + 1);
-                }
+                distances.entry(neighbor).or_insert(dist + 1);
             }
         }
 
