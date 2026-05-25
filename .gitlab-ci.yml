@@ -16,8 +16,8 @@ stages:
   - build
   - release
 
-# Cache template reused across jobs
-cargo_cache: &cargo_cache
+# Cache template reused across jobs (hidden job)
+.cargo_cache: &cargo_cache
   key:
     files:
       - Cargo.lock
