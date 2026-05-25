@@ -175,11 +175,11 @@ A background daemon (`AutoSeedWorker`) maintains the context store
 asynchronously via a Tokio MPSC channel:
 
 ```
-[Agent Loop] → SeedChannel.send(SeedEvent) → [AutoSeedWorker daemon]
-                                                 ├─ Batch drain (<= 32)
-                                                ├─ Embed via Ollama (semaphore=5)
-                                                ├─ seed_batch() with dedup + eviction
-                                                └─ Episodic merge (every 10 batches)
+[Agent Loop] -> SeedChannel.send(SeedEvent) -> [AutoSeedWorker daemon]
+                                                 |- Batch drain (<= 32)
+                                                 |- Embed via Ollama (semaphore=5)
+                                                 |- seed_batch() with dedup + eviction
+                                                 \- Episodic merge (every 10 batches)
 ```
 
 Three event types: EpisodeComplete, ArtifactCreated, MCPRegistered.
@@ -292,7 +292,7 @@ embedding computation), not accuracy.
 | multiple | 80 | 0.0% | 0.0% | 0.0pp | 71% |
 | irrelevance | 80 | 30.0% | 26.7% | -3.3pp | 76% |
 | live_relevance | 16 | 18.8% | 18.8% | 0.0pp | 67% |
-| **Weighted avg** | **486** | **38.9%** | **43.7%** | **+4.8pp** | **72.4%** |
+| Weighted avg | 486 | 38.9% | 43.7% | +4.8pp | 72.4% |
 
 ^ Total test cases: 486 across 8 BFCL V4 categories. The abstract states ~470
 as a rounded figure excluding the 16 live_relevance cases which require live
