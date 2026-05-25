@@ -206,10 +206,29 @@ This achieves O(1) real-time execution with zero latency tax.
 
 ## 4. Experiments
 
-### 4.1 The Empirical Embedding Quality Gradient
+### 4.1 The Embedding Quality Hypothesis
 
-Our most important finding isolates embedding quality as the dominant
-signal in context retrieval (live_simple, 200 distractors, 50 cases):
+Our central finding is that RAG accuracy at scale is a function of embedding
+quality, not registry size. We substantiate this through a controlled comparison:
+
+**Earlier result (all-MiniLM-L6-v2):** At 201 tools, RAG degraded by -7.8pp
+from baseline. This appeared to show graceful but real degradation from registry
+size.
+
+**Current result (mxbai-embed-large, 1024d):** At 200 distractors, accuracy is
+**100%** — a flat curve from 0 to 200+ tools. The -7.8pp was not a RAG
+architecture limitation; it was an embedding quality artifact. all-MiniLM-L6-v2
+(384d) could not retrieve cleanly at that registry size; mxbai-embed-large
+(1024d) can.
+
+These two results together tell a richer story than either alone: the ceiling
+on RAG accuracy is set by the quality of the embedding model, not by the number
+of tools. Better embeddings raise the ceiling until it becomes effectively
+infinite for practical registry sizes.
+
+### 4.2 The Empirical Embedding Quality Gradient
+
+This gradient isolates the dominant variables (live_simple, 200 distractors):
 
 | Configuration | Tool Emb | Context Emb | Acc | Δ |
 |---|---|---|---|---|
