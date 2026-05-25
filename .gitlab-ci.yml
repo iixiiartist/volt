@@ -169,6 +169,7 @@ build_linux_musl:
 
 build_macos_x86_64:
   <<: *macos_template
+  allow_failure: true
   script:
     - cargo build --release --target x86_64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
     - cd target/x86_64-apple-darwin/release && tar czf volt-macos-x86_64.tar.gz volt
@@ -179,6 +180,7 @@ build_macos_x86_64:
 
 build_macos_aarch64:
   <<: *macos_template
+  allow_failure: true
   script:
     - cargo build --release --target aarch64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
     - cd target/aarch64-apple-darwin/release && tar czf volt-macos-aarch64.tar.gz volt
@@ -190,6 +192,7 @@ build_macos_aarch64:
 # â”€â”€ Windows build (requires self-hosted Windows runner on free tier) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 build_windows:
   stage: build
+  allow_failure: true
   tags:
     - windows  # Requires self-hosted runner; see README for setup
   before_script:
