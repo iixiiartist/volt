@@ -321,7 +321,7 @@ impl EmbeddingClient {
             }),
         };
 
-        let (_status, resp_text) = 'retry: loop {
+        let (_status, resp_text) = async {
             let max_retries = 3;
             for attempt in 0..max_retries {
                 let req = self.http.post(&config.endpoint).json(&body);
@@ -336,7 +336,7 @@ impl EmbeddingClient {
                         let status = resp.status();
                         let text = resp.text().await.unwrap_or_default();
                         if status.is_success() {
-                            break 'retry (status, text);
+                            return Ok((status, text));
                         }
                         if status.as_u16() == 429 && attempt + 1 < max_retries {
                             let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
@@ -376,8 +376,9 @@ impl EmbeddingClient {
                 "{:?} embedding failed after {} attempts",
                 config.provider,
                 max_retries
-            );
-        };
+            )
+        }
+        .await?;
         let response: serde_json::Value =
             serde_json::from_str(&resp_text).context("failed to decode embedding response")?;
 
