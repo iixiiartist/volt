@@ -1,4 +1,4 @@
-image: rust:1.85
+image: rust:1.95
 
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
@@ -76,7 +76,7 @@ clippy:
 # â”€â”€ Security Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 security_audit:
   stage: security
-  image: rust:1.85
+  image: rust:1.95
   before_script:
     - cargo install cargo-audit
   script:
@@ -106,7 +106,7 @@ docs:
 # â”€â”€ Build Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 build_linux_gnu:
   stage: build
-  image: rust:1.85
+  image: rust:1.95
   before_script:
     - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev libxdo-dev xdotool
     # Install Chrome for headless browser testing
@@ -130,7 +130,7 @@ build_linux_gnu:
 
 build_linux_musl:
   stage: build
-  image: rust:1.85
+  image: rust:1.95
   before_script:
     - apt-get update -qq && apt-get install -y -qq musl-tools
     - rustup target add x86_64-unknown-linux-musl
