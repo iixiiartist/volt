@@ -16,6 +16,34 @@ use volt::registry::{provision_manifest, RegistryClient};
 use volt::tools::ToolRegistry;
 use volt::{sandbox, validation, worker};
 
+fn parse_context_kinds(input: &[String]) -> Vec<volt::context::ContextKind> {
+    if input.is_empty() {
+        return volt::models::default_context_kinds();
+    }
+    use volt::context::ContextKind;
+    input
+        .iter()
+        .filter_map(|s| match s.to_lowercase().as_str() {
+            "tool" => Some(ContextKind::Tool),
+            "skill" => Some(ContextKind::Skill),
+            "memory" => Some(ContextKind::Memory),
+            "conversation" => Some(ContextKind::Conversation),
+            "agent_run" | "agentrun" => Some(ContextKind::AgentRun),
+            "artifact" => Some(ContextKind::Artifact),
+            "system_prompt" | "systemprompt" => Some(ContextKind::SystemPrompt),
+            "few_shot" | "fewshot" => Some(ContextKind::FewShot),
+            "policy" => Some(ContextKind::Policy),
+            "permission" => Some(ContextKind::Permission),
+            "security" => Some(ContextKind::Security),
+            "mcp_config" | "mcpconfig" => Some(ContextKind::MCPConfig),
+            _ => {
+                eprintln!("[warn] unknown context kind '{}', skipping", s);
+                None
+            }
+        })
+        .collect()
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "volt")]
 #[command(about = "Volt â€” agent tool runtime and registry CLI", long_about = None)]
@@ -89,6 +117,9 @@ enum Commands {
         /// Load tool stubs from a JSONL file (one tool per line, BFCL format)
         #[arg(long)]
         load_tools: Option<String>,
+        /// Comma-separated context kinds to retrieve (default: all)
+        #[arg(long, value_delimiter = ',')]
+        context_kinds: Vec<String>,
     },
 
     /// Start an interactive agent chat session.
@@ -319,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
             model,
             allow,
             load_tools,
+            context_kinds,
         } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
@@ -404,7 +436,7 @@ async fn main() -> anyhow::Result<()> {
                 toolsets: vec!["builtin".into()],
                 hidden: false,
                 allow_all: allow,
-                enabled_context_kinds: volt::models::default_context_kinds(),
+                enabled_context_kinds: parse_context_kinds(&context_kinds),
             };
             let mut agent = Agent::new(config, provider, tools_for_agent)
                 .with_cancel(cancel_for_agent)
