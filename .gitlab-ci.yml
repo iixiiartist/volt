@@ -226,6 +226,30 @@ release:
            --data tag_name="${CI_COMMIT_TAG}" \
            "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
 
+      # Attach binary artifacts from build jobs
+      jobs_json=$(curl -s --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines/${CI_PIPELINE_ID}/jobs")
+      BUILD_GNU_JOB_ID=$(echo "$jobs_json" | jq -r '.[] | select(.name=="build_linux_gnu") | .id')
+      BUILD_MUSL_JOB_ID=$(echo "$jobs_json" | jq -r '.[] | select(.name=="build_linux_musl") | .id')
+
+      if [ -n "$BUILD_GNU_JOB_ID" ]; then
+        curl -s --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --data name="volt-linux-x86_64.tar.gz" \
+          --data url="${CI_PROJECT_URL}/-/jobs/${BUILD_GNU_JOB_ID}/artifacts/raw/target/x86_64-unknown-linux-gnu/release/volt-linux-x86_64.tar.gz" \
+          --data link_type="package" \
+          --data filepath="/volt-linux-x86_64.tar.gz" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/${CI_COMMIT_TAG}/assets/links"
+      fi
+
+      if [ -n "$BUILD_MUSL_JOB_ID" ]; then
+        curl -s --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --data name="volt-linux-x86_64-musl.tar.gz" \
+          --data url="${CI_PROJECT_URL}/-/jobs/${BUILD_MUSL_JOB_ID}/artifacts/raw/target/x86_64-unknown-linux-musl/release/volt-linux-x86_64-musl.tar.gz" \
+          --data link_type="package" \
+          --data filepath="/volt-linux-x86_64-musl.tar.gz" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/${CI_COMMIT_TAG}/assets/links"
+      fi
+
       # Push to GitHub Releases if token provided
       if [ -n "${GITHUB_TOKEN}" ]; then
         echo "Creating GitHub release..."
