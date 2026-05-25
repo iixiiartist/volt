@@ -36,7 +36,7 @@ test:
   variables:
     DATABASE_URL: "postgres://volt:volt@postgres/volt_test"
   before_script:
-    - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev postgresql-client
+    - apt-get update -qq && apt-get install -y -qq postgresql-client
     - rustc --version && cargo --version
     - until pg_isready -h postgres -p 5432 -U volt; do echo "Waiting for PostgreSQL..."; sleep 2; done
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0001_core.sql
@@ -69,8 +69,6 @@ fmt:
 
 clippy:
   stage: lint
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev
   script:
     - rustup component add clippy
     - cargo clippy -- -D warnings
@@ -113,7 +111,7 @@ build_linux_gnu:
   stage: build
   image: rust:1.95
   before_script:
-    - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev libxdo-dev xdotool
+    - apt-get update -qq && apt-get install -y -qq libxdo-dev xdotool
     # Install Chrome for headless browser testing
     - wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
     - apt-get install -y -qq ./google-chrome-stable_current_amd64.deb || true
