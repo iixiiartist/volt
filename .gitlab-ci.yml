@@ -41,7 +41,7 @@ test:
     - until pg_isready -h postgres -p 5432 -U volt; do echo "Waiting for PostgreSQL..."; sleep 2; done
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0001_core.sql
   script:
-    - cargo test --release
+    - cargo test --release --features testutils
   cache:
     <<: *cargo_cache
   artifacts:
