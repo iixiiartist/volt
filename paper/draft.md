@@ -372,6 +372,6 @@ agents.
 
 These results were produced for \$0.37 in total API costs. The full
 Rust implementation, benchmark harness, and paper are available at
-\url{https://github.com/iixiiartist/volt} under MIT license.
+\url{https://github.com/iixiiartist/volt} (DOI: \url{https://doi.org/10.5281/zenodo.20371127}) under MIT license.
 
 ## References
