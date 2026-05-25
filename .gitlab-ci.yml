@@ -153,62 +153,56 @@ build_linux_musl:
     <<: *cargo_cache
     policy: pull
 
-# â”€â”€ macOS builds (requires self-hosted macOS runner on free tier) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-.macos_template: &macos_template
-  stage: build
-  tags:
-    - macos  # Requires self-hosted runner; see README for setup
-  before_script:
-    - brew install pkg-config 2>/dev/null || true
-    - rustup target add ${CI_JOB_NAME#build_}
-  cache:
-    <<: *cargo_cache
-    policy: pull
-  rules:
-    - if: $CI_COMMIT_TAG
-
-build_macos_x86_64:
-  <<: *macos_template
-  allow_failure: true
-  script:
-    - cargo build --release --target x86_64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
-    - cd target/x86_64-apple-darwin/release && tar czf volt-macos-x86_64.tar.gz volt
-  artifacts:
-    paths:
-      - target/x86_64-apple-darwin/release/volt-macos-x86_64.tar.gz
-    expire_in: 30 days
-
-build_macos_aarch64:
-  <<: *macos_template
-  allow_failure: true
-  script:
-    - cargo build --release --target aarch64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
-    - cd target/aarch64-apple-darwin/release && tar czf volt-macos-aarch64.tar.gz volt
-  artifacts:
-    paths:
-      - target/aarch64-apple-darwin/release/volt-macos-aarch64.tar.gz
-    expire_in: 30 days
-
-# â”€â”€ Windows build (requires self-hosted Windows runner on free tier) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-build_windows:
-  stage: build
-  allow_failure: true
-  tags:
-    - windows  # Requires self-hosted runner; see README for setup
-  before_script:
-    - rustup target add x86_64-pc-windows-msvc
-  script:
-    - cargo build --release --target x86_64-pc-windows-msvc --all-features
-    - Compress-Archive -Path target\x86_64-pc-windows-msvc\release\volt.exe -DestinationPath volt-windows-x86_64.zip
-  artifacts:
-    paths:
-      - volt-windows-x86_64.zip
-    expire_in: 30 days
-  cache:
-    <<: *cargo_cache
-    policy: pull
-  rules:
-    - if: $CI_COMMIT_TAG
+# NOTE: macOS and Windows builds require self-hosted runners.
+# Uncomment these jobs when you have runners registered with tags 'macos' and 'windows'.
+# See: https://docs.gitlab.com/runner/register/
+#
+# .macos_template: &macos_template
+#   stage: build
+#   tags: [macos]
+#   before_script:
+#     - brew install pkg-config 2>/dev/null || true
+#     - rustup target add ${CI_JOB_NAME#build_}
+#   cache:
+#     <<: *cargo_cache
+#     policy: pull
+#   rules:
+#     - if: $CI_COMMIT_TAG
+#
+# build_macos_x86_64:
+#   <<: *macos_template
+#   script:
+#     - cargo build --release --target x86_64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
+#     - cd target/x86_64-apple-darwin/release && tar czf volt-macos-x86_64.tar.gz volt
+#   artifacts:
+#     paths: [target/x86_64-apple-darwin/release/volt-macos-x86_64.tar.gz]
+#     expire_in: 30 days
+#
+# build_macos_aarch64:
+#   <<: *macos_template
+#   script:
+#     - cargo build --release --target aarch64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
+#     - cd target/aarch64-apple-darwin/release && tar czf volt-macos-aarch64.tar.gz volt
+#   artifacts:
+#     paths: [target/aarch64-apple-darwin/release/volt-macos-aarch64.tar.gz]
+#     expire_in: 30 days
+#
+# build_windows:
+#   stage: build
+#   tags: [windows]
+#   before_script:
+#     - rustup target add x86_64-pc-windows-msvc
+#   script:
+#     - cargo build --release --target x86_64-pc-windows-msvc --all-features
+#     - Compress-Archive -Path target\x86_64-pc-windows-msvc\release\volt.exe -DestinationPath volt-windows-x86_64.zip
+#   artifacts:
+#     paths: [volt-windows-x86_64.zip]
+#     expire_in: 30 days
+#   cache:
+#     <<: *cargo_cache
+#     policy: pull
+#   rules:
+#     - if: $CI_COMMIT_TAG
 
 # â”€â”€ Release Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Creates a GitLab release from tag artifacts.
