@@ -217,7 +217,7 @@ async fn run(&self, input: &str) -> Result<String> {
 
 | Metric | Value |
 |---|---|
-| Binary size | ~18MB |
+| Binary size | Linux glibc ~10 MB, Linux musl ~8 MB, Windows ~20 MB (compressed) |
 | Cold start | <100ms |
 | Tool search | <1ms (in-memory) |
 | Memory search | <5ms (pgvector HNSW) |

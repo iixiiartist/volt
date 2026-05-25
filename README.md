@@ -166,17 +166,17 @@ Volt uses **GitLab CI** (unlimited free minutes for public repos). The pipeline 
 - `DATABASE_URL` — Postgres connection string (optional; tests spin up a pgvector service container)
 - `GITHUB_TOKEN` — GitHub personal access token (optional; for pushing releases back to GitHub)
 
-### Self-hosted runners (for macOS & Windows)
-GitLab shared runners are Linux-only on the free tier. To build macOS and Windows binaries, add self-hosted runners:
-- **macOS**: Install [GitLab Runner](https://docs.gitlab.com/runner/install/osx.html) on a Mac, tag it `macos`
-- **Windows**: Install [GitLab Runner](https://docs.gitlab.com/runner/install/windows.html) on a Windows machine, tag it `windows`
-- Uncomment the `build_macos_*` and `build_windows` jobs in `.gitlab-ci.yml`
+### Cross-platform builds
+GitLab shared runners are **Linux-only** on the free tier. The CI pipeline builds both glibc and musl Linux binaries automatically on every tag.
+
+- **Windows**: Built locally on a Windows dev machine and uploaded to the GitHub Release alongside the Linux artifacts.
+- **macOS**: Not built at this time (requires a Mac or self-hosted runner). Uncomment the `build_macos_*` jobs in `.gitlab-ci.yml` when a runner is available.
 
 ## Performance
 
 | Metric | Value |
 |---|---|
-| Binary size | ~18MB |
+| Binary size | Linux glibc ~10 MB, Linux musl ~8 MB, Windows ~20 MB (compressed) |
 | Cold start | <100ms |
 | Tool search | <1ms (in-memory cosine) |
 | Memory search | <5ms (pgvector HNSW) |

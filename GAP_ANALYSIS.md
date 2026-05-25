@@ -184,7 +184,7 @@ windows-capture = { version = "2", optional = true }
 ```
 
 ### 5.2 Binary Size Growth
-Current release binary is ~18MB. Adding candle (+15MB for model weights + libtorch), tree-sitter grammars (+2-5MB each), and tiktoken-rs (+2MB for tokenizer data) could push past 50MB. This matters for edge deployments and CI caching.
+Current release binaries are ~8-10 MB (Linux, compressed) and ~20 MB (Windows, compressed). Adding candle (+15 MB for model weights + libtorch), tree-sitter grammars (+2-5 MB each), and tiktoken-rs (+2 MB for tokenizer data) could push past 50 MB. This matters for edge deployments and CI caching.
 
 **Recommendation**: Use Cargo features aggressively. Core Volt binary stays <20MB. Add `volt-full` meta-feature for all extras. Use `upx` compression in CI release builds (typically 40-50% reduction).
 
