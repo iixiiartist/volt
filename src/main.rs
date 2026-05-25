@@ -175,7 +175,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt::init();
+    volt::telemetry::init_otel("volt");
 
     let cli = Cli::parse();
     volt::config::first_run_wizard();
