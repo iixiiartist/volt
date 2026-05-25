@@ -27,7 +27,7 @@ stages:
     - target/
   policy: pull-push
 
-# ── Test Stage ──────────────────────────────────────────────────────────────
+# â”€â”€ Test Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 test:
   stage: test
   services:
@@ -52,7 +52,7 @@ test:
       - target/release/deps/
     expire_in: 1 week
 
-# ── Lint Stage ──────────────────────────────────────────────────────────────
+# â”€â”€ Lint Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 fmt:
   stage: lint
   script:
@@ -73,7 +73,7 @@ clippy:
     <<: *cargo_cache
     policy: pull
 
-# ── Security Stage ──────────────────────────────────────────────────────────
+# â”€â”€ Security Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 security_audit:
   stage: security
   image: rust:1.85
@@ -90,7 +90,7 @@ secret_check:
     - trufflehog git file://. --only-verified
   allow_failure: true
 
-# ── Docs Stage ──────────────────────────────────────────────────────────────
+# â”€â”€ Docs Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 docs:
   stage: docs
   script:
@@ -103,7 +103,7 @@ docs:
       - target/doc/
     expire_in: 30 days
 
-# ── Build Stage ───────────────────────────────────────────────────────────────
+# â”€â”€ Build Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 build_linux_gnu:
   stage: build
   image: rust:1.85
@@ -148,7 +148,7 @@ build_linux_musl:
     <<: *cargo_cache
     policy: pull
 
-# ── macOS builds (requires self-hosted macOS runner on free tier) ─────────────
+# â”€â”€ macOS builds (requires self-hosted macOS runner on free tier) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 .macos_template: &macos_template
   stage: build
   tags:
@@ -182,7 +182,7 @@ build_macos_aarch64:
       - target/aarch64-apple-darwin/release/volt-macos-aarch64.tar.gz
     expire_in: 30 days
 
-# ── Windows build (requires self-hosted Windows runner on free tier) ────────────
+# â”€â”€ Windows build (requires self-hosted Windows runner on free tier) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 build_windows:
   stage: build
   tags:
@@ -202,7 +202,7 @@ build_windows:
   rules:
     - if: $CI_COMMIT_TAG
 
-# ── Release Stage ─────────────────────────────────────────────────────────────
+# â”€â”€ Release Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Creates a GitLab release from tag artifacts.
 # Also pushes to GitHub Releases if GITHUB_TOKEN CI/CD variable is set.
 release:
