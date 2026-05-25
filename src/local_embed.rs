@@ -30,8 +30,10 @@ impl LocalEmbedder {
             .map_err(|e| anyhow::anyhow!("tokenizer load: {}", e))?;
 
         let config: Config = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
-        let vb = candle_nn::VarBuilder::from_pth(&model_path)?;
-        let model = BertModel::new(&device, &config, vb)?;
+        let vb = unsafe {
+            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_path], candle_core::DType::F32, &device)?
+        };
+        let model = BertModel::load(vb, &config)?;
 
         Ok(Self {
             model,
@@ -56,10 +58,10 @@ impl LocalEmbedder {
             Some(&attention_mask.unsqueeze(0)?),
         )?;
 
-        // Mean pooling
+        // Mean pooling over sequence length, then L2-normalize
         let pooled = output.mean(1)?;
         let normalized = pooled.broadcast_div(&pooled.sqr()?.sum(1)?.sqrt()?.unsqueeze(1)?)?;
-        Ok(normalized.to_vec1()?)
+        Ok(normalized.squeeze(0)?.to_vec1::<f32>()?)
     }
 }
 

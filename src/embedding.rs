@@ -148,6 +148,8 @@ pub struct EmbeddingClient {
     providers: Vec<ProviderConfig>,
     /// Whether to log provider fallback warnings
     verbose: bool,
+    #[cfg(feature = "tools-local-embeddings")]
+    local: Option<std::sync::Arc<crate::local_embed::LocalEmbedder>>,
 }
 
 impl EmbeddingClient {
@@ -179,6 +181,8 @@ impl EmbeddingClient {
             http: crate::http_client(30),
             providers: vec![config],
             verbose: false,
+            #[cfg(feature = "tools-local-embeddings")]
+            local: None,
         }
     }
 
@@ -216,10 +220,24 @@ impl EmbeddingClient {
             _ => auto_detect_providers(&http).await,
         };
 
+        #[cfg(feature = "tools-local-embeddings")]
+        let local = match crate::local_embed::LocalEmbedder::load() {
+            Ok(e) => {
+                tracing::info!("local embedder (BGE-small-en-v1.5) loaded successfully");
+                Some(std::sync::Arc::new(e))
+            }
+            Err(e) => {
+                tracing::warn!("local embedder unavailable: {}", e);
+                None
+            }
+        };
+
         Self {
             http,
             providers,
             verbose: true,
+            #[cfg(feature = "tools-local-embeddings")]
+            local,
         }
     }
 
@@ -239,6 +257,20 @@ impl EmbeddingClient {
             description
         };
 
+        // 1. Try local embedder first (fast, offline, no API key)
+        #[cfg(feature = "tools-local-embeddings")]
+        if let Some(local) = &self.local {
+            match local.embed(truncated) {
+                Ok(embedding) => return Ok(normalize_dims(embedding)),
+                Err(e) => {
+                    if self.verbose {
+                        tracing::warn!("local embed failed: {}", e);
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to remote provider chain
         for (i, config) in self.providers.iter().enumerate() {
             match self.embed_with(config, truncated).await {
                 Ok(embedding) => {

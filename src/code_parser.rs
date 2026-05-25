@@ -32,7 +32,7 @@ pub fn parse_file(file_path: &str, content: &str) -> Option<CodeArtifact> {
         }
         "ts" | "tsx" | "js" | "jsx" => {
             let mut p = Parser::new();
-            p.set_language(&tree_sitter_typescript::LANGUAGE.into())
+            p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
                 .ok()?;
             ("TypeScript/JavaScript", p)
         }

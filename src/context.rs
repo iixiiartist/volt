@@ -196,6 +196,40 @@ impl ContextStore {
         kind_filter: Option<ContextKind>,
         min_score: f32,
     ) -> Vec<ContextEntry> {
+        // 1. Prefer pgvector HNSW when a DB pool is available
+        if let Some(pool) = self.db() {
+            let kind_str = kind_filter.as_ref().map(|k| k.as_str());
+            // Ask for 2x limit so composite re-ranking has room to improve ordering
+            let db_limit = (limit as i64) * 2;
+            match crate::db::search_context_entries(pool, query_embedding, db_limit, kind_str, min_score).await {
+                Ok(db_entries) => {
+                    let mut scored: Vec<(f32, ContextEntry)> = db_entries
+                        .into_iter()
+                        .map(|mut e| {
+                            let sim = e.embedding.as_ref()
+                                .map(|emb| cosine_similarity(emb, query_embedding))
+                                .unwrap_or(0.0);
+                            let score = 0.6 * sim + 0.4 * e.composite_score();
+                            e.frequency += 1;
+                            e.last_used_at = chrono::Utc::now();
+                            (score, e)
+                        })
+                        .collect();
+                    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    return scored
+                        .into_iter()
+                        .filter(|(score, _)| *score >= min_score)
+                        .take(limit)
+                        .map(|(_, e)| e)
+                        .collect();
+                }
+                Err(e) => {
+                    tracing::warn!("pgvector search failed, falling back to in-memory: {}", e);
+                }
+            }
+        }
+
+        // 2. Fallback: in-memory brute-force scan
         let entries = self.entries.read().await;
         let mut scored: Vec<(f32, &StoredEntry)> = entries
             .iter()

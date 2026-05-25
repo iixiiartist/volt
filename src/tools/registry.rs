@@ -9,6 +9,7 @@ pub type ToolFn =
 
 pub struct ToolRegistry {
     tools: DashMap<String, RegisteredTool>,
+    graph: crate::graph_rag::ToolGraph,
 }
 
 struct RegisteredTool {
@@ -20,8 +21,11 @@ struct RegisteredTool {
 
 impl ToolRegistry {
     pub fn new() -> Arc<Self> {
+        let graph = crate::graph_rag::ToolGraph::new();
+        crate::graph_rag::build_default_tool_graph(&graph);
         Arc::new(Self {
             tools: DashMap::new(),
+            graph,
         })
     }
 
@@ -67,6 +71,7 @@ impl ToolRegistry {
                 embedding: None,
             },
         );
+        self.graph.add_tool(name);
     }
 
     pub async fn get_definitions(&self) -> Vec<ToolDefinition> {
@@ -141,6 +146,7 @@ impl ToolRegistry {
         limit: usize,
         essential: &[&str],
     ) -> Vec<ToolDefinition> {
+        // 1. Vector search (current primary signal)
         let mut scored: Vec<(f32, ToolDefinition)> = self
             .tools
             .iter()
@@ -157,10 +163,28 @@ impl ToolRegistry {
         let mut result: Vec<ToolDefinition> =
             scored.into_iter().take(limit).map(|(_, d)| d).collect();
 
+        // 2. GraphRAG augmentation: append related tools up to 2 hops away
+        let mut names_in_result: std::collections::HashSet<String> =
+            result.iter().map(|d| d.name.clone()).collect();
+        let seed_names: Vec<String> = result.iter().map(|d| d.name.clone()).collect();
+        for tool_name in &seed_names {
+            for related in self.graph.find_related(tool_name, 2) {
+                if names_in_result.contains(&related) {
+                    continue;
+                }
+                if let Some(t) = self.tools.get(&related) {
+                    result.push(t.def.clone());
+                    names_in_result.insert(related);
+                }
+            }
+        }
+
+        // 3. Essential tools always included
         for name in essential {
-            if !result.iter().any(|d| d.name == *name) {
+            if !names_in_result.contains(*name) {
                 if let Some(t) = self.tools.get(*name) {
                     result.push(t.def.clone());
+                    names_in_result.insert(name.to_string());
                 }
             }
         }

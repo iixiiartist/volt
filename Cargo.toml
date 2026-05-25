@@ -73,6 +73,7 @@ opentelemetry = { version = "0.27", features = ["trace"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"] }
 tracing-opentelemetry = "0.28"
 opentelemetry-stdout = { version = "0.27", features = ["trace"] }
+opentelemetry-otlp = { version = "0.27", features = ["trace", "http-proto", "reqwest-client"] }
 tree-sitter = { version = "0.24", optional = true }
 tree-sitter-rust = { version = "0.23", optional = true }
 tree-sitter-python = { version = "0.23", optional = true }

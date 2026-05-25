@@ -633,6 +633,7 @@ impl Agent {
         }
     }
 
+    #[allow(unused_mut)]
     async fn seed_artifact_if_applicable(&self, tool_name: &str, result: &ToolResult) {
         if let Some(ref ch) = self.seed_channel {
             if !result.success {
@@ -662,7 +663,28 @@ impl Agent {
                         "css" => "CSS",
                         _ => ext,
                     };
-                    ch.artifact_created(&file_path, &result.output, language, tool_name);
+
+                    // Enrich artifact with AST symbols when tools-ast is enabled
+                    let mut description = result.output.clone();
+                    #[cfg(feature = "tools-ast")]
+                    if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+                        if let Some(artifact) = crate::code_parser::parse_file(&file_path, &content) {
+                            if !artifact.functions.is_empty() {
+                                description.push_str("\n\nFunctions: ");
+                                description.push_str(&artifact.functions.join(", "));
+                            }
+                            if !artifact.classes.is_empty() {
+                                description.push_str("\nClasses: ");
+                                description.push_str(&artifact.classes.join(", "));
+                            }
+                            if !artifact.imports.is_empty() {
+                                description.push_str("\nImports: ");
+                                description.push_str(&artifact.imports.join(", "));
+                            }
+                        }
+                    }
+
+                    ch.artifact_created(&file_path, &description, language, tool_name);
                 }
                 "bash" => {
                     ch.artifact_created("shell_execution", &result.output, "shell", tool_name);
