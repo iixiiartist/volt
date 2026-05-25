@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-05-25T20:38:55.246810",
+  "model": "llama-3.1-8b-instant",
+  "category": "simple_python",
+  "cases_per_config": 5,
+  "configurations": [
+    {
+      "config": "solve_quadratic_equation",
+      "kinds": "tool",
+      "passed": 0,
+      "failed": 5,
+      "accuracy": 0.0,
+      "avg_latency_sec": 28.78,
+      "total_prompt_tokens": 0,
+      "total_completion_tokens": 0,
+      "details": [
+        {
+          "case_idx": 0,
+          "question": "Find the area of a triangle with a base of 10 units and height of 5 units.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 30727.4,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 1,
+          "question": "Calculate the factorial of 5 using math functions.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 27674.9,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 2,
+          "question": "Calculate the hypotenuse of a right triangle given the lengths of the other two sides as 4 and 5.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 27737.8,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 3,
+          "question": "Find the roots of a quadratic equation with coefficients a=1, b=-3, c=2.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 29530.7,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 4,
+          "question": "Solve a quadratic equation where a=2, b=6, and c=5",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 28215.7,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        }
+      ]
+    },
+    {
+      "config": "solve_quadratic_equation",
+      "kinds": "tool,skill",
+      "passed": 0,
+      "failed": 5,
+      "accuracy": 0.0,
+      "avg_latency_sec": 27.64,
+      "total_prompt_tokens": 0,
+      "total_completion_tokens": 0,
+      "details": [
+        {
+          "case_idx": 0,
+          "question": "Find the area of a triangle with a base of 10 units and height of 5 units.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 27766.1,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 1,
+          "question": "Calculate the factorial of 5 using math functions.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 27457.6,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 2,
+          "question": "Calculate the hypotenuse of a right triangle given the lengths of the other two sides as 4 and 5.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 28139.9,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 3,
+          "question": "Find the roots of a quadratic equation with coefficients a=1, b=-3, c=2.",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 28217.0,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        },
+        {
+          "case_idx": 4,
+          "question": "Solve a quadratic equation where a=2, b=6, and c=5",
+          "passed": false,
+          "reason": "no tool calls detected",
+          "latency_ms": 26623.1,
+          "prompt_tokens": 0,
+          "completion_tokens": 0
+        }
+      ]
+    }
+  ]
+}

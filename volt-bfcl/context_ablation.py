@@ -19,12 +19,13 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add volt-bfcl to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 from benchmark import load_test_cases  # noqa: E402
+from volt_bench import _normalize_params  # noqa: E402
 
 RESULTS_DIR = Path(__file__).parent / "results"
 VOLT_BENCH = Path(__file__).parent / "volt_bench.py"
@@ -71,10 +72,11 @@ def run_ablation_config(config: dict, args) -> dict:
         import tempfile
         tools_file = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
         for f in functions:
-            name = f.get("name", f.get("function", {}).get("name", ""))
+            fn_name = f.get("name", f.get("function", {}).get("name", ""))
             desc = f.get("description", f.get("function", {}).get("description", ""))
             params = f.get("parameters", f.get("function", {}).get("parameters", {"type": "object", "properties": {}}))
-            tools_file.write(json.dumps({"name": name, "description": desc, "parameters": params}) + "\n")
+            params = _normalize_params(params)
+            tools_file.write(json.dumps({"name": fn_name, "description": desc, "parameters": params}) + "\n")
         tools_path = tools_file.name
         tools_file.close()
 
@@ -200,7 +202,7 @@ def main():
         results.append(result)
 
     summary = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": args.model,
         "category": args.category,
         "cases_per_config": args.limit,
@@ -208,7 +210,7 @@ def main():
     }
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = Path(args.output) if args.output else RESULTS_DIR / f"volt_ablation_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+    out_path = Path(args.output) if args.output else RESULTS_DIR / f"volt_ablation_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
     with open(out_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\nResults written to: {out_path}")
