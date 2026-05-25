@@ -212,11 +212,12 @@ impl LLMProvider for AnthropicProvider {
                             }
                         }
                         Some("content_block_start")
-                            if val["content_block"]["type"] == "tool_use" => {
-                                if let Some(prev) = current_tool_call.take() {
-                                    tool_calls_acc.push(prev);
-                                }
+                            if val["content_block"]["type"] == "tool_use" =>
+                        {
+                            if let Some(prev) = current_tool_call.take() {
+                                tool_calls_acc.push(prev);
                             }
+                        }
                         Some("message_delta") => {
                             stop_reason =
                                 val["delta"]["stop_reason"].as_str().map(|s| s.to_string());

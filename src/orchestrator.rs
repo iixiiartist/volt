@@ -346,8 +346,7 @@ impl Orchestrator {
     ) -> anyhow::Result<WorkflowResult> {
         match pattern {
             "parallel" => {
-                let task_pairs: Vec<(AgentSpec, String)> =
-                    specs.into_iter().zip(tasks).collect();
+                let task_pairs: Vec<(AgentSpec, String)> = specs.into_iter().zip(tasks).collect();
                 let steps = self.run_parallel(task_pairs).await?;
                 let final_output = steps
                     .iter()
@@ -362,8 +361,7 @@ impl Orchestrator {
                 })
             }
             "pipeline" => {
-                let stages: Vec<(AgentSpec, String)> =
-                    specs.into_iter().zip(tasks).collect();
+                let stages: Vec<(AgentSpec, String)> = specs.into_iter().zip(tasks).collect();
                 self.run_pipeline(stages).await
             }
             "supervisor" => {

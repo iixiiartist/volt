@@ -270,6 +270,10 @@ impl ContextStore {
         self.entries.read().await.len()
     }
 
+    pub async fn is_empty(&self) -> bool {
+        self.entries.read().await.is_empty()
+    }
+
     // ── Seed batch with dedup and quota eviction ─────────────────────────
 
     const DEDUP_THRESHOLD: f32 = 0.92;

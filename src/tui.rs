@@ -113,10 +113,9 @@ impl TuiChat {
             }
 
             if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press
-                    && chat.handle_key_event(key) {
-                        break;
-                    }
+                if key.kind == KeyEventKind::Press && chat.handle_key_event(key) {
+                    break;
+                }
             }
         }
 
@@ -212,15 +211,13 @@ impl TuiChat {
                 self.is_thinking = true;
                 self.stream_buffer.clear();
             }
-            KeyCode::Backspace
-                if self.cursor_pos > 0 => {
-                    self.cursor_pos -= 1;
-                    self.input.remove(self.cursor_pos);
-                }
-            KeyCode::Delete
-                if self.cursor_pos < self.input.len() => {
-                    self.input.remove(self.cursor_pos);
-                }
+            KeyCode::Backspace if self.cursor_pos > 0 => {
+                self.cursor_pos -= 1;
+                self.input.remove(self.cursor_pos);
+            }
+            KeyCode::Delete if self.cursor_pos < self.input.len() => {
+                self.input.remove(self.cursor_pos);
+            }
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += 1;

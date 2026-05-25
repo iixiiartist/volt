@@ -41,7 +41,7 @@ pub async fn csv_read(path: &str, has_header: bool) -> ToolResult {
     let mut out = String::new();
     if !headers.is_empty() {
         out.push_str(&format!("Headers: {}\n", headers.join(" | ")));
-        out.push_str(&"---\n".to_string());
+        out.push_str("---\n");
     }
     out.push_str(&format!("{} rows\n", records.len()));
     for (i, row) in records.iter().enumerate().take(100) {

@@ -184,6 +184,7 @@ pub async fn get_tool_source(pool: &PgPool, tool_name: &str) -> anyhow::Result<O
     Ok(row.and_then(|r| r.try_get("source_code").ok()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn record_execution(
     pool: &PgPool,
     tool_id: Option<i32>,
@@ -355,6 +356,7 @@ pub async fn search_memories(
 
 // ─── Skills (Compiled Manifest Pattern) ─────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_skill(
     pool: &PgPool,
     id: Uuid,

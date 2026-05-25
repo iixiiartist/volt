@@ -166,7 +166,7 @@ pub fn convert_to_volt_skill(
     let mut output = String::new();
     output.push_str("---\n");
     output.push_str(&format!("name: \"{}\"\n", name));
-    output.push_str(&"version: \"1.0.0\"\n".to_string());
+    output.push_str("version: \"1.0.0\"\n");
     output.push_str(&format!(
         "description: \"{}\"\n",
         description.replace('"', r#"\""#)
