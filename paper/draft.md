@@ -1,7 +1,8 @@
 ---
 title: "Volt: A Unified RAG Architecture for Tool Selection, Context Engineering, and Autonomous Agent Memory"
 author:
-  - "Volt Team"
+  - name: "Joe Allen"
+    affiliation: "Setique Labs, Inc."
 date: "May 2026"
 abstract: |
   LLM-based agents inject tool definitions into every inference call, incurring
@@ -376,31 +377,3 @@ Rust implementation, benchmark harness, and paper are available at
 \url{https://github.com/iixiiartist/volt} under MIT license.
 
 ## References
-
-[^ref1]: T. Schick et al., "Toolformer: Language Models Can Teach Themselves
-    to Use Tools," 2023.
-
-[^ref2]: S. Patil et al., "The Berkeley Function Calling Leaderboard
-    (BFCL): From Tool Use to Agentic Evaluation of Large Language Models,"
-    ICML, 2025.
-
-[^ref3]: Anthropic, "Claude Code Documentation," 2025.
-
-[^ref4]: Nous Research, "Hermes Agent," 2025.
-
-[^ref5]: OpenClaw, "OpenClaw — Personal AI Assistant," 2025.
-
-[^ref6]: P. Lewis et al., "Retrieval-Augmented Generation for
-    Knowledge-Intensive NLP Tasks," NeurIPS, 2020.
-
-[^ref7]: C. Jimenez et al., "SWE-bench: Can Language Models Resolve
-    Real-world Github Issues?" ICLR, 2024.
-
-[^ref8]: D. Edge et al., "GraphRAG: Unlocking LLM Discovery on
-    Narrative Private Data," Microsoft Research, 2024.
-
-[^ref9]: C. Packer et al., "MemGPT: Towards LLMs as Operating Systems,"
-    2023.
-
-[^ref10]: Y. Qin et al., "ToolLLM: Facilitating Large Language Models to
-    Master 16000+ Real-world APIs," 2023.
