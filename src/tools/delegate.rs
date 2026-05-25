@@ -55,6 +55,7 @@ pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) 
         toolsets: vec!["builtin".into()],
         hidden: true,
         allow_all: true,
+        enabled_context_kinds: crate::models::default_context_kinds(),
     };
 
     let sub_agent = Agent::new(config, provider, tools);

@@ -82,6 +82,7 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
             toolsets: vec!["builtin".into()],
             hidden: true,
             allow_all: spec.allow_all,
+            enabled_context_kinds: crate::models::default_context_kinds(),
         },
         llm_provider,
         tools,

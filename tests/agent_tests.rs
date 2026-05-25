@@ -13,6 +13,7 @@ fn agent_config() -> AgentConfig {
         toolsets: vec!["builtin".into()],
         hidden: false,
         allow_all: false,
+        enabled_context_kinds: volt::models::default_context_kinds(),
     }
 }
 

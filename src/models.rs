@@ -19,6 +19,28 @@ pub struct AgentConfig {
     pub hidden: bool,
     #[serde(default)]
     pub allow_all: bool,
+    /// Which context kinds to retrieve during agent runs.
+    /// Defaults to all 12 kinds. Set to a subset for ablation studies.
+    #[serde(default = "default_context_kinds")]
+    pub enabled_context_kinds: Vec<crate::context::ContextKind>,
+}
+
+pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {
+    use crate::context::ContextKind;
+    vec![
+        ContextKind::Tool,
+        ContextKind::Skill,
+        ContextKind::Memory,
+        ContextKind::Conversation,
+        ContextKind::AgentRun,
+        ContextKind::Artifact,
+        ContextKind::SystemPrompt,
+        ContextKind::FewShot,
+        ContextKind::Policy,
+        ContextKind::Permission,
+        ContextKind::Security,
+        ContextKind::MCPConfig,
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

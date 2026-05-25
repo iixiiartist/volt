@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 // ── Context kinds — every context field an agent ingests or produces ────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     Skill,
     Tool,
@@ -77,7 +77,7 @@ pub struct ContextEntry {
 }
 
 impl ContextEntry {
-    fn composite_score(&self) -> f32 {
+    pub fn composite_score(&self) -> f32 {
         let recency_days = (chrono::Utc::now() - self.last_used_at).num_hours() as f32 / 24.0;
         let recency = (-recency_days / 30.0).exp();
         let freq = (1.0 + self.frequency as f32).ln();
@@ -368,7 +368,7 @@ impl ContextStore {
             // 3. Per-kind quota enforcement
             let mut kind_counts: HashMap<ContextKind, Vec<usize>> = HashMap::new();
             for (i, s) in store.iter().enumerate() {
-                kind_counts.entry(s.entry.kind.clone()).or_default().push(i);
+                kind_counts.entry(s.entry.kind).or_default().push(i);
             }
 
             let mut indices_to_remove: Vec<usize> = Vec::new();
@@ -461,7 +461,7 @@ impl ContextStore {
             return None;
         }
 
-        let kind = members[0].kind.clone();
+        let kind = members[0].kind;
         let total_freq: u32 = members.iter().map(|e| e.frequency).sum();
         let total_usage: u32 = members.iter().map(|e| e.usage_count).sum();
         let avg_success: f32 = if total_usage > 0 {
@@ -538,4 +538,87 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
     dot / (norm_a * norm_b).max(f32::EPSILON)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_context_kind_ablation() {
+        let store = ContextStore::new();
+
+        // Seed entries of different kinds with deterministic embeddings
+        let tool_emb = vec![1.0, 0.0, 0.0, 0.0];
+        let skill_emb = vec![0.0, 1.0, 0.0, 0.0];
+        let memory_emb = vec![0.0, 0.0, 1.0, 0.0];
+
+        let tool_id = store.add(ContextKind::Tool, "read file", serde_json::json!({})).await;
+        let skill_id = store.add(ContextKind::Skill, "parse markdown", serde_json::json!({})).await;
+        let memory_id = store.add(ContextKind::Memory, "user likes rust", serde_json::json!({})).await;
+
+        {
+            let mut entries = store.entries.write().await;
+            for e in entries.iter_mut() {
+                match e.entry.kind {
+                    ContextKind::Tool => e.entry.embedding = Some(tool_emb.clone()),
+                    ContextKind::Skill => e.entry.embedding = Some(skill_emb.clone()),
+                    ContextKind::Memory => e.entry.embedding = Some(memory_emb.clone()),
+                    _ => {}
+                }
+            }
+        }
+
+        // Search for tool-kind only — should return exactly the tool entry
+        let tool_results = store.search(&tool_emb, 8, Some(ContextKind::Tool), 0.0).await;
+        assert_eq!(tool_results.len(), 1);
+        assert_eq!(tool_results[0].id, tool_id);
+        assert_eq!(tool_results[0].kind, ContextKind::Tool);
+
+        // Search for skill-kind only
+        let skill_results = store.search(&skill_emb, 8, Some(ContextKind::Skill), 0.0).await;
+        assert_eq!(skill_results.len(), 1);
+        assert_eq!(skill_results[0].id, skill_id);
+
+        // Search for memory-kind only
+        let memory_results = store.search(&memory_emb, 8, Some(ContextKind::Memory), 0.0).await;
+        assert_eq!(memory_results.len(), 1);
+        assert_eq!(memory_results[0].id, memory_id);
+
+        // Search with no filter — all 3 should appear
+        let all_results = store.search(&tool_emb, 8, None, 0.0).await;
+        assert_eq!(all_results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_context_kind_ablation_excludes_disabled() {
+        let store = ContextStore::new();
+
+        let tool_emb = vec![1.0, 0.0, 0.0, 0.0];
+        let skill_emb = vec![0.0, 1.0, 0.0, 0.0];
+
+        store.add(ContextKind::Tool, "read file", serde_json::json!({})).await;
+        store.add(ContextKind::Skill, "parse markdown", serde_json::json!({})).await;
+
+        {
+            let mut entries = store.entries.write().await;
+            for e in entries.iter_mut() {
+                match e.entry.kind {
+                    ContextKind::Tool => e.entry.embedding = Some(tool_emb.clone()),
+                    ContextKind::Skill => e.entry.embedding = Some(skill_emb.clone()),
+                    _ => {}
+                }
+            }
+        }
+
+        // Query aligned with skill but filter to Tool — should still return the Tool entry
+        // (similarity is low but composite score keeps it above min_score=0.0).
+        // The key ablation invariant: kind filter never lets excluded kinds through.
+        let filtered = store.search(&skill_emb, 8, Some(ContextKind::Tool), 0.0).await;
+        assert!(!filtered.is_empty());
+        for entry in &filtered {
+            assert_eq!(entry.kind, ContextKind::Tool);
+        }
+        assert!(!filtered.iter().any(|e| e.kind == ContextKind::Skill));
+    }
 }

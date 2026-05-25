@@ -283,9 +283,23 @@ impl Agent {
             None
         };
 
-        // Always retrieve relevant context via unified ContextStore with XML tags
+        // Retrieve relevant context per enabled kind for ablation control
         if let (Some(ref emb), Some(ref store)) = (&context_embedding, &self.context_store) {
-            let retrieved = store.search(emb, 8, None, 0.25).await;
+            let kinds = &self.config.enabled_context_kinds;
+            let per_kind_limit = 8_usize.div_ceil(kinds.len());
+            let mut all_retrieved: Vec<crate::context::ContextEntry> = Vec::new();
+            for kind in kinds {
+                let mut kind_results = store.search(emb, per_kind_limit, Some(*kind), 0.25).await;
+                all_retrieved.append(&mut kind_results);
+            }
+            // Re-rank globally by composite score and take top 8
+            all_retrieved.sort_by(|a, b| {
+                b.composite_score()
+                    .partial_cmp(&a.composite_score())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let retrieved: Vec<_> = all_retrieved.into_iter().take(8).collect();
+
             if !retrieved.is_empty() {
                 let blocks: Vec<String> = retrieved
                     .iter()

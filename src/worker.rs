@@ -357,7 +357,7 @@ pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &Embedding
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 entries.push(ContextEntry {
                     id: uuid::Uuid::new_v4(),
-                    kind: kind.clone(),
+                    kind: *kind,
                     content,
                     embedding: None,
                     metadata: serde_json::json!({"source": filename}),
