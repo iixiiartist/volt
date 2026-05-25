@@ -2,7 +2,7 @@
 
 > **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, and 38 built-in tools. 100% accuracy at 200 distractors (BFCL-verified). [Paper.](paper/draft.md)**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211) [![GitLab CI](https://gitlab.com/iixiiartist-volt/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist-volt/volt/-/pipelines)
 
 ## Why Volt?
 
