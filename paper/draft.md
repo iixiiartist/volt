@@ -176,7 +176,7 @@ asynchronously via a Tokio MPSC channel:
 
 ```
 [Agent Loop] → SeedChannel.send(SeedEvent) → [AutoSeedWorker daemon]
-                                                ├─ Batch drain ($\leq$32)
+                                                 ├─ Batch drain (<= 32)
                                                 ├─ Embed via Ollama (semaphore=5)
                                                 ├─ seed_batch() with dedup + eviction
                                                 └─ Episodic merge (every 10 batches)
@@ -284,15 +284,15 @@ embedding computation), not accuracy.
 
 | Category | Cases | Static | RAG | Δ | Savings |
 |---|---|---|---|---|---|---|
-| simple_python   |  80 | 72.5% | 96.2% | +23.7pp | 70% |
-| simple_java     |  80 | 55.0% | 56.2% | +1.2pp  | 76% |
-| simple_javascript | 50 | 62.0% | 68.0% | +6.0pp  | 74% |
-| live_simple     |  20 | 70.0% | 80.0% | +10.0pp | 69% |
-| parallel        |  80 | 2.5%  | 1.2%  | -1.3pp  | 78% |
-| multiple        |  80 | 0.0%  | 0.0%  | 0.0pp   | 71% |
-| irrelevance     |  80 | 30.0% | 26.7% | -3.3pp  | 76% |
-| live_relevance  |  16 | 18.8% | 18.8% | 0.0pp   | 67% |
-| **Weighted\ avg** | **486** | **38.9%** | **43.7%** | **+4.8pp** | **72.4%** |
+| simple_python | 80 | 72.5% | 96.2% | +23.7pp | 70% |
+| simple_java | 80 | 55.0% | 56.2% | +1.2pp | 76% |
+| simple_javascript | 50 | 62.0% | 68.0% | +6.0pp | 74% |
+| live_simple | 20 | 70.0% | 80.0% | +10.0pp | 69% |
+| parallel | 80 | 2.5% | 1.2% | -1.3pp | 78% |
+| multiple | 80 | 0.0% | 0.0% | 0.0pp | 71% |
+| irrelevance | 80 | 30.0% | 26.7% | -3.3pp | 76% |
+| live_relevance | 16 | 18.8% | 18.8% | 0.0pp | 67% |
+| **Weighted avg** | **486** | **38.9%** | **43.7%** | **+4.8pp** | **72.4%** |
 
 ^ Total test cases: 486 across 8 BFCL V4 categories. The abstract states ~470
 as a rounded figure excluding the 16 live_relevance cases which require live
