@@ -283,7 +283,7 @@ embedding computation), not accuracy.
 ### 4.5 Python Raw-API Results (470 Cases)
 
 | Category | Cases | Static | RAG | Δ | Savings |
-|---|---|---|---|---|---|---|
+|:---|---:|---:|---:|---:|---:|
 | simple_python | 80 | 72.5% | 96.2% | +23.7pp | 70% |
 | simple_java | 80 | 55.0% | 56.2% | +1.2pp | 76% |
 | simple_javascript | 50 | 62.0% | 68.0% | +6.0pp | 74% |
