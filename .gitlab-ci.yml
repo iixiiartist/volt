@@ -1,0 +1,246 @@
+image: rust:1.85
+
+variables:
+  CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
+  CARGO_TERM_COLOR: always
+  POSTGRES_USER: volt
+  POSTGRES_PASSWORD: volt
+  POSTGRES_DB: volt_test
+  POSTGRES_HOST_AUTH_METHOD: trust
+
+stages:
+  - test
+  - lint
+  - security
+  - docs
+  - build
+  - release
+
+# Cache template reused across jobs
+cargo_cache: &cargo_cache
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - ${CARGO_HOME}/registry/
+    - ${CARGO_HOME}/git/
+    - target/
+  policy: pull-push
+
+# ── Test Stage ──────────────────────────────────────────────────────────────
+test:
+  stage: test
+  services:
+    - name: pgvector/pgvector:pg16
+      alias: postgres
+  variables:
+    DATABASE_URL: "postgres://volt:volt@postgres/volt_test"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev postgresql-client
+    - rustc --version && cargo --version
+    - until pg_isready -h postgres -p 5432 -U volt; do echo "Waiting for PostgreSQL..."; sleep 2; done
+    - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0001_core.sql
+    - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0002_skills.sql
+  script:
+    - cargo test --release
+  cache:
+    <<: *cargo_cache
+  artifacts:
+    when: always
+    reports:
+      junit: target/release/junit-*.xml
+    paths:
+      - target/release/deps/
+    expire_in: 1 week
+
+# ── Lint Stage ──────────────────────────────────────────────────────────────
+fmt:
+  stage: lint
+  script:
+    - rustup component add rustfmt
+    - cargo fmt -- --check
+  cache:
+    <<: *cargo_cache
+    policy: pull
+
+clippy:
+  stage: lint
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev
+  script:
+    - rustup component add clippy
+    - cargo clippy -- -D warnings
+  cache:
+    <<: *cargo_cache
+    policy: pull
+
+# ── Security Stage ──────────────────────────────────────────────────────────
+security_audit:
+  stage: security
+  image: rustsec/rustsec
+  script:
+    - cargo audit
+  allow_failure: true
+
+secret_check:
+  stage: security
+  image: trufflesecurity/trufflehog:latest
+  script:
+    - trufflehog git file://. --only-verified
+  allow_failure: true
+
+# ── Docs Stage ──────────────────────────────────────────────────────────────
+docs:
+  stage: docs
+  script:
+    - cargo doc --no-deps
+  cache:
+    <<: *cargo_cache
+    policy: pull
+  artifacts:
+    paths:
+      - target/doc/
+    expire_in: 30 days
+
+# ── Build Stage ───────────────────────────────────────────────────────────────
+build_linux_gnu:
+  stage: build
+  image: rust:1.85
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev libxdo-dev xdotool
+    # Install Chrome for headless browser testing
+    - wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+    - apt-get install -y -qq ./google-chrome-stable_current_amd64.deb || true
+    - rm -f google-chrome-stable_current_amd64.deb
+    - rustup target add x86_64-unknown-linux-gnu
+  script:
+    - cargo build --release --target x86_64-unknown-linux-gnu --features tools-pdf,tools-desktop,tools-browser
+    - strip target/x86_64-unknown-linux-gnu/release/volt
+    - cd target/x86_64-unknown-linux-gnu/release && tar czf volt-linux-x86_64.tar.gz volt
+  artifacts:
+    paths:
+      - target/x86_64-unknown-linux-gnu/release/volt-linux-x86_64.tar.gz
+    expire_in: 30 days
+  only:
+    - tags
+  cache:
+    <<: *cargo_cache
+    policy: pull
+
+build_linux_musl:
+  stage: build
+  image: rust:1.85
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq musl-tools
+    - rustup target add x86_64-unknown-linux-musl
+  script:
+    - cargo build --release --target x86_64-unknown-linux-musl --features tools-pdf
+    - strip target/x86_64-unknown-linux-musl/release/volt
+    - cd target/x86_64-unknown-linux-musl/release && tar czf volt-linux-x86_64-musl.tar.gz volt
+  artifacts:
+    paths:
+      - target/x86_64-unknown-linux-musl/release/volt-linux-x86_64-musl.tar.gz
+    expire_in: 30 days
+  only:
+    - tags
+  cache:
+    <<: *cargo_cache
+    policy: pull
+
+# ── macOS builds (requires self-hosted macOS runner on free tier) ─────────────
+.macos_template: &macos_template
+  stage: build
+  tags:
+    - macos  # Requires self-hosted runner; see README for setup
+  before_script:
+    - brew install pkg-config 2>/dev/null || true
+    - rustup target add ${CI_JOB_NAME#build_}
+  cache:
+    <<: *cargo_cache
+    policy: pull
+  only:
+    - tags
+
+build_macos_x86_64:
+  <<: *macos_template
+  script:
+    - cargo build --release --target x86_64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
+    - cd target/x86_64-apple-darwin/release && tar czf volt-macos-x86_64.tar.gz volt
+  artifacts:
+    paths:
+      - target/x86_64-apple-darwin/release/volt-macos-x86_64.tar.gz
+    expire_in: 30 days
+
+build_macos_aarch64:
+  <<: *macos_template
+  script:
+    - cargo build --release --target aarch64-apple-darwin --features tools-pdf,tools-desktop,tools-browser
+    - cd target/aarch64-apple-darwin/release && tar czf volt-macos-aarch64.tar.gz volt
+  artifacts:
+    paths:
+      - target/aarch64-apple-darwin/release/volt-macos-aarch64.tar.gz
+    expire_in: 30 days
+
+# ── Windows build (requires self-hosted Windows runner on free tier) ────────────
+build_windows:
+  stage: build
+  tags:
+    - windows  # Requires self-hosted runner; see README for setup
+  before_script:
+    - rustup target add x86_64-pc-windows-msvc
+  script:
+    - cargo build --release --target x86_64-pc-windows-msvc --all-features
+    - Compress-Archive -Path target\x86_64-pc-windows-msvc\release\volt.exe -DestinationPath volt-windows-x86_64.zip
+  artifacts:
+    paths:
+      - volt-windows-x86_64.zip
+    expire_in: 30 days
+  cache:
+    <<: *cargo_cache
+    policy: pull
+  only:
+    - tags
+
+# ── Release Stage ─────────────────────────────────────────────────────────────
+# Creates a GitLab release from tag artifacts.
+# Also pushes to GitHub Releases if GITHUB_TOKEN CI/CD variable is set.
+release:
+  stage: release
+  image: alpine:latest
+  dependencies:
+    - build_linux_gnu
+    - build_linux_musl
+    # Uncomment when self-hosted runners are available:
+    # - build_macos_x86_64
+    # - build_macos_aarch64
+    # - build_windows
+  before_script:
+    - apk add --no-cache curl jq bash
+  script:
+    - |
+      # Create GitLab Release
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --data name="Volt ${CI_COMMIT_TAG}" \
+           --data description="See [CHANGELOG](CHANGELOG.md) for details." \
+           --data tag_name="${CI_COMMIT_TAG}" \
+           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
+
+      # Push to GitHub Releases if token provided
+      if [ -n "${GITHUB_TOKEN}" ]; then
+        echo "Pushing release to GitHub..."
+        # Upload artifacts to GitHub release
+        for artifact in target/*/release/*.tar.gz *.zip; do
+          [ -f "$artifact" ] || continue
+          asset_name=$(basename "$artifact")
+          echo "Uploading ${asset_name}..."
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Content-Type: $(file -b --mime-type "$artifact")" \
+            "https://uploads.github.com/repos/${GITHUB_REPO:-iixiiartist/volt}/releases/${GITHUB_RELEASE_ID}/assets?name=${asset_name}" \
+            --data-binary "@$artifact"
+        done
+      fi
+  only:
+    - tags

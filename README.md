@@ -2,7 +2,7 @@
 
 > **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, and 38 built-in tools. 100% accuracy at 200 distractors (BFCL-verified). [Paper.](paper/draft.md)**
 
-[![CI](https://github.com/iixiiartist/volt/actions/workflows/ci.yml/badge.svg)](https://github.com/iixiiartist/volt/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211)
+[![GitLab CI](https://gitlab.com/iixiiartist/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist/volt/-/pipelines) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211)
 
 ## Why Volt?
 
@@ -151,6 +151,26 @@ python volt-bfcl/volt_bench.py --distractors 200 --model llama-3.1-8b-instant
 python volt-bfcl/volt_bench.py --sweep      # Tool-count scaling
 python volt-bfcl/multi_turn_bench.py         # Episodic memory
 ```
+
+## CI/CD
+
+Volt uses **GitLab CI** (unlimited free minutes for public repos). The pipeline runs on every push to `main`/`develop` and on every tag for releases.
+
+**Stages:** `test` → `lint` → `security` → `docs` → `build` → `release`
+
+### Setup
+1. Mirror this repo to GitLab: **Settings → Repository → Mirroring repositories** (or push directly to GitLab)
+2. GitLab CI will auto-detect `.gitlab-ci.yml` and run pipelines
+
+**Required CI/CD variables** (Settings → CI/CD → Variables):
+- `DATABASE_URL` — Postgres connection string (optional; tests spin up a pgvector service container)
+- `GITHUB_TOKEN` — GitHub personal access token (optional; for pushing releases back to GitHub)
+
+### Self-hosted runners (for macOS & Windows)
+GitLab shared runners are Linux-only on the free tier. To build macOS and Windows binaries, add self-hosted runners:
+- **macOS**: Install [GitLab Runner](https://docs.gitlab.com/runner/install/osx.html) on a Mac, tag it `macos`
+- **Windows**: Install [GitLab Runner](https://docs.gitlab.com/runner/install/windows.html) on a Windows machine, tag it `windows`
+- Uncomment the `build_macos_*` and `build_windows` jobs in `.gitlab-ci.yml`
 
 ## Performance
 
