@@ -24,10 +24,12 @@ def run_agent(input_text: str, model: str = "llama-3.1-8b-instant",
     t0 = time.time()
     result = subprocess.run(
         [BINARY, "agent-run", "--model", model, "-a", "--input", input_text],
-        capture_output=True, text=True, timeout=timeout, env=env,
+        capture_output=True, timeout=timeout, env=env,
     )
     elapsed = time.time() - t0
-    return (result.stdout + "\n" + result.stderr), elapsed
+    stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
+    stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+    return (stdout + "\n" + stderr), elapsed
 
 
 def extract_final_answer(output: str) -> str:
