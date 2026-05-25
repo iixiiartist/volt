@@ -40,7 +40,6 @@ test:
     - rustc --version && cargo --version
     - until pg_isready -h postgres -p 5432 -U volt; do echo "Waiting for PostgreSQL..."; sleep 2; done
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0001_core.sql
-    - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0002_skills.sql
   script:
     - cargo test --release
   cache:
