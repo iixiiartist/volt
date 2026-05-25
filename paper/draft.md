@@ -1,8 +1,6 @@
 ---
 title: "Volt: A Unified RAG Architecture for Tool Selection, Context Engineering, and Autonomous Agent Memory"
-author:
-  - name: "Joe Allen"
-    affiliation: "Setique Labs, Inc."
+author: "Joe Allen, Setique Labs, Inc."
 date: "May 2026"
 abstract: |
   LLM-based agents inject tool definitions into every inference call, incurring
@@ -178,7 +176,7 @@ asynchronously via a Tokio MPSC channel:
 
 ```
 [Agent Loop] → SeedChannel.send(SeedEvent) → [AutoSeedWorker daemon]
-                                                ├─ Batch drain (≤32)
+                                                ├─ Batch drain ($\leq$32)
                                                 ├─ Embed via Ollama (semaphore=5)
                                                 ├─ seed_batch() with dedup + eviction
                                                 └─ Episodic merge (every 10 batches)
@@ -189,10 +187,10 @@ This achieves O(1) real-time execution with zero latency tax.
 
 ### 3.5 Four-Pillar Eviction
 
-1. **Semantic dedup**: Cosine ≥ 0.92 on same kind → merge frequency, skip insert
+1. **Semantic dedup**: Cosine $\geq$ 0.92 on same kind → merge frequency, skip insert
 2. **Per-kind quotas**: Evict lowest composite-score entries
 3. **Composite score**: 0.4×recency + 0.3×success + 0.2×log(frequency) + 0.1×density
-4. **Episodic merging**: Cluster Conversation entries ≥ 0.85 cosine with ≥ 3 members
+4. **Episodic merging**: Cluster Conversation entries $\geq$ 0.85 cosine with $\geq$ 3 members
 
 ### 3.6 Additional Architecture Features
 
@@ -285,16 +283,16 @@ embedding computation), not accuracy.
 ### 4.5 Python Raw-API Results (470 Cases)
 
 | Category | Cases | Static | RAG | Δ | Savings |
-|---|---|---|---|---|---|
-| simple_python | 80 | 72.5% | 96.2% | +23.7pp | 70% |
-| simple_java | 80 | 55.0% | 56.2% | +1.2pp | 76% |
-| simple_javascript | 50 | 62.0% | 68.0% | +6.0pp | 74% |
-| live_simple | 20 | 70.0% | 80.0% | +10.0pp | 69% |
-| parallel | 80 | 2.5% | 1.2% | -1.3pp | 78% |
-| multiple | 80 | 0.0% | 0.0% | 0.0pp | 71% |
-| irrelevance | 80 | 30.0% | 26.7% | -3.3pp | 76% |
-| live_relevance | 16 | 18.8% | 18.8% | 0.0pp | 67% |
-| **Weighted avg** | **486** | **38.9%** | **43.7%** | **+4.8pp** | **72.4%** |
+|---|---|---|---|---|---|---|
+| simple_python   |  80 | 72.5% | 96.2% | +23.7pp | 70% |
+| simple_java     |  80 | 55.0% | 56.2% | +1.2pp  | 76% |
+| simple_javascript | 50 | 62.0% | 68.0% | +6.0pp  | 74% |
+| live_simple     |  20 | 70.0% | 80.0% | +10.0pp | 69% |
+| parallel        |  80 | 2.5%  | 1.2%  | -1.3pp  | 78% |
+| multiple        |  80 | 0.0%  | 0.0%  | 0.0pp   | 71% |
+| irrelevance     |  80 | 30.0% | 26.7% | -3.3pp  | 76% |
+| live_relevance  |  16 | 18.8% | 18.8% | 0.0pp   | 67% |
+| **Weighted\ avg** | **486** | **38.9%** | **43.7%** | **+4.8pp** | **72.4%** |
 
 ^ Total test cases: 486 across 8 BFCL V4 categories. The abstract states ~470
 as a rounded figure excluding the 16 live_relevance cases which require live
