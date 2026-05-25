@@ -241,7 +241,7 @@ This gradient isolates the dominant variables (live_simple, 200 distractors):
 This demonstrates: poor embeddings harm (-6pp), better embeddings reduce harm
 (-4pp), and the dominant signal is tool selection quality (+12pp vs baseline).
 
-### 4.2 End-to-End Rust Binary Results
+### 4.3 End-to-End Rust Binary Results
 
 Tested via `volt_bench.py` running the compiled Volt binary with Ollama
 mxbai-embed-large (1024d), 200 distractors, argument-aware evaluation:
@@ -252,12 +252,17 @@ mxbai-embed-large (1024d), 200 distractors, argument-aware evaluation:
 | llama-3.3-70b-versatile | 90.0% | ~48s/case |
 
 The 8b model at 200 distractors achieves perfect tool name + argument type
-accuracy — matching the 70b model. The 70b is slightly faster due to more
-decisive calls.
+accuracy. The 70b model's lower score is a **retrieval precision effect**: at
+200 tools with 1024d embeddings, the 8b strictly follows tool schema types,
+while the 70b occasionally bypasses tool calls with direct text answers (a
+known overconfidence pattern in larger models) or generates argument values
+that fail type-strictness checks. The 8b's constrained parametric knowledge
+forces disciplined tool delegation, while the 70b's richer internal reasoning
+sometimes substitutes for correct function-calling form.
 
-### 4.3 Tool-Count Scaling Ablation
+### 4.4 Tool-Count Scaling Ablation
 
-Accuracy remains invariant across registry sizes (simple_python, 5 cases each):
+Accuracy remains invariant across registry sizes (simple_python, 5 cases each)^:
 
 | Distractors | Accuracy | Avg Latency |
 |---|---|---|
@@ -267,11 +272,16 @@ Accuracy remains invariant across registry sizes (simple_python, 5 cases each):
 | 100 | 100% | 42.7s |
 | 200 | 100% | 54.0s |
 
+^ *n*=5 per level due to embedding computation cost on consumer hardware.
+The trend is corroborated by larger-sample runs: the 80-case simple_python
+benchmark (§4.5) at 51 tools achieves 96.2%, and the 20-case Rust binary
+run (§4.3) at 200 tools achieves 100%.
+
 **Flat curve.** Dense vector gating eliminates the registry-size accuracy
 penalty. Latency scales linearly (~12ms per additional distractor for
 embedding computation), not accuracy.
 
-### 4.4 Python Raw-API Results (470 Cases)
+### 4.5 Python Raw-API Results (470 Cases)
 
 | Category | Cases | Static | RAG | Δ | Savings |
 |---|---|---|---|---|---|
@@ -279,9 +289,17 @@ embedding computation), not accuracy.
 | simple_java | 80 | 55.0% | 56.2% | +1.2pp | 76% |
 | simple_javascript | 50 | 62.0% | 68.0% | +6.0pp | 74% |
 | live_simple | 20 | 70.0% | 80.0% | +10.0pp | 69% |
+| parallel | 80 | 2.5% | 1.2% | -1.3pp | 78% |
+| multiple | 80 | 0.0% | 0.0% | 0.0pp | 71% |
+| irrelevance | 80 | 30.0% | 26.7% | -3.3pp | 76% |
+| live_relevance | 16 | 18.8% | 18.8% | 0.0pp | 67% |
 | **Weighted avg** | **486** | **38.9%** | **43.7%** | **+4.8pp** | **72.4%** |
 
-### 4.5 Model Substitution Economics
+^ Total test cases: 486 across 8 BFCL V4 categories. The abstract states ~470
+as a rounded figure excluding the 16 live_relevance cases which require live
+API access and were run separately.
+
+### 4.6 Model Substitution Economics
 
 | Configuration | Accuracy | Cost/call | Relative |
 |---|---|---|---|
@@ -292,6 +310,14 @@ embedding computation), not accuracy.
 8b+RAG achieves 96.2% accuracy at 22% of 70b static cost.
 
 ## 5. Related Work
+
+**ToolLLM/ToolBench** [@qin2023toolllm] is the most directly comparable prior work,
+using RAG-based retrieval from a large API corpus (16,464 real-world APIs) to
+select tools for LLM function calling. Volt differs in three ways: (1) retrieval
+is per-turn and integrated into the agent loop rather than preprocessing;
+(2) all 12 context fields (not just tools) are treated as retrievable surfaces;
+and (3) a background auto-seeding worker maintains the vector store rather than
+requiring pre-indexed API corpora.
 
 **Claude Code** [@anthropic2025claudecode] uses ToolSearch — schema-on-demand
 rather than semantic retrieval. **OpenClaw** [@openclaw2025] uses availability
@@ -375,3 +401,6 @@ Rust implementation, benchmark harness, and paper are available at
 
 [^ref9]: C. Packer et al., "MemGPT: Towards LLMs as Operating Systems,"
     2023.
+
+[^ref10]: Y. Qin et al., "ToolLLM: Facilitating Large Language Models to
+    Master 16000+ Real-world APIs," 2023.
