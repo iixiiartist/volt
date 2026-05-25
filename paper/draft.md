@@ -26,7 +26,7 @@ abstract: |
   We identify boundary conditions for the approach, release the full Rust 
   implementation (MIT license, 57 source files, ~13,000 lines), and provide a
   benchmark harness costing \$0.37 for independent replication.
-bibliography: paper.bib
+bibliography: paper/paper.bib
 
 ---
 
