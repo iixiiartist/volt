@@ -314,7 +314,12 @@ async fn main() -> anyhow::Result<()> {
             let result = sandbox::run_command(&command, &policy).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
-        Commands::AgentRun { input, model, allow, load_tools } => {
+        Commands::AgentRun {
+            input,
+            model,
+            allow,
+            load_tools,
+        } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
@@ -338,30 +343,38 @@ async fn main() -> anyhow::Result<()> {
                         let mut count = 0;
                         for line in contents.lines() {
                             let line = line.trim();
-                            if line.is_empty() { continue; }
+                            if line.is_empty() {
+                                continue;
+                            }
                             if let Ok(fn_def) = serde_json::from_str::<serde_json::Value>(line) {
                                 let name = fn_def["name"].as_str().unwrap_or("unknown");
-                                let desc = fn_def["description"].as_str().unwrap_or("No description");
+                                let desc =
+                                    fn_def["description"].as_str().unwrap_or("No description");
                                 let schema = fn_def["parameters"].clone();
                                 if name != "unknown" {
                                     let name_owned = name.to_string();
-                                    tools.register(
-                                        name,
-                                        desc,
-                                        schema,
-                                        "bfcl",
-                                        std::sync::Arc::new(move |_args| {
-                                            let msg = format!("[stub] {} called — no real implementation", name_owned);
-                                            Box::pin(async move {
-                                                volt::models::ToolResult {
-                                                    success: true,
-                                                    output: msg,
-                                                    error: None,
-                                                    duration_ms: 0,
-                                                }
-                                            })
-                                        }),
-                                    ).await;
+                                    tools
+                                        .register(
+                                            name,
+                                            desc,
+                                            schema,
+                                            "bfcl",
+                                            std::sync::Arc::new(move |_args| {
+                                                let msg = format!(
+                                                    "[stub] {} called — no real implementation",
+                                                    name_owned
+                                                );
+                                                Box::pin(async move {
+                                                    volt::models::ToolResult {
+                                                        success: true,
+                                                        output: msg,
+                                                        error: None,
+                                                        duration_ms: 0,
+                                                    }
+                                                })
+                                            }),
+                                        )
+                                        .await;
                                     count += 1;
                                 }
                             }
@@ -440,8 +453,12 @@ async fn main() -> anyhow::Result<()> {
                 .with_context(context_store.clone())
                 .with_seed_channel(seed_channel);
 
-            worker::AutoSeedWorker::new(context_store.clone(), embedder_for_worker, cancel_for_worker)
-                .spawn(seed_rx);
+            worker::AutoSeedWorker::new(
+                context_store.clone(),
+                embedder_for_worker,
+                cancel_for_worker,
+            )
+            .spawn(seed_rx);
 
             let seed_store = context_store.clone();
             let seed_embedder = embedder.clone();
@@ -802,7 +819,10 @@ async fn main() -> anyhow::Result<()> {
                 Ok(catalog) => {
                     println!("Available skills ({}):", catalog.skills.len());
                     for skill in volt::skills::catalog::list_catalog(&catalog) {
-                        println!("  {} v{} — {}", skill.name, skill.version, skill.description);
+                        println!(
+                            "  {} v{} — {}",
+                            skill.name, skill.version, skill.description
+                        );
                     }
                 }
                 Err(e) => {
@@ -820,7 +840,10 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         println!("Skills matching '{}' ({}):", query, results.len());
                         for skill in results {
-                            println!("  {} v{} — {}", skill.name, skill.version, skill.description);
+                            println!(
+                                "  {} v{} — {}",
+                                skill.name, skill.version, skill.description
+                            );
                         }
                     }
                 }
@@ -835,7 +858,9 @@ async fn main() -> anyhow::Result<()> {
             let pool = db::connect(&settings.database_url).await?;
             match volt::skills::catalog::fetch_catalog(catalog_url.as_deref()).await {
                 Ok(catalog) => {
-                    match volt::skills::catalog::install_skill(&catalog, &name, &pool, &embedder).await {
+                    match volt::skills::catalog::install_skill(&catalog, &name, &pool, &embedder)
+                        .await
+                    {
                         Ok(_) => println!("✓ Skill '{}' installed successfully.", name),
                         Err(e) => {
                             eprintln!("Failed to install skill '{}': {}", name, e);
@@ -882,7 +907,8 @@ async fn main() -> anyhow::Result<()> {
             let label = importer::format_label(&source_fmt);
             println!("Detected format: {}", label);
 
-            let converted = importer::convert_to_volt_skill(&path, &content, &source_fmt, name.as_deref());
+            let converted =
+                importer::convert_to_volt_skill(&path, &content, &source_fmt, name.as_deref());
 
             // Write to temp file and compile
             let tmp_dir = std::env::temp_dir().join(format!("volt-import-{}", std::process::id()));
@@ -897,8 +923,14 @@ async fn main() -> anyhow::Result<()> {
             match registry.compile_skill(&tmp_path, &embedder).await {
                 Ok(_) => {
                     let manifest = volt::skills::parse_skill_manifest(&tmp_path).ok();
-                    let skill_name = manifest.as_ref().map(|m| m.name.as_str()).unwrap_or("unknown");
-                    println!("✓ Imported from {} as skill '{}' with RAG embedding.", label, skill_name);
+                    let skill_name = manifest
+                        .as_ref()
+                        .map(|m| m.name.as_str())
+                        .unwrap_or("unknown");
+                    println!(
+                        "✓ Imported from {} as skill '{}' with RAG embedding.",
+                        label, skill_name
+                    );
                 }
                 Err(e) => {
                     eprintln!("Failed to compile imported skill: {}", e);
@@ -944,17 +976,23 @@ async fn save_agent_session(agent: &Agent) {
     let sessions_path = std::path::PathBuf::from("volt_sessions.db");
     if let Ok(sp) = volt::session::open_sessions(&sessions_path).await {
         let state = agent.state.lock().await;
-        let title = state.messages.first()
+        let title = state
+            .messages
+            .first()
             .map(|m| m.content.chars().take(60).collect::<String>())
             .unwrap_or_else(|| "unnamed".into());
-        let _ = volt::session::create_session(&sp, &Session {
-            id: state.session_id,
-            agent_name: state.name.clone(),
-            title,
-            message_count: state.messages.len() as u32,
-            created_at: state.created_at,
-            updated_at: chrono::Utc::now(),
-        }).await;
+        let _ = volt::session::create_session(
+            &sp,
+            &Session {
+                id: state.session_id,
+                agent_name: state.name.clone(),
+                title,
+                message_count: state.messages.len() as u32,
+                created_at: state.created_at,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await;
         let _ = volt::session::delete_session_messages(&sp, state.session_id).await;
         for msg in &state.messages {
             let _ = volt::session::save_message(&sp, state.session_id, msg).await;
@@ -1737,18 +1775,28 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
         volt::tools::time_tool::get_current_time(tz).await
     }))).await;
 
-    registry.register("convert_time", "Convert time between timezones.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "timezone": { "type": "string", "description": "source IANA timezone" },
-            "timezone_to": { "type": "string", "description": "target IANA timezone" }
-        },
-        "required": ["timezone", "timezone_to"]
-    }), "utilities", Arc::new(|args| Box::pin(async move {
-        let from = args["timezone"].as_str().unwrap_or("UTC");
-        let to = args["timezone_to"].as_str().unwrap_or("UTC");
-        volt::tools::time_tool::convert_time(from, to).await
-    }))).await;
+    registry
+        .register(
+            "convert_time",
+            "Convert time between timezones.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "timezone": { "type": "string", "description": "source IANA timezone" },
+                    "timezone_to": { "type": "string", "description": "target IANA timezone" }
+                },
+                "required": ["timezone", "timezone_to"]
+            }),
+            "utilities",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let from = args["timezone"].as_str().unwrap_or("UTC");
+                    let to = args["timezone_to"].as_str().unwrap_or("UTC");
+                    volt::tools::time_tool::convert_time(from, to).await
+                })
+            }),
+        )
+        .await;
 
     // ── Sequential thinking ────────────────────────────────────────────────
     registry.register("sequentialthinking", "A detailed tool for dynamic and reflective problem-solving through structured thoughts. Use when the task requires careful reasoning, multi-step analysis, or exploring alternative solutions.", serde_json::json!({

@@ -1,5 +1,5 @@
-use std::sync::OnceLock;
 use opentelemetry::trace::TracerProvider as _;
+use std::sync::OnceLock;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 

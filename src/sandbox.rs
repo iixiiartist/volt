@@ -11,9 +11,18 @@ fn sandbox_cmd(program: &str, policy: &SandboxPolicy) -> Command {
     let mut cmd = Command::new(program);
     if is_windows() {
         cmd.env_clear()
-            .env("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap_or_else(|_| "C:\\Windows".into()))
-            .env("TEMP", std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()))
-            .env("TMP", std::env::var("TMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()));
+            .env(
+                "SYSTEMROOT",
+                std::env::var("SYSTEMROOT").unwrap_or_else(|_| "C:\\Windows".into()),
+            )
+            .env(
+                "TEMP",
+                std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()),
+            )
+            .env(
+                "TMP",
+                std::env::var("TMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()),
+            );
     } else {
         cmd.env_clear().env("PATH", "/usr/bin:/bin");
     }
@@ -53,7 +62,12 @@ async fn run_sandbox_output(
             truncate_to_limit(&mut stdout, max_stdout_bytes);
             truncate_to_limit(&mut stderr, max_stdout_bytes);
             SandboxResult {
-                status: if output.status.success() { "ok" } else { "error" }.to_string(),
+                status: if output.status.success() {
+                    "ok"
+                } else {
+                    "error"
+                }
+                .to_string(),
                 stdout,
                 stderr,
                 duration_ms,
@@ -74,7 +88,11 @@ async fn run_sandbox_output(
 
 pub async fn run_command(command: &str, policy: &SandboxPolicy) -> anyhow::Result<SandboxResult> {
     let shell = std::env::var("SANDBOX_SHELL").unwrap_or_else(|_| {
-        if is_windows() { "cmd.exe".into() } else { "bash".into() }
+        if is_windows() {
+            "cmd.exe".into()
+        } else {
+            "bash".into()
+        }
     });
     let mut cmd = Command::new(&shell);
     if is_windows() {
@@ -116,7 +134,12 @@ async fn run_spawned(
             truncate_to_limit(&mut stdout, max_stdout_bytes);
             truncate_to_limit(&mut stderr, max_stdout_bytes);
             SandboxResult {
-                status: if output.status.success() { "ok" } else { "error" }.to_string(),
+                status: if output.status.success() {
+                    "ok"
+                } else {
+                    "error"
+                }
+                .to_string(),
                 stdout,
                 stderr,
                 duration_ms,
@@ -156,7 +179,9 @@ pub async fn run_command_direct(
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         match cmd.spawn() {
-            Ok(child) => run_spawned(child, input, policy.timeout_ms, policy.max_stdout_bytes).await,
+            Ok(child) => {
+                run_spawned(child, input, policy.timeout_ms, policy.max_stdout_bytes).await
+            }
             Err(e) => SandboxResult {
                 status: "error".to_string(),
                 stdout: String::new(),

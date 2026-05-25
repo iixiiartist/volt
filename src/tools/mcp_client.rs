@@ -3,7 +3,10 @@ use serde_json::Value;
 
 pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -> ToolResult {
     match &server.transport {
-        crate::models::MCPTransport::Stdio { command, args: cmd_args } => {
+        crate::models::MCPTransport::Stdio {
+            command,
+            args: cmd_args,
+        } => {
             let mut cmd = tokio::process::Command::new(command);
             cmd.args(cmd_args);
             if let Some(env) = &server.env {
@@ -20,7 +23,8 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
                 "id": 1
             });
 
-            let mut child = match cmd.stdin(std::process::Stdio::piped())
+            let mut child = match cmd
+                .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
@@ -44,7 +48,7 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
                         output: String::new(),
                         error: Some(format!("MCP write failed: {}", e)),
                         duration_ms: 0,
-                    }
+                    };
                 }
             }
 
@@ -63,7 +67,11 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
             ToolResult {
                 success: output.status.success(),
                 output: stdout,
-                error: if output.status.success() { None } else { Some(String::from_utf8_lossy(&output.stderr).to_string()) },
+                error: if output.status.success() {
+                    None
+                } else {
+                    Some(String::from_utf8_lossy(&output.stderr).to_string())
+                },
                 duration_ms: 0,
             }
         }

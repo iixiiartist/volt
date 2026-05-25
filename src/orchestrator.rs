@@ -55,33 +55,45 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
     let route = resolve_provider(&spec.model);
 
     let llm_provider: Box<dyn LLMProvider> = match route.kind {
-        ProviderKind::Anthropic => {
-            Box::new(AnthropicProvider::new(route.api_key, Some(route.base_url), spec.name.clone()))
-        }
-        ProviderKind::OpenAI => {
-            Box::new(OpenAIProvider::new(route.api_key, route.base_url, spec.name.clone()))
-        }
+        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
+            route.api_key,
+            Some(route.base_url),
+            spec.name.clone(),
+        )),
+        ProviderKind::OpenAI => Box::new(OpenAIProvider::new(
+            route.api_key,
+            route.base_url,
+            spec.name.clone(),
+        )),
     };
 
     let provider_label = match route.kind {
         ProviderKind::Anthropic => "anthropic",
         ProviderKind::OpenAI => "openai",
     };
-    Agent::new(AgentConfig {
-        name: spec.name,
-        model: spec.model,
-        provider: provider_label.into(),
-        system_prompt: spec.system_prompt,
-        max_iterations: spec.max_iterations,
-        temperature: spec.temperature,
-        toolsets: vec!["builtin".into()],
-        hidden: true,
-        allow_all: spec.allow_all,
-    }, llm_provider, tools)
+    Agent::new(
+        AgentConfig {
+            name: spec.name,
+            model: spec.model,
+            provider: provider_label.into(),
+            system_prompt: spec.system_prompt,
+            max_iterations: spec.max_iterations,
+            temperature: spec.temperature,
+            toolsets: vec!["builtin".into()],
+            hidden: true,
+            allow_all: spec.allow_all,
+        },
+        llm_provider,
+        tools,
+    )
 }
 
 fn kind_from_str(s: &str) -> ProviderKind {
-    if s.eq_ignore_ascii_case("anthropic") { ProviderKind::Anthropic } else { ProviderKind::OpenAI }
+    if s.eq_ignore_ascii_case("anthropic") {
+        ProviderKind::Anthropic
+    } else {
+        ProviderKind::OpenAI
+    }
 }
 
 /// Resolve model name to a provider route.
@@ -114,7 +126,11 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
                         let base_url = route["base_url"].as_str().unwrap_or("").to_string();
                         let api_key_env = route["api_key_env"].as_str().unwrap_or("LLM_API_KEY");
                         let api_key = std::env::var(api_key_env).unwrap_or_default();
-                        return ProviderRoute { kind, base_url, api_key };
+                        return ProviderRoute {
+                            kind,
+                            base_url,
+                            api_key,
+                        };
                     }
                 }
             }
@@ -135,7 +151,8 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
     }
 
     // GPT / O-series → OpenAI
-    if m.starts_with("gpt-") || m.starts_with("o1-") || m.starts_with("o3-") || m.contains("openai") {
+    if m.starts_with("gpt-") || m.starts_with("o1-") || m.starts_with("o3-") || m.contains("openai")
+    {
         let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
         return ProviderRoute {
             kind: ProviderKind::OpenAI,
@@ -209,14 +226,16 @@ impl Orchestrator {
             handles.push(tokio::spawn(async move {
                 let _permit = match permit {
                     Ok(p) => p,
-                    Err(_) => return StepResult {
-                        agent_name,
-                        output: String::new(),
-                        duration_ms: 0,
-                        success: false,
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                    },
+                    Err(_) => {
+                        return StepResult {
+                            agent_name,
+                            output: String::new(),
+                            duration_ms: 0,
+                            success: false,
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                        }
+                    }
                 };
                 let step_started = Instant::now();
                 let agent = create_agent(spec, tools);
@@ -351,7 +370,10 @@ impl Orchestrator {
                 let task = tasks.first().cloned().unwrap_or_default();
                 self.run_supervisor(&task, specs).await
             }
-            _ => anyhow::bail!("unknown workflow pattern: {}. use 'parallel', 'pipeline', or 'supervisor'", pattern),
+            _ => anyhow::bail!(
+                "unknown workflow pattern: {}. use 'parallel', 'pipeline', or 'supervisor'",
+                pattern
+            ),
         }
     }
 
@@ -413,8 +435,7 @@ pub fn parse_agent_specs(json: &str) -> anyhow::Result<Vec<AgentSpec>> {
                     .as_str()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| {
-                        std::env::var("LLM_MODEL")
-                            .unwrap_or_else(|_| "llama-3.1-8b-instant".into())
+                        std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
                     }),
                 system_prompt: v["system_prompt"].as_str().map(|s| s.to_string()),
                 max_iterations: v["max_iterations"].as_u64().unwrap_or(10) as u32,

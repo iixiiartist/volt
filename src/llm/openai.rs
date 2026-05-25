@@ -1,4 +1,4 @@
-﻿use crate::llm::provider::TokenCallback;
+use crate::llm::provider::TokenCallback;
 use crate::llm::LLMProvider;
 use crate::models::*;
 use async_trait::async_trait;
@@ -92,15 +92,12 @@ impl LLMProvider for OpenAIProvider {
         let body = build_request_body(request);
 
         let mut req = self.http.post(&url);
-        
+
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let resp_val = req
-            .json(&body)
-            .send()
-            .await?;
+        let resp_val = req.json(&body).send().await?;
 
         let status = resp_val.status();
         if !status.is_success() {
@@ -124,15 +121,12 @@ impl LLMProvider for OpenAIProvider {
         body["stream"] = json!(true);
 
         let mut req = self.http.post(&url);
-        
+
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response = req
-            .json(&body)
-            .send()
-            .await?;
+        let response = req.json(&body).send().await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -150,7 +144,7 @@ impl LLMProvider for OpenAIProvider {
 
         let mut line_buffer = String::new();
         let mut stream = response.bytes_stream();
-        
+
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             line_buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -159,7 +153,9 @@ impl LLMProvider for OpenAIProvider {
                 let line = line_buffer[..newline_idx].trim().to_string();
                 line_buffer.drain(..=newline_idx);
 
-                let Some(data) = line.strip_prefix("data: ") else { continue };
+                let Some(data) = line.strip_prefix("data: ") else {
+                    continue;
+                };
                 if data == "[DONE]" {
                     continue;
                 }
@@ -175,12 +171,18 @@ impl LLMProvider for OpenAIProvider {
                             if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                                 for tc in tcs {
                                     let id = tc["id"].as_str().unwrap_or("").to_string();
-                                    let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-                                    let args = tc["function"]["arguments"].as_str().unwrap_or("").to_string();
+                                    let name =
+                                        tc["function"]["name"].as_str().unwrap_or("").to_string();
+                                    let args = tc["function"]["arguments"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string();
 
                                     if !id.is_empty() {
                                         if let Some(mut prev) = current_tool_call.take() {
-                                            prev.arguments = serde_json::from_str(&current_args_string).unwrap_or_default();
+                                            prev.arguments =
+                                                serde_json::from_str(&current_args_string)
+                                                    .unwrap_or_default();
                                             tool_calls_acc.push(prev);
                                         }
                                         current_args_string = args;
@@ -217,7 +219,11 @@ impl LLMProvider for OpenAIProvider {
 
         Ok(LLMResponse {
             content: Arc::new(full_content),
-            tool_calls: if tool_calls_acc.is_empty() { None } else { Some(tool_calls_acc) },
+            tool_calls: if tool_calls_acc.is_empty() {
+                None
+            } else {
+                Some(tool_calls_acc)
+            },
             finish_reason,
             usage,
         })

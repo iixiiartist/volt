@@ -29,10 +29,7 @@ pub async fn fetch_catalog(url: Option<&str>) -> anyhow::Result<SkillCatalog> {
     let client = http_client(30);
     let resp = client.get(url).send().await?;
     if !resp.status().is_success() {
-        anyhow::bail!(
-            "catalog fetch returned HTTP {}",
-            resp.status().as_u16()
-        );
+        anyhow::bail!("catalog fetch returned HTTP {}", resp.status().as_u16());
     }
     let catalog: SkillCatalog = resp.json().await?;
     Ok(catalog)
@@ -102,13 +99,19 @@ pub async fn install_skill(
 }
 
 /// Fetch skill content from remote URL, falling back to local file.
-async fn fetch_skill_content(catalog: &SkillCatalog, entry: &CatalogEntry) -> anyhow::Result<String> {
+async fn fetch_skill_content(
+    catalog: &SkillCatalog,
+    entry: &CatalogEntry,
+) -> anyhow::Result<String> {
     // Try remote first
     let skill_url = format!("{}/{}", catalog.base_url.trim_end_matches('/'), entry.path);
     let client = http_client(10);
     match client.get(&skill_url).send().await {
         Ok(resp) if resp.status().is_success() => {
-            return resp.text().await.map_err(|e| anyhow::anyhow!("failed to read response: {}", e));
+            return resp
+                .text()
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to read response: {}", e));
         }
         _ => {}
     }
@@ -116,13 +119,16 @@ async fn fetch_skill_content(catalog: &SkillCatalog, entry: &CatalogEntry) -> an
     // Fallback: try local file
     let local_path = std::path::Path::new(&entry.path);
     if local_path.exists() {
-        return std::fs::read_to_string(local_path)
-            .map_err(|e| anyhow::anyhow!("failed to read local file {}: {}", local_path.display(), e));
+        return std::fs::read_to_string(local_path).map_err(|e| {
+            anyhow::anyhow!("failed to read local file {}: {}", local_path.display(), e)
+        });
     }
 
     anyhow::bail!(
         "could not fetch skill '{}' from {} (offline and file not found at {})",
-        entry.name, skill_url, local_path.display()
+        entry.name,
+        skill_url,
+        local_path.display()
     )
 }
 

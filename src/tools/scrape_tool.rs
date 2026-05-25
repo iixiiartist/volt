@@ -174,7 +174,11 @@ pub async fn web_scrape_all(url: &str) -> ToolResult {
                         let text = el.text().collect::<Vec<_>>().concat();
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
-                            output.push_str(&format!("{} {}\n", "#".repeat(level as usize), trimmed));
+                            output.push_str(&format!(
+                                "{} {}\n",
+                                "#".repeat(level as usize),
+                                trimmed
+                            ));
                         }
                     }
                 }
@@ -201,7 +205,10 @@ pub async fn web_scrape_all(url: &str) -> ToolResult {
                     if let Some(href) = el.value().attr("href") {
                         let text = el.text().collect::<Vec<_>>().concat();
                         let trimmed = text.trim();
-                        if !trimmed.is_empty() && !href.starts_with('#') && !href.starts_with("javascript:") {
+                        if !trimmed.is_empty()
+                            && !href.starts_with('#')
+                            && !href.starts_with("javascript:")
+                        {
                             links.push(format!("- [{}]({})", trimmed, href));
                         }
                     }

@@ -5,9 +5,14 @@ pub async fn csv_read(path: &str, has_header: bool) -> ToolResult {
     let started = Instant::now();
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => return ToolResult {
-            success: false, output: String::new(), error: Some(format!("read failed: {}", e)), duration_ms: started.elapsed().as_millis(),
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("read failed: {}", e)),
+                duration_ms: started.elapsed().as_millis(),
+            }
+        }
     };
 
     let mut reader = csv::ReaderBuilder::new()
@@ -15,7 +20,11 @@ pub async fn csv_read(path: &str, has_header: bool) -> ToolResult {
         .flexible(true)
         .from_reader(content.as_bytes());
 
-    let headers: Vec<String> = reader.headers().ok().map(|h| h.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
+    let headers: Vec<String> = reader
+        .headers()
+        .ok()
+        .map(|h| h.iter().map(|s| s.to_string()).collect())
+        .unwrap_or_default();
     let mut records = Vec::new();
     for result in reader.records() {
         match result {
@@ -56,7 +65,10 @@ pub async fn csv_write(path: &str, data: &str, has_header: bool) -> ToolResult {
     let lines: Vec<&str> = data.lines().filter(|l| !l.trim().is_empty()).collect();
     if lines.is_empty() {
         return ToolResult {
-            success: false, output: String::new(), error: Some("no data provided".into()), duration_ms: started.elapsed().as_millis(),
+            success: false,
+            output: String::new(),
+            error: Some("no data provided".into()),
+            duration_ms: started.elapsed().as_millis(),
         };
     }
 
@@ -65,23 +77,37 @@ pub async fn csv_write(path: &str, data: &str, has_header: bool) -> ToolResult {
         .has_headers(has_header)
         .from_writer(match wtr {
             Ok(f) => f,
-            Err(e) => return ToolResult {
-                success: false, output: String::new(), error: Some(format!("create failed: {}", e)), duration_ms: started.elapsed().as_millis(),
-            },
+            Err(e) => {
+                return ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("create failed: {}", e)),
+                    duration_ms: started.elapsed().as_millis(),
+                }
+            }
         });
 
-    let rows: Vec<Vec<&str>> = lines.iter().map(|l| l.split(',').map(|s| s.trim()).collect()).collect();
+    let rows: Vec<Vec<&str>> = lines
+        .iter()
+        .map(|l| l.split(',').map(|s| s.trim()).collect())
+        .collect();
 
     if has_header && !rows.is_empty() {
         if let Err(e) = writer.write_record(&rows[0]) {
             return ToolResult {
-                success: false, output: String::new(), error: Some(format!("write header failed: {}", e)), duration_ms: started.elapsed().as_millis(),
+                success: false,
+                output: String::new(),
+                error: Some(format!("write header failed: {}", e)),
+                duration_ms: started.elapsed().as_millis(),
             };
         }
         for row in &rows[1..] {
             if let Err(e) = writer.write_record(row) {
                 return ToolResult {
-                    success: false, output: String::new(), error: Some(format!("write row failed: {}", e)), duration_ms: started.elapsed().as_millis(),
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("write row failed: {}", e)),
+                    duration_ms: started.elapsed().as_millis(),
                 };
             }
         }
@@ -89,7 +115,10 @@ pub async fn csv_write(path: &str, data: &str, has_header: bool) -> ToolResult {
         for row in &rows {
             if let Err(e) = writer.write_record(row) {
                 return ToolResult {
-                    success: false, output: String::new(), error: Some(format!("write row failed: {}", e)), duration_ms: started.elapsed().as_millis(),
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!("write row failed: {}", e)),
+                    duration_ms: started.elapsed().as_millis(),
                 };
             }
         }
@@ -98,12 +127,23 @@ pub async fn csv_write(path: &str, data: &str, has_header: bool) -> ToolResult {
     match writer.flush() {
         Ok(_) => ToolResult {
             success: true,
-            output: format!("Wrote {} rows to {}", if has_header { rows.len() - 1 } else { rows.len() }, path),
+            output: format!(
+                "Wrote {} rows to {}",
+                if has_header {
+                    rows.len() - 1
+                } else {
+                    rows.len()
+                },
+                path
+            ),
             error: None,
             duration_ms: started.elapsed().as_millis(),
         },
         Err(e) => ToolResult {
-            success: false, output: String::new(), error: Some(format!("flush failed: {}", e)), duration_ms: started.elapsed().as_millis(),
+            success: false,
+            output: String::new(),
+            error: Some(format!("flush failed: {}", e)),
+            duration_ms: started.elapsed().as_millis(),
         },
     }
 }

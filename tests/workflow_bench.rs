@@ -13,11 +13,17 @@ fn _build_provider(model: &str) -> (Box<dyn volt::llm::LLMProvider>, String) {
     let provider: Box<dyn volt::llm::LLMProvider> = match route.kind {
         volt::orchestrator::ProviderKind::Anthropic => {
             Box::new(volt::llm::anthropic::AnthropicProvider::new(
-                route.api_key, Some(route.base_url), "bench-agent".into(),
+                route.api_key,
+                Some(route.base_url),
+                "bench-agent".into(),
             ))
         }
         volt::orchestrator::ProviderKind::OpenAI => {
-            Box::new(volt::llm::openai::OpenAIProvider::new(route.api_key, route.base_url, "bench-agent".into()))
+            Box::new(volt::llm::openai::OpenAIProvider::new(
+                route.api_key,
+                route.base_url,
+                "bench-agent".into(),
+            ))
         }
     };
     (provider, kind_str.to_string())
@@ -108,92 +114,195 @@ async fn test_all_tools_direct_benchmarks() {
 
     // ── 1. bash tool ──
     let started = Instant::now();
-    let res = volt::tools::bash::execute_bash("echo 'hello world' && rustc --version && cargo --version").await;
-    results.push(("bash".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    let res =
+        volt::tools::bash::execute_bash("echo 'hello world' && rustc --version && cargo --version")
+            .await;
+    results.push((
+        "bash".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 2. read tool ──
     let started = Instant::now();
     let res = volt::tools::read_tool::read_file("Cargo.toml").await;
-    results.push(("read_file".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "read_file".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 3. write tool ──
     let started = Instant::now();
-    let res = volt::tools::write_tool::write_file("_bench_test_write.txt", "benchmark write test").await;
-    results.push(("write_file".to_string(), started.elapsed().as_millis(), res.success, 0));
+    let res =
+        volt::tools::write_tool::write_file("_bench_test_write.txt", "benchmark write test").await;
+    results.push((
+        "write_file".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        0,
+    ));
 
     // ── 4. edit tool ──
     let started = Instant::now();
-    let res = volt::tools::edit::edit_file("_bench_test_write.txt", "benchmark", "benchmark-edited").await;
-    results.push(("edit_file".to_string(), started.elapsed().as_millis(), res.success, 0));
+    let res =
+        volt::tools::edit::edit_file("_bench_test_write.txt", "benchmark", "benchmark-edited")
+            .await;
+    results.push((
+        "edit_file".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        0,
+    ));
 
     // ── 5. glob tool ──
     let started = Instant::now();
     let res = volt::tools::glob_tool::glob_files("*.rs", "src/tools").await;
-    results.push(("glob_files".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "glob_files".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 6. grep tool ──
     let started = Instant::now();
     let res = volt::tools::grep_tool::grep_files("pub async fn", "src/tools").await;
-    results.push(("grep_files".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "grep_files".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 7. web_fetch tool ──
     let started = Instant::now();
     let res = volt::tools::web_tool::web_fetch("https://httpbin.org/get").await;
-    results.push(("web_fetch".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "web_fetch".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 8. json_validate tool ──
     let started = Instant::now();
     let res = volt::tools::json_tool::json_validate(r#"{"name":"volt","version":"0.1.0"}"#).await;
-    results.push(("json_validate".to_string(), started.elapsed().as_millis(), res.success, 0));
+    results.push((
+        "json_validate".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        0,
+    ));
 
     // ── 9. json_prettify tool ──
     let started = Instant::now();
     let res = volt::tools::json_tool::json_prettify(r#"{"a":1,"b":{"c":2}}"#, 2).await;
-    results.push(("json_prettify".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "json_prettify".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 10. json_query tool ──
     let started = Instant::now();
-    let res = volt::tools::json_tool::json_query(r#"{"store":{"book":[{"title":"Rust Book"}]}}"#, "store.book[0].title").await;
-    results.push(("json_query".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    let res = volt::tools::json_tool::json_query(
+        r#"{"store":{"book":[{"title":"Rust Book"}]}}"#,
+        "store.book[0].title",
+    )
+    .await;
+    results.push((
+        "json_query".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 11. csv_write + csv_read ──
     let started = Instant::now();
     let csv_data = "name,role,model\nagent1,fs,gpt-4\nagent2,data,claude-3\nagent3,system,groq-llama\nagent4,web,gpt-4o\nagent5,memory,groq-mixtral";
     let w = volt::tools::csv_tool::csv_write("_bench_agents.csv", csv_data, true).await;
     let r = volt::tools::csv_tool::csv_read("_bench_agents.csv", true).await;
-    results.push(("csv_readwrite".to_string(), started.elapsed().as_millis(), w.success && r.success, r.output.len()));
+    results.push((
+        "csv_readwrite".to_string(),
+        started.elapsed().as_millis(),
+        w.success && r.success,
+        r.output.len(),
+    ));
 
     // ── 12. archive_create + archive_extract ──
     let started = Instant::now();
-    let arc = volt::tools::archive_tool::archive_create("_bench_archive.tar.gz", &["_bench_test_write.txt".to_string()], "tar.gz").await;
-    let ext = volt::tools::archive_tool::archive_extract("_bench_archive.tar.gz", "_bench_extracted").await;
-    results.push(("archive_create_extract".to_string(), started.elapsed().as_millis(), arc.success && ext.success, 0));
+    let arc = volt::tools::archive_tool::archive_create(
+        "_bench_archive.tar.gz",
+        &["_bench_test_write.txt".to_string()],
+        "tar.gz",
+    )
+    .await;
+    let ext =
+        volt::tools::archive_tool::archive_extract("_bench_archive.tar.gz", "_bench_extracted")
+            .await;
+    results.push((
+        "archive_create_extract".to_string(),
+        started.elapsed().as_millis(),
+        arc.success && ext.success,
+        0,
+    ));
 
     // ── 13. memory_append ──
     let started = Instant::now();
-    let res = volt::tools::memory_tool::memory_append("benchmark", "tool benchmark completed successfully").await;
-    results.push(("memory_append".to_string(), started.elapsed().as_millis(), res.success, 0));
+    let res = volt::tools::memory_tool::memory_append(
+        "benchmark",
+        "tool benchmark completed successfully",
+    )
+    .await;
+    results.push((
+        "memory_append".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        0,
+    ));
 
     // ── 14. todo_add ──
     let started = Instant::now();
     let res = volt::tools::todo_tool::todo_add("Run comprehensive tool benchmarks").await;
-    results.push(("todo_add".to_string(), started.elapsed().as_millis(), res.success, 0));
+    results.push((
+        "todo_add".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        0,
+    ));
 
     // ── 15. web_scrape (targeting a simple page) ──
     let started = Instant::now();
     let res = volt::tools::scrape_tool::web_scrape("https://httpbin.org/html", "h1").await;
-    results.push(("web_scrape".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "web_scrape".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── 16. web_scrape_all ──
     let started = Instant::now();
     let res = volt::tools::scrape_tool::web_scrape_all("https://httpbin.org/html").await;
-    results.push(("web_scrape_all".to_string(), started.elapsed().as_millis(), res.success, res.output.len()));
+    results.push((
+        "web_scrape_all".to_string(),
+        started.elapsed().as_millis(),
+        res.success,
+        res.output.len(),
+    ));
 
     // ── Print results ──
     println!("\n{}", "=".repeat(100));
     println!("{:^100}", "TOOL BENCHMARK RESULTS");
     println!("{}", "=".repeat(100));
-    println!("{:<30} {:>15} {:>15} {:>15}", "Tool", "Time (ms)", "Success", "Output Size");
+    println!(
+        "{:<30} {:>15} {:>15} {:>15}",
+        "Tool", "Time (ms)", "Success", "Output Size"
+    );
     println!("{}", "-".repeat(100));
     let mut total_ms = 0u128;
     let mut passed = 0u32;
@@ -202,10 +311,21 @@ async fn test_all_tools_direct_benchmarks() {
         let status = if *ok { "PASS" } else { "FAIL" };
         println!("{:<30} {:>15} {:>15} {:>15}", name, ms, status, size);
         total_ms += ms;
-        if *ok { passed += 1; } else { failed += 1; }
+        if *ok {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
     }
     println!("{}", "-".repeat(100));
-    println!("{:<30} {:>15} {:>15}/{:>5} {:>15}", "TOTAL", total_ms, passed, passed + failed, "");
+    println!(
+        "{:<30} {:>15} {:>15}/{:>5} {:>15}",
+        "TOTAL",
+        total_ms,
+        passed,
+        passed + failed,
+        ""
+    );
     println!("{}\n", "=".repeat(100));
 
     // Cleanup temp files
@@ -224,7 +344,9 @@ async fn test_parallel_multi_agent_workflow() {
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((k, v)) = line.split_once('=') {
                 std::env::set_var(k.trim(), v.trim());
             }
@@ -260,16 +382,29 @@ async fn test_parallel_multi_agent_workflow() {
         Ok(wf_result) => {
             let total_prompt: u64 = wf_result.steps.iter().map(|s| s.prompt_tokens).sum();
             let total_completion: u64 = wf_result.steps.iter().map(|s| s.completion_tokens).sum();
-            println!("\nTotal workflow duration: {} ms", wf_result.total_duration_ms);
+            println!(
+                "\nTotal workflow duration: {} ms",
+                wf_result.total_duration_ms
+            );
             println!("Steps completed: {}", wf_result.steps.len());
-            println!("Total tokens: {} prompt + {} completion = {} total",
-                total_prompt, total_completion, total_prompt + total_completion);
+            println!(
+                "Total tokens: {} prompt + {} completion = {} total",
+                total_prompt,
+                total_completion,
+                total_prompt + total_completion
+            );
             println!();
             for (i, step) in wf_result.steps.iter().enumerate() {
                 let status = if step.success { "PASS" } else { "FAIL" };
-                println!("  Step {}: [{}] {} ({} ms, {}P+{}C tokens)",
-                    i + 1, status, step.agent_name, step.duration_ms,
-                    step.prompt_tokens, step.completion_tokens);
+                println!(
+                    "  Step {}: [{}] {} ({} ms, {}P+{}C tokens)",
+                    i + 1,
+                    status,
+                    step.agent_name,
+                    step.duration_ms,
+                    step.prompt_tokens,
+                    step.completion_tokens
+                );
                 let preview: String = step.output.chars().take(200).collect();
                 if !preview.is_empty() {
                     println!("    Output preview: {}", preview);
@@ -277,7 +412,10 @@ async fn test_parallel_multi_agent_workflow() {
                 println!();
             }
             println!("{}", "-".repeat(100));
-            println!("Final output:\n{}", wf_result.final_output.chars().take(500).collect::<String>());
+            println!(
+                "Final output:\n{}",
+                wf_result.final_output.chars().take(500).collect::<String>()
+            );
             println!("{}", "-".repeat(100));
         }
         Err(e) => {
@@ -298,7 +436,9 @@ async fn test_pipeline_workflow() {
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((k, v)) = line.split_once('=') {
                 std::env::set_var(k.trim(), v.trim());
             }
@@ -333,20 +473,36 @@ async fn test_pipeline_workflow() {
         Ok(wf_result) => {
             let total_prompt: u64 = wf_result.steps.iter().map(|s| s.prompt_tokens).sum();
             let total_completion: u64 = wf_result.steps.iter().map(|s| s.completion_tokens).sum();
-            println!("\nTotal workflow duration: {} ms", wf_result.total_duration_ms);
+            println!(
+                "\nTotal workflow duration: {} ms",
+                wf_result.total_duration_ms
+            );
             println!("Steps completed: {}", wf_result.steps.len());
-            println!("Total tokens: {} prompt + {} completion = {} total",
-                total_prompt, total_completion, total_prompt + total_completion);
+            println!(
+                "Total tokens: {} prompt + {} completion = {} total",
+                total_prompt,
+                total_completion,
+                total_prompt + total_completion
+            );
             println!();
             for (i, step) in wf_result.steps.iter().enumerate() {
                 let status = if step.success { "PASS" } else { "FAIL" };
-                println!("  Stage {}: [{}] {} ({} ms, {}P+{}C tokens)",
-                    i + 1, status, step.agent_name, step.duration_ms,
-                    step.prompt_tokens, step.completion_tokens);
+                println!(
+                    "  Stage {}: [{}] {} ({} ms, {}P+{}C tokens)",
+                    i + 1,
+                    status,
+                    step.agent_name,
+                    step.duration_ms,
+                    step.prompt_tokens,
+                    step.completion_tokens
+                );
             }
             println!();
             println!("{}", "-".repeat(100));
-            println!("Final output:\n{}", wf_result.final_output.chars().take(800).collect::<String>());
+            println!(
+                "Final output:\n{}",
+                wf_result.final_output.chars().take(800).collect::<String>()
+            );
             println!("{}", "-".repeat(100));
         }
         Err(e) => {

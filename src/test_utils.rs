@@ -80,6 +80,14 @@ pub async fn test_tool_registry() -> Arc<crate::tools::ToolRegistry> {
             }
         })
     });
-    registry.register("echo", "Echo tool", serde_json::json!({"type":"object"}), "test", echo_fn).await;
+    registry
+        .register(
+            "echo",
+            "Echo tool",
+            serde_json::json!({"type":"object"}),
+            "test",
+            echo_fn,
+        )
+        .await;
     registry
 }

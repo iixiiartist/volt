@@ -8,7 +8,10 @@ const SEARCHHQ_URL: &str = "https://searchhq.setique.com/.netlify/functions/mcp-
 
 /// Register all SearchHQ MCP tools into Volt's ToolRegistry with embeddings.
 /// Returns the count of tools registered.
-pub async fn register_searchhq_tools(registry: &ToolRegistry, api_token: &str) -> anyhow::Result<usize> {
+pub async fn register_searchhq_tools(
+    registry: &ToolRegistry,
+    api_token: &str,
+) -> anyhow::Result<usize> {
     let transport = MCPTransport::Http {
         url: SEARCHHQ_URL.into(),
         headers: None,
@@ -36,7 +39,9 @@ pub async fn register_searchhq_tools(registry: &ToolRegistry, api_token: &str) -
             .register(
                 &format!("searchhq_{}", name),
                 &format!("[SearchHQ] {} — {}", name, description),
-                if input_schema.is_object() { input_schema } else {
+                if input_schema.is_object() {
+                    input_schema
+                } else {
                     serde_json::json!({"type": "object", "properties": {}})
                 },
                 "searchhq-mcp",
@@ -48,7 +53,8 @@ pub async fn register_searchhq_tools(registry: &ToolRegistry, api_token: &str) -
                         match client.call_tool(&tool_name, &args).await {
                             Ok(result) => ToolResult {
                                 success: true,
-                                output: serde_json::to_string_pretty(&result["result"]).unwrap_or_default(),
+                                output: serde_json::to_string_pretty(&result["result"])
+                                    .unwrap_or_default(),
                                 error: None,
                                 duration_ms: started.elapsed().as_millis(),
                             },

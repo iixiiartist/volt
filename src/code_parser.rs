@@ -32,7 +32,8 @@ pub fn parse_file(file_path: &str, content: &str) -> Option<CodeArtifact> {
         }
         "ts" | "tsx" | "js" | "jsx" => {
             let mut p = Parser::new();
-            p.set_language(&tree_sitter_typescript::LANGUAGE.into()).ok()?;
+            p.set_language(&tree_sitter_typescript::LANGUAGE.into())
+                .ok()?;
             ("TypeScript/JavaScript", p)
         }
         _ => return None,
@@ -60,16 +61,22 @@ fn extract_symbols(node: tree_sitter::Node, source: &str, artifact: &mut CodeArt
     match kind {
         "function_declaration" | "function_item" | "method_declaration" => {
             if let Some(name) = node.child_by_field_name("name") {
-                artifact.functions.push(name.utf8_text(source.as_bytes()).unwrap_or("").to_string());
+                artifact
+                    .functions
+                    .push(name.utf8_text(source.as_bytes()).unwrap_or("").to_string());
             }
         }
         "class_declaration" | "class_item" => {
             if let Some(name) = node.child_by_field_name("name") {
-                artifact.classes.push(name.utf8_text(source.as_bytes()).unwrap_or("").to_string());
+                artifact
+                    .classes
+                    .push(name.utf8_text(source.as_bytes()).unwrap_or("").to_string());
             }
         }
         "import_statement" | "import_declaration" | "use_declaration" => {
-            artifact.imports.push(node.utf8_text(source.as_bytes()).unwrap_or("").to_string());
+            artifact
+                .imports
+                .push(node.utf8_text(source.as_bytes()).unwrap_or("").to_string());
         }
         _ => {}
     }

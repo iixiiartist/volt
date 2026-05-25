@@ -245,8 +245,7 @@ impl AutoSeedWorker {
                     .map(|entry| {
                         let sem = sem.clone();
                         let embedder = self.embedder.clone();
-                        let text =
-                            format!("{}: {}", entry.kind.as_str(), entry.content);
+                        let text = format!("{}: {}", entry.kind.as_str(), entry.content);
                         async move {
                             let _permit = sem.acquire().await.ok();
                             let emb = embedder.embed_description(&text).await.ok();
@@ -256,8 +255,7 @@ impl AutoSeedWorker {
                     .collect();
 
                 let results = futures::future::join_all(embed_futures).await;
-                let mut embedded_entries: Vec<ContextEntry> =
-                    Vec::with_capacity(results.len());
+                let mut embedded_entries: Vec<ContextEntry> = Vec::with_capacity(results.len());
                 for (mut entry, embedding) in results {
                     entry.embedding = embedding;
                     embedded_entries.push(entry);
@@ -342,10 +340,7 @@ impl AutoSeedWorker {
 
 // ── Auto-seed pre-warm: all context fields ─────────────────────────────────
 
-pub async fn seed_from_workspace(
-    store: &Arc<ContextStore>,
-    embedder: &EmbeddingClient,
-) {
+pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &EmbeddingClient) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     let seed_files = [
@@ -379,7 +374,10 @@ pub async fn seed_from_workspace(
     if !entries.is_empty() {
         store.seed_batch(entries).await;
         store.compute_embeddings(embedder).await;
-        info!("[volt worker] seeded {} workspace files into ContextStore", seed_files.len());
+        info!(
+            "[volt worker] seeded {} workspace files into ContextStore",
+            seed_files.len()
+        );
     }
 }
 
@@ -426,14 +424,14 @@ pub async fn seed_tool_intents(
     if !entries.is_empty() {
         store.seed_batch(entries).await;
         store.compute_embeddings(embedder).await;
-        info!("[volt worker] seeded {} tool intents into ContextStore", total);
+        info!(
+            "[volt worker] seeded {} tool intents into ContextStore",
+            total
+        );
     }
 }
 
-pub async fn seed_permissions(
-    store: &Arc<ContextStore>,
-    tools: &Arc<ToolRegistry>,
-) {
+pub async fn seed_permissions(store: &Arc<ContextStore>, tools: &Arc<ToolRegistry>) {
     let defs = tools.get_definitions().await;
     let mut entries: Vec<ContextEntry> = Vec::new();
 
@@ -472,7 +470,10 @@ pub async fn seed_permissions(
     if !entries.is_empty() {
         let count = entries.len();
         store.seed_batch(entries).await;
-        info!("[volt worker] seeded {} permission rules into ContextStore", count);
+        info!(
+            "[volt worker] seeded {} permission rules into ContextStore",
+            count
+        );
     }
 }
 
@@ -546,7 +547,10 @@ pub async fn seed_skills_from_db(
             let count = entries.len();
             store.seed_batch(entries).await;
             store.compute_embeddings(embedder).await;
-            info!("[volt worker] seeded {} skills from DB into ContextStore", count);
+            info!(
+                "[volt worker] seeded {} skills from DB into ContextStore",
+                count
+            );
         }
     }
 }

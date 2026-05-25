@@ -5,7 +5,11 @@ pub async fn memory_append(kind: &str, content: &str) -> ToolResult {
     let started = Instant::now();
     let path = "MEMORY.md";
     let entry = format!("## {}\n{}\n\n", kind, content);
-    match std::fs::OpenOptions::new().append(true).create(true).open(path) {
+    match std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+    {
         Ok(mut file) => {
             use std::io::Write;
             if let Err(e) = writeln!(file, "{}", entry) {

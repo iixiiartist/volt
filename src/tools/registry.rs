@@ -4,7 +4,8 @@ use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub type ToolFn = Arc<dyn Fn(Value) -> futures::future::BoxFuture<'static, ToolResult> + Send + Sync>;
+pub type ToolFn =
+    Arc<dyn Fn(Value) -> futures::future::BoxFuture<'static, ToolResult> + Send + Sync>;
 
 pub struct ToolRegistry {
     tools: DashMap<String, RegisteredTool>,
@@ -32,8 +33,15 @@ impl ToolRegistry {
         category: &str,
         exec: ToolFn,
     ) {
-        self.register_with_permission(name, description, input_schema, category, exec, PermissionLevel::Allow)
-            .await;
+        self.register_with_permission(
+            name,
+            description,
+            input_schema,
+            category,
+            exec,
+            PermissionLevel::Allow,
+        )
+        .await;
     }
 
     pub async fn register_with_permission(
@@ -146,7 +154,8 @@ impl ToolRegistry {
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut result: Vec<ToolDefinition> = scored.into_iter().take(limit).map(|(_, d)| d).collect();
+        let mut result: Vec<ToolDefinition> =
+            scored.into_iter().take(limit).map(|(_, d)| d).collect();
 
         for name in essential {
             if !result.iter().any(|d| d.name == *name) {

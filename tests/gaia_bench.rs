@@ -6,7 +6,11 @@ use volt::tools::ToolRegistry;
 
 const GAIA_QUESTIONS: &[(&str, &str, &[&str])] = &[
     ("gaia_0", "What is the capital of France?", &["Paris"]),
-    ("gaia_1", "What is the chemical formula for water?", &["H2O", "H₂O"]),
+    (
+        "gaia_1",
+        "What is the chemical formula for water?",
+        &["H2O", "H₂O"],
+    ),
     ("gaia_2", "What year did World War II end?", &["1945"]),
 ];
 
@@ -17,7 +21,11 @@ fn build_tools() -> Arc<ToolRegistry> {
 
 fn build_provider() -> Box<dyn volt::llm::LLMProvider> {
     let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant");
-    Box::new(volt::llm::openai::OpenAIProvider::new(route.api_key, route.base_url, "gaia-bench".into()))
+    Box::new(volt::llm::openai::OpenAIProvider::new(
+        route.api_key,
+        route.base_url,
+        "gaia-bench".into(),
+    ))
 }
 
 #[tokio::test]
@@ -26,7 +34,9 @@ async fn test_gaia_smoke() {
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((k, v)) = line.split_once('=') {
                 std::env::set_var(k.trim(), v.trim());
             }
@@ -67,17 +77,32 @@ async fn test_gaia_smoke() {
         let passed = match &result {
             Ok(output) => {
                 let out_lower = output.to_lowercase();
-                expected_keywords.iter().all(|k| out_lower.contains(&k.to_lowercase()))
+                expected_keywords
+                    .iter()
+                    .all(|k| out_lower.contains(&k.to_lowercase()))
             }
             Err(_) => false,
         };
 
-        if passed { correct += 1; }
+        if passed {
+            correct += 1;
+        }
         let status = if passed { "PASS" } else { "FAIL" };
-        println!("  [{}/{}] {} | {} | {}ms", i + 1, total, status, qid, duration);
+        println!(
+            "  [{}/{}] {} | {} | {}ms",
+            i + 1,
+            total,
+            status,
+            qid,
+            duration
+        );
         if !passed {
             match &result {
-                Ok(out) => println!("         expected keywords: {:?} | got: {}", expected_keywords, out.trim().chars().take(120).collect::<String>()),
+                Ok(out) => println!(
+                    "         expected keywords: {:?} | got: {}",
+                    expected_keywords,
+                    out.trim().chars().take(120).collect::<String>()
+                ),
                 Err(e) => println!("         error: {}", e),
             }
         }

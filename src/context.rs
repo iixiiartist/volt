@@ -86,7 +86,10 @@ impl ContextEntry {
         } else {
             0.5
         };
-        0.4 * recency + 0.3 * success + 0.2 * freq + 0.1 * (self.content.len() as f32 / 1000.0).min(1.0)
+        0.4 * recency
+            + 0.3 * success
+            + 0.2 * freq
+            + 0.1 * (self.content.len() as f32 / 1000.0).min(1.0)
     }
 }
 
@@ -198,9 +201,7 @@ impl ContextStore {
             .iter()
             .filter(|s| {
                 s.entry.embedding.is_some()
-                    && kind_filter
-                        .as_ref()
-                        .map_or(true, |k| s.entry.kind == *k)
+                    && kind_filter.as_ref().map_or(true, |k| s.entry.kind == *k)
             })
             .map(|s| {
                 let emb = s.entry.embedding.as_ref().unwrap();
@@ -231,8 +232,7 @@ impl ContextStore {
             s.entry.usage_count += 1;
             let count = s.entry.usage_count as f32;
             let rate = s.entry.success_rate;
-            s.entry.success_rate =
-                (rate * (count - 1.0) + if success { 1.0 } else { 0.0 }) / count;
+            s.entry.success_rate = (rate * (count - 1.0) + if success { 1.0 } else { 0.0 }) / count;
         }
     }
 
@@ -254,7 +254,9 @@ impl ContextStore {
 
     /// Load existing context entries from PostgreSQL into the in-memory store.
     pub async fn hydrate_from_db(&self, limit: i64) -> anyhow::Result<usize> {
-        let db = self.db().ok_or_else(|| anyhow::anyhow!("no database connection configured"))?;
+        let db = self
+            .db()
+            .ok_or_else(|| anyhow::anyhow!("no database connection configured"))?;
         let entries = crate::db::load_context_entries(db, limit).await?;
         let count = entries.len();
         let mut store = self.entries.write().await;
@@ -301,7 +303,9 @@ impl ContextStore {
                 }
             }
 
-            store.push(StoredEntry { entry: entry.clone() });
+            store.push(StoredEntry {
+                entry: entry.clone(),
+            });
             inserted += 1;
 
             // Persist to PostgreSQL if available
@@ -326,10 +330,7 @@ impl ContextStore {
             // 3. Per-kind quota enforcement
             let mut kind_counts: HashMap<ContextKind, Vec<usize>> = HashMap::new();
             for (i, s) in store.iter().enumerate() {
-                kind_counts
-                    .entry(s.entry.kind.clone())
-                    .or_default()
-                    .push(i);
+                kind_counts.entry(s.entry.kind.clone()).or_default().push(i);
             }
 
             let mut indices_to_remove: Vec<usize> = Vec::new();
@@ -363,7 +364,12 @@ impl ContextStore {
 
     /// Find clusters of the same kind with cosine ≥ threshold.
     /// Returns groups of entry indices that should be merged.
-    pub async fn find_clusters(&self, kind: ContextKind, threshold: f32, min_cluster: usize) -> Vec<Vec<usize>> {
+    pub async fn find_clusters(
+        &self,
+        kind: ContextKind,
+        threshold: f32,
+        min_cluster: usize,
+    ) -> Vec<Vec<usize>> {
         let entries = self.entries.read().await;
         let mut clusters: Vec<Vec<usize>> = Vec::new();
         let mut visited = vec![false; entries.len()];
@@ -377,7 +383,10 @@ impl ContextStore {
             let emb_i = entries[i].entry.embedding.as_ref().unwrap();
 
             for j in (i + 1)..entries.len() {
-                if visited[j] || entries[j].entry.kind != kind || entries[j].entry.embedding.is_none() {
+                if visited[j]
+                    || entries[j].entry.kind != kind
+                    || entries[j].entry.embedding.is_none()
+                {
                     continue;
                 }
                 let emb_j = entries[j].entry.embedding.as_ref().unwrap();

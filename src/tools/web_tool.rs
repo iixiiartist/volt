@@ -53,10 +53,17 @@ pub fn validate_url(url_str: &str) -> Result<Url, String> {
 
     match parsed.scheme() {
         "http" | "https" => {}
-        scheme => return Err(format!("disallowed URL scheme '{}'; only http/https allowed", scheme)),
+        scheme => {
+            return Err(format!(
+                "disallowed URL scheme '{}'; only http/https allowed",
+                scheme
+            ))
+        }
     }
 
-    let host = parsed.host_str().ok_or_else(|| "URL missing host".to_string())?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL missing host".to_string())?;
 
     if let Some(port) = parsed.port() {
         if port == 25 || port == 137 || port == 138 || port == 139 || port == 445 {
@@ -107,7 +114,11 @@ pub async fn web_fetch(url: &str) -> ToolResult {
                 Ok(body) => ToolResult {
                     success: status.is_success(),
                     output: body,
-                    error: if status.is_success() { None } else { Some(format!("HTTP {}", status)) },
+                    error: if status.is_success() {
+                        None
+                    } else {
+                        Some(format!("HTTP {}", status))
+                    },
                     duration_ms: started.elapsed().as_millis(),
                 },
                 Err(e) => ToolResult {

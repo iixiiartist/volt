@@ -57,7 +57,9 @@ impl SkillRegistry {
                     scored.push((sim, skill.clone()));
                 }
             }
-            scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.sort_unstable_by(|a, b| {
+                b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+            });
             scored.truncate(limit);
             scored.into_iter().map(|(_, s)| s).collect()
         } else {

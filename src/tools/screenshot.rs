@@ -23,7 +23,9 @@ mod capture_impl {
         type Error = Box<dyn std::error::Error + Send + Sync>;
 
         fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
-            Ok(Self { result_tx: Some(ctx.flags) })
+            Ok(Self {
+                result_tx: Some(ctx.flags),
+            })
         }
 
         fn on_frame_arrived(

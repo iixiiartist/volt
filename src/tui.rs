@@ -1,7 +1,9 @@
 use crate::agent::loop_rs::Agent;
 use crate::models::{CancelToken, Session};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -75,7 +77,8 @@ impl TuiChat {
     pub async fn run(agent: &Agent) -> anyhow::Result<()> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
         terminal.clear()?;
 
         let cancel = CancelToken::new();
@@ -86,11 +89,10 @@ impl TuiChat {
         });
 
         let mut chat = TuiChat::new(cancel);
-        let sessions_pool = crate::session::open_sessions(
-            &std::path::PathBuf::from("volt_sessions.db"),
-        )
-        .await
-        .ok();
+        let sessions_pool =
+            crate::session::open_sessions(&std::path::PathBuf::from("volt_sessions.db"))
+                .await
+                .ok();
 
         chat.load_agent_messages(agent).await;
 
@@ -150,7 +152,11 @@ impl TuiChat {
         false
     }
 
-    async fn handle_agent_response(&mut self, agent: &Agent, sessions_pool: &Option<sqlx::SqlitePool>) {
+    async fn handle_agent_response(
+        &mut self,
+        agent: &Agent,
+        sessions_pool: &Option<sqlx::SqlitePool>,
+    ) {
         let input = self.input.clone();
         let result = agent.run(&input).await;
 
@@ -294,8 +300,7 @@ impl TuiChat {
             .collect();
 
         let title = format!(" Volt Agent Chat ({} msgs) ", self.messages.len());
-        let messages = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(title));
+        let messages = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
 
         let visible = area.height.saturating_sub(2) as usize;
         let total = self.messages.len();
@@ -330,7 +335,10 @@ impl TuiChat {
         if !self.is_thinking {
             let x = area.x + 1 + self.cursor_pos as u16;
             let y = area.y + 1;
-            f.set_cursor_position(ratatui::prelude::Position::new(x.min(area.right().saturating_sub(1)), y));
+            f.set_cursor_position(ratatui::prelude::Position::new(
+                x.min(area.right().saturating_sub(1)),
+                y,
+            ));
         }
     }
 }

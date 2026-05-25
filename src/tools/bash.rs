@@ -37,7 +37,11 @@ pub async fn execute_bash(command: &str) -> ToolResult {
             let success = out.status.success();
             ToolResult {
                 success,
-                output: if success { stdout } else { format!("stderr: {}", stderr) },
+                output: if success {
+                    stdout
+                } else {
+                    format!("stderr: {}", stderr)
+                },
                 error: if success { None } else { Some(stderr) },
                 duration_ms,
             }

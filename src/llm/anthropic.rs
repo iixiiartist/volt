@@ -94,15 +94,24 @@ impl LLMProvider for AnthropicProvider {
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "messages": messages
         });
-        if let Some(s) = system { body["system"] = json!(s); }
-        if let Some(ts) = &tools { body["tools"] = json!(ts); }
+        if let Some(s) = system {
+            body["system"] = json!(s);
+        }
+        if let Some(ts) = &tools {
+            body["tools"] = json!(ts);
+        }
 
         let resp: serde_json::Value = self
-            .http.post(&url)
+            .http
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
-            .send().await?.error_for_status()?.json().await?;
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
 
         parse_anthropic_response(resp)
     }
@@ -127,15 +136,22 @@ impl LLMProvider for AnthropicProvider {
             "stream": true,
             "messages": messages
         });
-        if let Some(s) = system { body["system"] = json!(s); }
-        if let Some(ts) = &tools { body["tools"] = json!(ts); }
+        if let Some(s) = system {
+            body["system"] = json!(s);
+        }
+        if let Some(ts) = &tools {
+            body["tools"] = json!(ts);
+        }
 
         let response = self
-            .http.post(&url)
+            .http
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
-            .send().await?.error_for_status()?;
+            .send()
+            .await?
+            .error_for_status()?;
 
         let mut full_content = String::new();
         let mut tool_calls_acc: Vec<ToolCall> = Vec::new();
@@ -150,7 +166,9 @@ impl LLMProvider for AnthropicProvider {
             let text = String::from_utf8_lossy(&chunk);
             for line in text.lines() {
                 let line = line.trim();
-                let Some(data) = line.strip_prefix("data: ") else { continue };
+                let Some(data) = line.strip_prefix("data: ") else {
+                    continue;
+                };
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
                     match val["type"].as_str() {
                         Some("content_block_delta") => {
@@ -159,11 +177,13 @@ impl LLMProvider for AnthropicProvider {
                                 on_token(text);
                             }
                             if let Some(input) = val["delta"]["partial_json"].as_str() {
-                                let id = val["delta"].get("id")
+                                let id = val["delta"]
+                                    .get("id")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                let name = val["delta"].get("name")
+                                let name = val["delta"]
+                                    .get("name")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
@@ -177,7 +197,9 @@ impl LLMProvider for AnthropicProvider {
                                         arguments: serde_json::from_str(input).unwrap_or_default(),
                                     });
                                 } else if let Some(ref mut current) = current_tool_call {
-                                    if let Ok(additional) = serde_json::from_str::<serde_json::Value>(input) {
+                                    if let Ok(additional) =
+                                        serde_json::from_str::<serde_json::Value>(input)
+                                    {
                                         if let Some(existing) = current.arguments.as_object_mut() {
                                             if let Some(additional_obj) = additional.as_object() {
                                                 for (k, v) in additional_obj {
@@ -197,7 +219,8 @@ impl LLMProvider for AnthropicProvider {
                             }
                         }
                         Some("message_delta") => {
-                            stop_reason = val["delta"]["stop_reason"].as_str().map(|s| s.to_string());
+                            stop_reason =
+                                val["delta"]["stop_reason"].as_str().map(|s| s.to_string());
                             if let Some(u) = val.get("usage") {
                                 output_tokens = u["output_tokens"].as_u64().unwrap_or(0) as u32;
                             }
@@ -219,7 +242,11 @@ impl LLMProvider for AnthropicProvider {
 
         Ok(LLMResponse {
             content: Arc::new(full_content),
-            tool_calls: if tool_calls_acc.is_empty() { None } else { Some(tool_calls_acc) },
+            tool_calls: if tool_calls_acc.is_empty() {
+                None
+            } else {
+                Some(tool_calls_acc)
+            },
             finish_reason: stop_reason,
             usage: Some(Usage {
                 prompt_tokens: input_tokens,
@@ -258,7 +285,11 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
 
     Ok(LLMResponse {
         content: Arc::new(content),
-        tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+        tool_calls: if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        },
         finish_reason: resp["stop_reason"].as_str().map(|s| s.to_string()),
         usage,
     })

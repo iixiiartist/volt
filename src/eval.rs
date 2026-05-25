@@ -32,10 +32,7 @@ pub struct EvalSummary {
     pub results: Vec<EvalResult>,
 }
 
-pub async fn run_suite(
-    suite: &EvalSuite,
-    agent: &Agent,
-) -> EvalSummary {
+pub async fn run_suite(suite: &EvalSuite, agent: &Agent) -> EvalSummary {
     let started = Instant::now();
     let mut results = Vec::with_capacity(suite.tasks.len());
 
@@ -83,13 +80,20 @@ pub async fn run_suite(
 
 pub fn print_summary(summary: &EvalSummary) {
     println!("\n=== Eval Suite: {} ===", summary.suite_name);
-    println!("Total: {}  Passed: {}  Failed: {}  Duration: {}ms",
-        summary.total, summary.passed, summary.failed, summary.total_duration_ms);
+    println!(
+        "Total: {}  Passed: {}  Failed: {}  Duration: {}ms",
+        summary.total, summary.passed, summary.failed, summary.total_duration_ms
+    );
     println!();
 
     for result in &summary.results {
         let status = if result.passed { "PASS" } else { "FAIL" };
-        println!("  [{}] {:?} ({}ms)", status, result.task.chars().take(60).collect::<String>(), result.duration_ms);
+        println!(
+            "  [{}] {:?} ({}ms)",
+            status,
+            result.task.chars().take(60).collect::<String>(),
+            result.duration_ms
+        );
         if !result.passed && !result.missing_substrings.is_empty() {
             for s in &result.missing_substrings {
                 println!("       missing: {:?}", s);

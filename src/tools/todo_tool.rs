@@ -5,7 +5,11 @@ pub async fn todo_add(task: &str) -> ToolResult {
     let started = Instant::now();
     let path = ".volt_tasks.md";
     let entry = format!("- [ ] {}\n", task);
-    match std::fs::OpenOptions::new().append(true).create(true).open(path) {
+    match std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+    {
         Ok(mut file) => {
             use std::io::Write;
             if let Err(e) = file.write_all(entry.as_bytes()) {

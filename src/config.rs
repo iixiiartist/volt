@@ -46,10 +46,12 @@ pub fn load_project_config() -> Option<ProjectConfig> {
         return None;
     }
     let content = std::fs::read_to_string(&path).ok()?;
-            toml::from_str(&content).map_err(|e| {
-                eprintln!("[config] warning: invalid .volt/config.toml: {}", e);
-                e
-            }).ok()
+    toml::from_str(&content)
+        .map_err(|e| {
+            eprintln!("[config] warning: invalid .volt/config.toml: {}", e);
+            e
+        })
+        .ok()
 }
 
 pub fn project_config_path() -> std::path::PathBuf {
@@ -59,7 +61,7 @@ pub fn project_config_path() -> std::path::PathBuf {
 /// Prompt the user for configuration if none exists.
 /// Returns true if a config file was written.
 pub fn first_run_wizard() -> bool {
-        // Skip if config already exists
+    // Skip if config already exists
     if project_config_path().exists() {
         return false;
     }
@@ -112,13 +114,23 @@ pub fn first_run_wizard() -> bool {
             std::io::stdout().flush().ok();
             let mut m = String::new();
             std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() { "llama-3.1-8b-instant" } else { m.trim() };
+            let m = if m.trim().is_empty() {
+                "llama-3.1-8b-instant"
+            } else {
+                m.trim()
+            };
             println!();
             print!("GROQ_API_KEY: ");
             std::io::stdout().flush().ok();
             let mut k = String::new();
             std::io::stdin().read_line(&mut k).ok();
-            (m.to_string(), "https://api.groq.com/openai/v1".to_string(), Some(k.trim().to_string()), "groq", "GROQ_API_KEY")
+            (
+                m.to_string(),
+                "https://api.groq.com/openai/v1".to_string(),
+                Some(k.trim().to_string()),
+                "groq",
+                "GROQ_API_KEY",
+            )
         }
         "3" => {
             println!();
@@ -126,13 +138,23 @@ pub fn first_run_wizard() -> bool {
             std::io::stdout().flush().ok();
             let mut m = String::new();
             std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() { "gpt-4o" } else { m.trim() };
+            let m = if m.trim().is_empty() {
+                "gpt-4o"
+            } else {
+                m.trim()
+            };
             println!();
             print!("OPENAI_API_KEY: ");
             std::io::stdout().flush().ok();
             let mut k = String::new();
             std::io::stdin().read_line(&mut k).ok();
-            (m.to_string(), "https://api.openai.com/v1".to_string(), Some(k.trim().to_string()), "openai", "OPENAI_API_KEY")
+            (
+                m.to_string(),
+                "https://api.openai.com/v1".to_string(),
+                Some(k.trim().to_string()),
+                "openai",
+                "OPENAI_API_KEY",
+            )
         }
         "4" => {
             println!();
@@ -140,13 +162,23 @@ pub fn first_run_wizard() -> bool {
             std::io::stdout().flush().ok();
             let mut m = String::new();
             std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() { "claude-sonnet-4-5" } else { m.trim() };
+            let m = if m.trim().is_empty() {
+                "claude-sonnet-4-5"
+            } else {
+                m.trim()
+            };
             println!();
             print!("ANTHROPIC_API_KEY: ");
             std::io::stdout().flush().ok();
             let mut k = String::new();
             std::io::stdin().read_line(&mut k).ok();
-            (m.to_string(), "https://api.anthropic.com".to_string(), Some(k.trim().to_string()), "anthropic", "ANTHROPIC_API_KEY")
+            (
+                m.to_string(),
+                "https://api.anthropic.com".to_string(),
+                Some(k.trim().to_string()),
+                "anthropic",
+                "ANTHROPIC_API_KEY",
+            )
         }
         "5" => {
             println!();
@@ -154,13 +186,23 @@ pub fn first_run_wizard() -> bool {
             std::io::stdout().flush().ok();
             let mut m = String::new();
             std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() { "nvidia/llama-nemotron-embed-1b-v2" } else { m.trim() };
+            let m = if m.trim().is_empty() {
+                "nvidia/llama-nemotron-embed-1b-v2"
+            } else {
+                m.trim()
+            };
             println!();
             print!("NVIDIA_API_KEY (or LLM_API_KEY): ");
             std::io::stdout().flush().ok();
             let mut k = String::new();
             std::io::stdin().read_line(&mut k).ok();
-            (m.to_string(), "https://integrate.api.nvidia.com/v1".to_string(), Some(k.trim().to_string()), "nvidia", "NVIDIA_API_KEY")
+            (
+                m.to_string(),
+                "https://integrate.api.nvidia.com/v1".to_string(),
+                Some(k.trim().to_string()),
+                "nvidia",
+                "NVIDIA_API_KEY",
+            )
         }
         _ => {
             println!();
@@ -168,13 +210,21 @@ pub fn first_run_wizard() -> bool {
             std::io::stdout().flush().ok();
             let mut m = String::new();
             std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() { "phi4-mini:3.8b" } else { m.trim() };
+            let m = if m.trim().is_empty() {
+                "phi4-mini:3.8b"
+            } else {
+                m.trim()
+            };
             println!();
             print!("Ollama base URL [http://localhost:11434/v1]: ");
             std::io::stdout().flush().ok();
             let mut u = String::new();
             std::io::stdin().read_line(&mut u).ok();
-            let u = if u.trim().is_empty() { "http://localhost:11434/v1" } else { u.trim() };
+            let u = if u.trim().is_empty() {
+                "http://localhost:11434/v1"
+            } else {
+                u.trim()
+            };
             (m.to_string(), u.to_string(), None, "ollama", "LLM_BASE_URL")
         }
     };
@@ -189,8 +239,16 @@ pub fn first_run_wizard() -> bool {
     let mut emb_choice = String::new();
     std::io::stdin().read_line(&mut emb_choice).ok();
     let (emb_model, emb_provider, emb_endpoint) = match emb_choice.trim() {
-        "2" => ("nvidia/llama-nemotron-embed-1b-v2".to_string(), "nvidia".to_string(), "https://integrate.api.nvidia.com/v1/embeddings".to_string()),
-        _ => ("mxbai-embed-large".to_string(), "ollama".to_string(), "http://localhost:11434/v1".to_string()),
+        "2" => (
+            "nvidia/llama-nemotron-embed-1b-v2".to_string(),
+            "nvidia".to_string(),
+            "https://integrate.api.nvidia.com/v1/embeddings".to_string(),
+        ),
+        _ => (
+            "mxbai-embed-large".to_string(),
+            "ollama".to_string(),
+            "http://localhost:11434/v1".to_string(),
+        ),
     };
 
     // ── Database ──────────────────────────────────────────────
@@ -203,7 +261,11 @@ pub fn first_run_wizard() -> bool {
     std::io::stdout().flush().ok();
     let mut db_url = String::new();
     std::io::stdin().read_line(&mut db_url).ok();
-    let db_url = if db_url.trim().is_empty() { "postgres://volt:volt@localhost:5432/volt" } else { db_url.trim() };
+    let db_url = if db_url.trim().is_empty() {
+        "postgres://volt:volt@localhost:5432/volt"
+    } else {
+        db_url.trim()
+    };
 
     // ── Write config ──────────────────────────────────────────
     let config_dir = std::path::Path::new(".volt");
@@ -309,26 +371,60 @@ impl Settings {
     pub fn from_env() -> anyhow::Result<Self> {
         let project = load_project_config();
 
-        let database_url = env::var("DATABASE_URL").ok()
-            .or_else(|| project.as_ref().and_then(|p| p.database.as_ref()).and_then(|d| d.url.clone()))
-            .ok_or_else(|| anyhow::anyhow!("DATABASE_URL must be set (e.g. postgres://user:pass@host/db)"))?;
+        let database_url = env::var("DATABASE_URL")
+            .ok()
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.database.as_ref())
+                    .and_then(|d| d.url.clone())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("DATABASE_URL must be set (e.g. postgres://user:pass@host/db)")
+            })?;
         let registry_base_url = env::var("VOLT_REGISTRY_BASE_URL")
             .unwrap_or_else(|_| "https://registry.voltagents.com/v1".to_string());
-        let registry_token = env::var("VOLT_REGISTRY_TOKEN").ok().filter(|v| !v.is_empty());
-
-        let embedding_api_key = env::var("EMBEDDING_API_KEY").ok()
-            .or_else(|| env::var("KIMI_API_KEY").ok())
-            .or_else(|| project.as_ref().and_then(|p| p.embedding.as_ref()).and_then(|e| e.api_key.clone()))
+        let registry_token = env::var("VOLT_REGISTRY_TOKEN")
+            .ok()
             .filter(|v| !v.is_empty());
-        let embedding_model = env::var("EMBEDDING_MODEL").ok()
+
+        let embedding_api_key = env::var("EMBEDDING_API_KEY")
+            .ok()
+            .or_else(|| env::var("KIMI_API_KEY").ok())
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.embedding.as_ref())
+                    .and_then(|e| e.api_key.clone())
+            })
+            .filter(|v| !v.is_empty());
+        let embedding_model = env::var("EMBEDDING_MODEL")
+            .ok()
             .or_else(|| env::var("KIMI_EMBEDDING_MODEL").ok())
-            .or_else(|| project.as_ref().and_then(|p| p.embedding.as_ref()).and_then(|e| e.model.clone()))
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.embedding.as_ref())
+                    .and_then(|e| e.model.clone())
+            })
             .unwrap_or_else(|| "nvidia/llama-nemotron-embed-1b-v2".to_string());
-        let embedding_endpoint = env::var("EMBEDDING_ENDPOINT").ok()
-            .or_else(|| project.as_ref().and_then(|p| p.embedding.as_ref()).and_then(|e| e.endpoint.clone()))
+        let embedding_endpoint = env::var("EMBEDDING_ENDPOINT")
+            .ok()
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.embedding.as_ref())
+                    .and_then(|e| e.endpoint.clone())
+            })
             .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1/embeddings".to_string());
-        let embedding_provider_str = env::var("EMBEDDING_PROVIDER").ok()
-            .or_else(|| project.as_ref().and_then(|p| p.embedding.as_ref()).and_then(|e| e.provider.clone()))
+        let embedding_provider_str = env::var("EMBEDDING_PROVIDER")
+            .ok()
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.embedding.as_ref())
+                    .and_then(|e| e.provider.clone())
+            })
             .unwrap_or_else(|| "nvidia".to_string())
             .to_lowercase();
         let embedding_provider = match embedding_provider_str.as_str() {
@@ -337,13 +433,25 @@ impl Settings {
             _ => EmbeddingProvider::Nvidia,
         };
 
-        let timeout_ms = env::var("VOLT_SANDBOX_TIMEOUT_MS").ok()
+        let timeout_ms = env::var("VOLT_SANDBOX_TIMEOUT_MS")
+            .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .or_else(|| project.as_ref().and_then(|p| p.sandbox.as_ref()).and_then(|s| s.timeout_ms))
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.sandbox.as_ref())
+                    .and_then(|s| s.timeout_ms)
+            })
             .unwrap_or(5000);
-        let max_stdout_bytes = env::var("VOLT_SANDBOX_MAX_STDOUT_BYTES").ok()
+        let max_stdout_bytes = env::var("VOLT_SANDBOX_MAX_STDOUT_BYTES")
+            .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .or_else(|| project.as_ref().and_then(|p| p.sandbox.as_ref()).and_then(|s| s.max_stdout_bytes))
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.sandbox.as_ref())
+                    .and_then(|s| s.max_stdout_bytes)
+            })
             .unwrap_or(262_144);
 
         Ok(Self {

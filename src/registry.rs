@@ -17,7 +17,10 @@ impl RegistryClient {
         }
     }
 
-    pub async fn fetch_manifest(&self, options: &RegistryFetchOptions) -> anyhow::Result<RegistryManifest> {
+    pub async fn fetch_manifest(
+        &self,
+        options: &RegistryFetchOptions,
+    ) -> anyhow::Result<RegistryManifest> {
         let url = format!(
             "{}/packages/{}",
             options.registry_base_url.trim_end_matches('/'),
@@ -54,7 +57,14 @@ pub async fn provision_manifest(
 
     let source_sha256 = verify_declared_sha(&manifest)?;
     let embedding = embedder.embed_description(&manifest.description).await?;
-    crate::db::upsert_tool(pool, &manifest, &embedding, &source_sha256, marketplace_verified).await?;
+    crate::db::upsert_tool(
+        pool,
+        &manifest,
+        &embedding,
+        &source_sha256,
+        marketplace_verified,
+    )
+    .await?;
     crate::db::record_registry_event(
         pool,
         &manifest.tool_name,

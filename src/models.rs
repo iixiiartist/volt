@@ -171,7 +171,10 @@ pub enum MCPTransport {
     #[serde(rename = "stdio")]
     Stdio { command: String, args: Vec<String> },
     #[serde(rename = "http")]
-    Http { url: String, headers: Option<HashMap<String, String>> },
+    Http {
+        url: String,
+        headers: Option<HashMap<String, String>>,
+    },
 }
 
 // ─── Existing types ───────────────────────────────────────────
@@ -267,7 +270,9 @@ pub struct CancelToken(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
 
 impl CancelToken {
     pub fn new() -> Self {
-        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )))
     }
 
     pub fn cancel(&self) {
@@ -288,17 +293,18 @@ pub struct ModelContext {
 
 impl ModelContext {
     pub fn for_model(model: &str) -> Self {
-        let max_context = if model.contains("gemma") || model.contains("phi") || model.contains("qwen") {
-            8192
-        } else if model.contains("claude-3-5-sonnet") {
-            200000
-        } else if model.contains("claude-3") {
-            100000
-        } else if model.contains("gpt-4") {
-            128000
-        } else {
-            4096
-        };
+        let max_context =
+            if model.contains("gemma") || model.contains("phi") || model.contains("qwen") {
+                8192
+            } else if model.contains("claude-3-5-sonnet") {
+                200000
+            } else if model.contains("claude-3") {
+                100000
+            } else if model.contains("gpt-4") {
+                128000
+            } else {
+                4096
+            };
         Self {
             model: model.to_string(),
             max_tokens: 4096,
@@ -309,7 +315,8 @@ impl ModelContext {
     pub fn estimate_tokens(text: &str) -> u32 {
         // Try accurate tokenization via tiktoken-rs (cl100k_base for GPT/Llama models)
         // Falls back to chars/3 heuristic if tokenizer unavailable
-        static TOKENIZER: std::sync::OnceLock<Option<tiktoken_rs::CoreBPE>> = std::sync::OnceLock::new();
+        static TOKENIZER: std::sync::OnceLock<Option<tiktoken_rs::CoreBPE>> =
+            std::sync::OnceLock::new();
         let bpe = TOKENIZER.get_or_init(|| tiktoken_rs::cl100k_base().ok());
         if let Some(bpe) = bpe {
             bpe.encode_ordinary(text).len() as u32

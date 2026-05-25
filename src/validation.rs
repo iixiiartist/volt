@@ -43,8 +43,14 @@ pub fn validate_manifest(manifest: &RegistryManifest) -> ValidationReport {
     if manifest.parameter_schema.get("type").is_none() {
         warnings.push("parameter_schema does not declare a JSON schema type".to_string());
     }
-    if !matches!(manifest.language.as_str(), "rust" | "python" | "wasm" | "bash" | "javascript") {
-        warnings.push(format!("language '{}' is not in the default allowlist", manifest.language));
+    if !matches!(
+        manifest.language.as_str(),
+        "rust" | "python" | "wasm" | "bash" | "javascript"
+    ) {
+        warnings.push(format!(
+            "language '{}' is not in the default allowlist",
+            manifest.language
+        ));
     }
 
     ValidationReport {

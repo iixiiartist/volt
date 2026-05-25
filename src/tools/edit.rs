@@ -19,7 +19,11 @@ pub async fn edit_file(path: &str, old_string: &str, new_string: &str) -> ToolRe
             match std::fs::write(&path, &new_content) {
                 Ok(()) => ToolResult {
                     success: true,
-                    output: format!("edited {} ({} replacements)", path, content.matches(old_string).count()),
+                    output: format!(
+                        "edited {} ({} replacements)",
+                        path,
+                        content.matches(old_string).count()
+                    ),
                     error: None,
                     duration_ms: started.elapsed().as_millis(),
                 },

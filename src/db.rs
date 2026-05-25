@@ -144,14 +144,30 @@ pub async fn get_tool_by_name(pool: &PgPool, tool_name: &str) -> anyhow::Result<
     match row {
         Some(r) => {
             let tool = AgentTool {
-                id: r.try_get("id").map_err(|e| anyhow::anyhow!("db: id: {}", e))?,
-                tool_name: r.try_get("tool_name").map_err(|e| anyhow::anyhow!("db: tool_name: {}", e))?,
-                description: r.try_get("description").map_err(|e| anyhow::anyhow!("db: description: {}", e))?,
-                language: r.try_get("language").map_err(|e| anyhow::anyhow!("db: language: {}", e))?,
-                is_marketplace_verified: r.try_get("is_marketplace_verified").map_err(|e| anyhow::anyhow!("db: is_marketplace_verified: {}", e))?,
-                source_sha256: r.try_get("source_sha256").map_err(|e| anyhow::anyhow!("db: source_sha256: {}", e))?,
-                created_at: r.try_get("created_at").map_err(|e| anyhow::anyhow!("db: created_at: {}", e))?,
-                updated_at: r.try_get("updated_at").map_err(|e| anyhow::anyhow!("db: updated_at: {}", e))?,
+                id: r
+                    .try_get("id")
+                    .map_err(|e| anyhow::anyhow!("db: id: {}", e))?,
+                tool_name: r
+                    .try_get("tool_name")
+                    .map_err(|e| anyhow::anyhow!("db: tool_name: {}", e))?,
+                description: r
+                    .try_get("description")
+                    .map_err(|e| anyhow::anyhow!("db: description: {}", e))?,
+                language: r
+                    .try_get("language")
+                    .map_err(|e| anyhow::anyhow!("db: language: {}", e))?,
+                is_marketplace_verified: r
+                    .try_get("is_marketplace_verified")
+                    .map_err(|e| anyhow::anyhow!("db: is_marketplace_verified: {}", e))?,
+                source_sha256: r
+                    .try_get("source_sha256")
+                    .map_err(|e| anyhow::anyhow!("db: source_sha256: {}", e))?,
+                created_at: r
+                    .try_get("created_at")
+                    .map_err(|e| anyhow::anyhow!("db: created_at: {}", e))?,
+                updated_at: r
+                    .try_get("updated_at")
+                    .map_err(|e| anyhow::anyhow!("db: updated_at: {}", e))?,
             };
             Ok(Some(tool))
         }
@@ -160,12 +176,10 @@ pub async fn get_tool_by_name(pool: &PgPool, tool_name: &str) -> anyhow::Result<
 }
 
 pub async fn get_tool_source(pool: &PgPool, tool_name: &str) -> anyhow::Result<Option<String>> {
-    let row = sqlx::query(
-        "SELECT source_code FROM agent_tools WHERE tool_name = $1",
-    )
-    .bind(tool_name)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query("SELECT source_code FROM agent_tools WHERE tool_name = $1")
+        .bind(tool_name)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(row.and_then(|r| r.try_get("source_code").ok()))
 }
@@ -465,10 +479,7 @@ pub struct SkillEntry {
 
 use crate::context::{ContextEntry, ContextKind};
 
-pub async fn insert_context_entry(
-    pool: &PgPool,
-    entry: &ContextEntry,
-) -> anyhow::Result<()> {
+pub async fn insert_context_entry(pool: &PgPool, entry: &ContextEntry) -> anyhow::Result<()> {
     if let Some(ref emb) = entry.embedding {
         let emb_literal = vector_literal(emb);
         sqlx::query(
@@ -586,10 +597,7 @@ pub async fn search_context_entries(
     Ok(out)
 }
 
-pub async fn load_context_entries(
-    pool: &PgPool,
-    limit: i64,
-) -> anyhow::Result<Vec<ContextEntry>> {
+pub async fn load_context_entries(pool: &PgPool, limit: i64) -> anyhow::Result<Vec<ContextEntry>> {
     let rows = sqlx::query(
         r#"
         SELECT id, kind, content, embedding, metadata, frequency, success_rate, usage_count, last_used_at, created_at

@@ -22,7 +22,11 @@ fn build_tools() -> Arc<ToolRegistry> {
 
 fn build_provider() -> Box<dyn volt::llm::LLMProvider> {
     let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant");
-    Box::new(volt::llm::openai::OpenAIProvider::new(route.api_key, route.base_url, "program-bench".into()))
+    Box::new(volt::llm::openai::OpenAIProvider::new(
+        route.api_key,
+        route.base_url,
+        "program-bench".into(),
+    ))
 }
 
 #[tokio::test]
@@ -31,7 +35,9 @@ async fn test_program_bench() {
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((k, v)) = line.split_once('=') {
                 std::env::set_var(k.trim(), v.trim());
             }
@@ -78,12 +84,25 @@ async fn test_program_bench() {
             Err(_) => false,
         };
 
-        if passed { correct += 1; }
+        if passed {
+            correct += 1;
+        }
         let status = if passed { "PASS" } else { "FAIL" };
-        println!("  [{}/{}] {} | {} | {}ms", i + 1, total, status, pid, duration);
+        println!(
+            "  [{}/{}] {} | {} | {}ms",
+            i + 1,
+            total,
+            status,
+            pid,
+            duration
+        );
         if !passed {
             match &result {
-                Ok(out) => println!("         expected: {} | got: {}", expected, out.trim().chars().take(100).collect::<String>()),
+                Ok(out) => println!(
+                    "         expected: {} | got: {}",
+                    expected,
+                    out.trim().chars().take(100).collect::<String>()
+                ),
                 Err(e) => println!("         error: {}", e),
             }
         }

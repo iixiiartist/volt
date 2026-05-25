@@ -10,7 +10,10 @@ const MAX_TASK_CHARS: usize = 5000;
 
 fn sanitize_prompt_input(s: &str, max: usize) -> String {
     let s = s.replace('\0', "");
-    let s: String = s.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
+    let s: String = s
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect();
     if s.len() > max {
         let mut truncated = s.chars().take(max).collect::<String>();
         truncated.push_str("\n[truncated]");
@@ -26,8 +29,8 @@ pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) 
     let api_key = std::env::var("NVIDIA_API_KEY")
         .or_else(|_| std::env::var("LLM_API_KEY"))
         .unwrap_or_default();
-    let base_url = std::env::var("LLM_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:11434/v1".into());
+    let base_url =
+        std::env::var("LLM_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".into());
     let model = std::env::var("LLM_MODEL")
         .unwrap_or_else(|_| "nvidia/llama-3.1-nemotron-70b-instruct".into());
 
@@ -92,7 +95,11 @@ mod tests {
     fn test_sanitize_prompt_input_truncates_long() {
         let long = "a".repeat(3000);
         let result = sanitize_prompt_input(&long, 100);
-        assert!(result.len() <= 100 + 1 + "[truncated]".len(), "result.len={}", result.len());
+        assert!(
+            result.len() <= 100 + 1 + "[truncated]".len(),
+            "result.len={}",
+            result.len()
+        );
         assert!(result.contains("[truncated]"));
     }
 

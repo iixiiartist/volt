@@ -95,7 +95,13 @@ pub fn name_from_filename(path: &Path) -> String {
         .unwrap_or("imported-skill");
     let cleaned: String = stem
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim_matches('.').to_string();
     if trimmed.is_empty() {
@@ -161,7 +167,10 @@ pub fn convert_to_volt_skill(
     output.push_str("---\n");
     output.push_str(&format!("name: \"{}\"\n", name));
     output.push_str(&format!("version: \"1.0.0\"\n"));
-    output.push_str(&format!("description: \"{}\"\n", description.replace('"', r#"\""#)));
+    output.push_str(&format!(
+        "description: \"{}\"\n",
+        description.replace('"', r#"\""#)
+    ));
     output.push_str("mcp_servers: []\n");
     output.push_str("---\n");
     output.push_str(body);
@@ -234,7 +243,10 @@ mod tests {
     #[test]
     fn test_strip_frontmatter_preserves_body() {
         let content = "---\nname: test\n---\n# Body content\n\nMore content.";
-        assert_eq!(strip_frontmatter(content), "# Body content\n\nMore content.");
+        assert_eq!(
+            strip_frontmatter(content),
+            "# Body content\n\nMore content."
+        );
     }
 
     #[test]
@@ -269,7 +281,10 @@ mod tests {
     #[test]
     fn test_extract_description_fallback() {
         let content = "Just some plain text with no heading.";
-        assert_eq!(extract_description(content), "Just some plain text with no heading.");
+        assert_eq!(
+            extract_description(content),
+            "Just some plain text with no heading."
+        );
     }
 
     #[test]
@@ -303,7 +318,8 @@ mod tests {
     fn test_convert_with_name_override() {
         let path = Path::new("CLAUDE.md");
         let content = "# Rules";
-        let result = convert_to_volt_skill(path, content, &SourceFormat::Claude, Some("my-custom-name"));
+        let result =
+            convert_to_volt_skill(path, content, &SourceFormat::Claude, Some("my-custom-name"));
         assert!(result.contains("name: \"my-custom-name\""));
     }
 
@@ -332,12 +348,8 @@ mod tests {
 
         let opencode_content = "---\nname: my-opencode-skill\ndescription: OpenCode skill description\ncompatibility: opencode\n---\n# My Skill\n\nOriginal body content.";
         let path = Path::new("my-opencode-skill/SKILL.md");
-        let converted = convert_to_volt_skill(
-            path,
-            opencode_content,
-            &SourceFormat::OpenCode,
-            None,
-        );
+        let converted =
+            convert_to_volt_skill(path, opencode_content, &SourceFormat::OpenCode, None);
 
         let dir = tempfile::tempdir().unwrap();
         let tmp_path = dir.path().join("SKILL.md");

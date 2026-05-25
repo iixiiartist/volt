@@ -1,7 +1,7 @@
-﻿use crate::context::ContextStore;
+use crate::context::ContextStore;
 use crate::embedding::EmbeddingClient;
-use crate::llm::LLMProvider;
 use crate::llm::provider::TokenCallback;
+use crate::llm::LLMProvider;
 use crate::models::*;
 use crate::skills::SkillRegistry;
 use crate::tools::ToolRegistry;
@@ -108,7 +108,9 @@ impl Agent {
             let llm_messages = self.compress_if_needed(llm_messages).await;
 
             let tool_defs = if let Some(ref emb) = context_embedding {
-                self.tools.search_tools(emb, 8, &["read", "glob", "grep", "web_fetch"]).await
+                self.tools
+                    .search_tools(emb, 8, &["read", "glob", "grep", "web_fetch"])
+                    .await
             } else {
                 self.tools.get_definitions().await
             };
@@ -139,8 +141,14 @@ impl Agent {
                         Ok(r) => break 'retry r,
                         Err(e) => {
                             if attempt + 1 < max_retries {
-                                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
-                                eprintln!("\n\x1b[33m[API retry {}]\x1b[0m {} (retrying in {:?})", attempt + 1, e, delay);
+                                let delay =
+                                    std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                                eprintln!(
+                                    "\n\x1b[33m[API retry {}]\x1b[0m {} (retrying in {:?})",
+                                    attempt + 1,
+                                    e,
+                                    delay
+                                );
                                 tokio::time::sleep(delay).await;
                             } else {
                                 if self.is_cancelled() {
@@ -170,30 +178,55 @@ impl Agent {
             self.audit_turn(&request, &response, &state).await;
 
             if let Some(tool_calls) = &response.tool_calls {
-                self.push_assistant_message(&mut state, &response, Some(tool_calls)).await;
+                self.push_assistant_message(&mut state, &response, Some(tool_calls))
+                    .await;
                 self.execute_tool_calls(tool_calls, &mut state).await;
             } else {
-                self.push_assistant_message(&mut state, &response, None).await;
-                self.store_memory(input, response.content.as_str(), &state, context_embedding.as_ref()).await;
-                self.seed_episode_complete(input, response.content.as_str(), &state).await;
+                self.push_assistant_message(&mut state, &response, None)
+                    .await;
+                self.store_memory(
+                    input,
+                    response.content.as_str(),
+                    &state,
+                    context_embedding.as_ref(),
+                )
+                .await;
+                self.seed_episode_complete(input, response.content.as_str(), &state)
+                    .await;
                 return Ok(Arc::unwrap_or_clone(response.content));
             }
         }
 
-        Err(anyhow::anyhow!("max iterations reached without final response"))
+        Err(anyhow::anyhow!(
+            "max iterations reached without final response"
+        ))
     }
 
     /// Audit log: store the complete LLM turn (request + response) as a ContextEntry.
     /// Enables full traceability for EU AI Act Article 12 compliance.
-    async fn audit_turn(&self, request: &LLMRequest, response: &LLMResponse, state: &tokio::sync::MutexGuard<'_, AgentState>) {
+    async fn audit_turn(
+        &self,
+        request: &LLMRequest,
+        response: &LLMResponse,
+        state: &tokio::sync::MutexGuard<'_, AgentState>,
+    ) {
         if let Some(ref store) = self.context_store {
-            let prompt_text: String = request.messages.iter()
+            let prompt_text: String = request
+                .messages
+                .iter()
                 .map(|m| format!("[{}]\n{}", m.role, m.content.as_str()))
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let response_text = response.content.as_str();
-            let tool_info: Vec<String> = response.tool_calls.as_ref()
-                .map(|calls| calls.iter().map(|tc| format!("{}={}", tc.name, tc.arguments)).collect())
+            let tool_info: Vec<String> = response
+                .tool_calls
+                .as_ref()
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .map(|tc| format!("{}={}", tc.name, tc.arguments))
+                        .collect()
+                })
                 .unwrap_or_default();
             let audit = serde_json::json!({
                 "model": request.model,
@@ -204,10 +237,16 @@ impl Agent {
                 "tool_calls": tool_info,
                 "finish_reason": response.finish_reason,
             });
-            store.add(crate::context::ContextKind::AgentRun, &format!(
-                "## Turn {}\n### Prompt\n{}\n### Response\n{}\n",
-                state.iteration, prompt_text, response_text
-            ), audit).await;
+            store
+                .add(
+                    crate::context::ContextKind::AgentRun,
+                    &format!(
+                        "## Turn {}\n### Prompt\n{}\n### Response\n{}\n",
+                        state.iteration, prompt_text, response_text
+                    ),
+                    audit,
+                )
+                .await;
         }
     }
 
@@ -226,7 +265,13 @@ impl Agent {
     async fn build_context(&self, input: &str) -> Option<Vec<f32>> {
         let context_query = {
             let s = self.state.lock().await;
-            let recent: Vec<&str> = s.messages.iter().rev().take(3).map(|m| m.content.as_str()).collect();
+            let recent: Vec<&str> = s
+                .messages
+                .iter()
+                .rev()
+                .take(3)
+                .map(|m| m.content.as_str())
+                .collect();
             let mut parts: Vec<&str> = recent.into_iter().rev().collect();
             parts.push(input);
             parts.join("\n")
@@ -242,10 +287,13 @@ impl Agent {
         if let (Some(ref emb), Some(ref store)) = (&context_embedding, &self.context_store) {
             let retrieved = store.search(emb, 8, None, 0.25).await;
             if !retrieved.is_empty() {
-                let blocks: Vec<String> = retrieved.iter().map(|e| {
-                    let tag = e.kind.as_str().replace("_", "-");
-                    format!("<{tag}>\n{}\n</{tag}>", e.content)
-                }).collect();
+                let blocks: Vec<String> = retrieved
+                    .iter()
+                    .map(|e| {
+                        let tag = e.kind.as_str().replace("_", "-");
+                        format!("<{tag}>\n{}\n</{tag}>", e.content)
+                    })
+                    .collect();
                 let mut state = self.state.lock().await;
                 state.messages.push(Message {
                     role: "system".into(),
@@ -265,12 +313,18 @@ impl Agent {
         if let (Some(ref emb), Some(ref skills)) = (&context_embedding, &self.skills) {
             let matched = skills.search(emb, 3).await;
             if !matched.is_empty() {
-                let block: Vec<String> = matched.iter().map(|s| format!("<skill name=\"{0}\">\n{1}\n</skill>", s.name, s.content)).collect();
+                let block: Vec<String> = matched
+                    .iter()
+                    .map(|s| format!("<skill name=\"{0}\">\n{1}\n</skill>", s.name, s.content))
+                    .collect();
                 if !block.is_empty() {
                     let mut state = self.state.lock().await;
                     state.messages.push(Message {
                         role: "system".into(),
-                        content: Arc::new(format!("<retrieved_skills>\n{}\n</retrieved_skills>", block.join("\n"))),
+                        content: Arc::new(format!(
+                            "<retrieved_skills>\n{}\n</retrieved_skills>",
+                            block.join("\n")
+                        )),
                         tool_calls: None,
                         tool_result: None,
                         tool_name: None,
@@ -284,7 +338,10 @@ impl Agent {
         if let (Some(ref emb), Some(ref db)) = (&context_embedding, &self.db) {
             if let Ok(memories) = crate::db::search_memories(db, emb, 5, None).await {
                 if !memories.is_empty() {
-                    let block: Vec<String> = memories.iter().map(|m| format!("[{}] {}", m.kind, m.content)).collect();
+                    let block: Vec<String> = memories
+                        .iter()
+                        .map(|m| format!("[{}] {}", m.kind, m.content))
+                        .collect();
                     let ctx = format!("## Relevant memories\n{}", block.join("\n"));
                     let mut state = self.state.lock().await;
                     state.messages.push(Message {
@@ -328,7 +385,7 @@ impl Agent {
         let model_ctx = ModelContext::for_model(&self.config.model);
         let total_tokens: u32 = llm_messages
             .iter()
-                .map(|m| ModelContext::estimate_tokens(m.content.as_str()))
+            .map(|m| ModelContext::estimate_tokens(m.content.as_str()))
             .sum();
 
         if total_tokens <= model_ctx.max_context_tokens.saturating_sub(2048) {
@@ -338,27 +395,37 @@ impl Agent {
         let snapshot = self.state.lock().await;
         let max_keep = model_ctx.max_context_tokens.saturating_sub(2048) as usize / 10;
         let before = llm_messages.len();
-        let compressed: Vec<LLMMessage> = crate::agent::context::compress_context(&snapshot.messages, max_keep)
-            .into_iter()
-            .map(|m| LLMMessage {
-                role: m.role,
-                content: m.content,
-                tool_calls: m.tool_calls,
-                tool_call_id: m.tool_name,
-            })
-            .collect();
+        let compressed: Vec<LLMMessage> =
+            crate::agent::context::compress_context(&snapshot.messages, max_keep)
+                .into_iter()
+                .map(|m| LLMMessage {
+                    role: m.role,
+                    content: m.content,
+                    tool_calls: m.tool_calls,
+                    tool_call_id: m.tool_name,
+                })
+                .collect();
         info!(
             "context compressed: {} messages -> {} (est {} tokens)",
             before,
             compressed.len(),
             ModelContext::estimate_tokens(
-                &compressed.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("")
+                &compressed
+                    .iter()
+                    .map(|m| m.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("")
             )
         );
         compressed
     }
 
-    async fn push_assistant_message(&self, state: &mut tokio::sync::MutexGuard<'_, AgentState>, response: &LLMResponse, tool_calls: Option<&Vec<ToolCall>>) {
+    async fn push_assistant_message(
+        &self,
+        state: &mut tokio::sync::MutexGuard<'_, AgentState>,
+        response: &LLMResponse,
+        tool_calls: Option<&Vec<ToolCall>>,
+    ) {
         state.messages.push(Message {
             role: "assistant".into(),
             content: response.content.clone(),
@@ -369,17 +436,25 @@ impl Agent {
         });
     }
 
-    async fn execute_tool_calls(&self, tool_calls: &[ToolCall], state: &mut tokio::sync::MutexGuard<'_, AgentState>) {
+    async fn execute_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        state: &mut tokio::sync::MutexGuard<'_, AgentState>,
+    ) {
         // Check permissions upfront
         for tc in tool_calls {
             if self.is_cancelled() {
                 return;
             }
-            let needs_approval = self.tools.get_permission(&tc.name).await == PermissionLevel::Prompt
+            let needs_approval = self.tools.get_permission(&tc.name).await
+                == PermissionLevel::Prompt
                 && !self.config.allow_all
                 && !state.allow_session;
             if needs_approval {
-                eprintln!("\n\x1b[33m[approval]\x1b[0m tool '{}({:?})' requires approval.", tc.name, tc.arguments);
+                eprintln!(
+                    "\n\x1b[33m[approval]\x1b[0m tool '{}({:?})' requires approval.",
+                    tc.name, tc.arguments
+                );
                 eprint!("Proceed? [y/N/a = always allow for this session] ");
                 use std::io::Write;
                 std::io::stderr().flush().ok();
@@ -387,7 +462,9 @@ impl Agent {
                     let mut buf = String::new();
                     std::io::stdin().read_line(&mut buf).ok();
                     buf.trim().to_lowercase()
-                }).await.unwrap_or_default();
+                })
+                .await
+                .unwrap_or_default();
                 let approved = answer == "y" || answer == "a";
                 if answer == "a" {
                     state.allow_session = true;
@@ -411,9 +488,13 @@ impl Agent {
         }
 
         // Collect approved tool calls
-        let approved: Vec<&ToolCall> = tool_calls.iter()
+        let approved: Vec<&ToolCall> = tool_calls
+            .iter()
             .filter(|tc| {
-                state.messages.iter().rev()
+                state
+                    .messages
+                    .iter()
+                    .rev()
                     .find(|m| m.tool_name.as_deref() == Some(&tc.id))
                     .map(|m| !m.content.contains("skipped"))
                     .unwrap_or(true)
@@ -425,44 +506,57 @@ impl Agent {
         }
 
         // Execute approved tools concurrently
-        let futures: Vec<_> = approved.iter().map(|tc| {
-            let tools = self.tools.clone();
-            let name = tc.name.clone();
-            let args = tc.arguments.clone();
-            let id = tc.id.clone();
-            let store = self.context_store.clone();
-            let embedder = self.embedder.clone();
-            info!("executing tool: {} with {}", name, args);
-            async move {
-                let result = tools.execute(&name, &args).await.unwrap_or_else(|e| ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("tool error: {}", e)),
-                    duration_ms: 0,
-                });
+        let futures: Vec<_> = approved
+            .iter()
+            .map(|tc| {
+                let tools = self.tools.clone();
+                let name = tc.name.clone();
+                let args = tc.arguments.clone();
+                let id = tc.id.clone();
+                let store = self.context_store.clone();
+                let embedder = self.embedder.clone();
+                info!("executing tool: {} with {}", name, args);
+                async move {
+                    let result = tools
+                        .execute(&name, &args)
+                        .await
+                        .unwrap_or_else(|e| ToolResult {
+                            success: false,
+                            output: String::new(),
+                            error: Some(format!("tool error: {}", e)),
+                            duration_ms: 0,
+                        });
 
-                // rag_learn in background
-                if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
-                    if let Ok(_emb) = emb.embed_description(&name).await {
-                        let query = args.to_string();
-                        store.record_run(&query, &name, result.success, serde_json::json!({
-                            "tool_name": name,
-                            "duration_ms": result.duration_ms,
-                            "error": result.error,
-                        })).await;
+                    // rag_learn in background
+                    if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
+                        if let Ok(_emb) = emb.embed_description(&name).await {
+                            let query = args.to_string();
+                            store
+                                .record_run(
+                                    &query,
+                                    &name,
+                                    result.success,
+                                    serde_json::json!({
+                                        "tool_name": name,
+                                        "duration_ms": result.duration_ms,
+                                        "error": result.error,
+                                    }),
+                                )
+                                .await;
+                        }
                     }
+
+                    let error_msg = result.error.clone();
+                    let output = if result.success {
+                        result.output.clone()
+                    } else {
+                        format!("error: {}", error_msg.unwrap_or_default())
+                    };
+
+                    (id, output, result)
                 }
-
-                let error_msg = result.error.clone();
-                let output = if result.success {
-                    result.output.clone()
-                } else {
-                    format!("error: {}", error_msg.unwrap_or_default())
-                };
-
-                (id, output, result)
-            }
-        }).collect();
+            })
+            .collect();
 
         let results = futures::future::join_all(futures).await;
 
@@ -481,7 +575,13 @@ impl Agent {
         }
     }
 
-    async fn store_memory(&self, input: &str, content: &str, state: &tokio::sync::MutexGuard<'_, AgentState>, existing_embedding: Option<&Vec<f32>>) {
+    async fn store_memory(
+        &self,
+        input: &str,
+        content: &str,
+        state: &tokio::sync::MutexGuard<'_, AgentState>,
+        existing_embedding: Option<&Vec<f32>>,
+    ) {
         if let (Some(ref db), Some(ref embedder)) = (&self.db, &self.embedder) {
             let embedding = match existing_embedding {
                 Some(emb) => Ok(emb.clone()),
@@ -501,15 +601,25 @@ impl Agent {
         }
     }
 
-    async fn seed_episode_complete(&self, input: &str, content: &str, state: &tokio::sync::MutexGuard<'_, AgentState>) {
+    async fn seed_episode_complete(
+        &self,
+        input: &str,
+        content: &str,
+        state: &tokio::sync::MutexGuard<'_, AgentState>,
+    ) {
         if let Some(ref ch) = self.seed_channel {
-            let tools_used: Vec<String> = state.messages.iter()
+            let tools_used: Vec<String> = state
+                .messages
+                .iter()
                 .filter(|m| m.tool_name.is_some())
                 .filter_map(|m| m.tool_name.clone())
                 .collect();
             let tools_used_dedup: Vec<String> = {
                 let mut seen = std::collections::HashSet::new();
-                tools_used.into_iter().filter(|t| seen.insert(t.clone())).collect()
+                tools_used
+                    .into_iter()
+                    .filter(|t| seen.insert(t.clone()))
+                    .collect()
             };
             let resolution = content.chars().take(500).collect::<String>();
             ch.episode_complete(
@@ -531,7 +641,8 @@ impl Agent {
             match tool_name {
                 "write" | "edit" => {
                     let output = &result.output;
-                    let file_path = output.lines()
+                    let file_path = output
+                        .lines()
                         .find(|l| l.contains("Wrote to") || l.contains("Edited"))
                         .map(|l| l.to_string())
                         .unwrap_or_else(|| "unknown file".into());
@@ -554,12 +665,7 @@ impl Agent {
                     ch.artifact_created(&file_path, &result.output, language, tool_name);
                 }
                 "bash" => {
-                    ch.artifact_created(
-                        "shell_execution",
-                        &result.output,
-                        "shell",
-                        tool_name,
-                    );
+                    ch.artifact_created("shell_execution", &result.output, "shell", tool_name);
                 }
                 _ => {}
             }
@@ -567,6 +673,9 @@ impl Agent {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.cancel.as_ref().map(|c| c.is_cancelled()).unwrap_or(false)
+        self.cancel
+            .as_ref()
+            .map(|c| c.is_cancelled())
+            .unwrap_or(false)
     }
 }

@@ -24,13 +24,25 @@ pub async fn sequentialthinking(
     let thoughts = store.entry(branch_key.clone()).or_default();
 
     let thought_number = thoughts.len() as u32 + 1;
-    thoughts.push(Thought { number: thought_number, thought: thought.to_string() });
+    thoughts.push(Thought {
+        number: thought_number,
+        thought: thought.to_string(),
+    });
 
-    let history: Vec<String> = thoughts.iter().map(|t| format!("Thought {}: {}", t.number, t.thought)).collect();
+    let history: Vec<String> = thoughts
+        .iter()
+        .map(|t| format!("Thought {}: {}", t.number, t.thought))
+        .collect();
 
-    let mut output = format!("=== Sequential Thought Chain (branch: {}) ===\n", branch_key);
+    let mut output = format!(
+        "=== Sequential Thought Chain (branch: {}) ===\n",
+        branch_key
+    );
     output.push_str(&history.join("\n"));
-    output.push_str(&format!("\n---\nCurrent thought: {} of {}", thought_number, thought_number));
+    output.push_str(&format!(
+        "\n---\nCurrent thought: {} of {}",
+        thought_number, thought_number
+    ));
 
     if let Some(from) = branch_from_thought {
         output.push_str(&format!("\nBranched from thought {}", from));

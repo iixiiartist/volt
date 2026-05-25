@@ -13,7 +13,11 @@ pub struct MCPClient {
 
 impl MCPClient {
     pub fn new(transport: MCPTransport) -> Self {
-        Self { transport, request_id: AtomicU64::new(0), access_token: Mutex::new(None) }
+        Self {
+            transport,
+            request_id: AtomicU64::new(0),
+            access_token: Mutex::new(None),
+        }
     }
 
     pub fn set_token(&self, token: &str) {
@@ -32,18 +36,32 @@ impl MCPClient {
 
     pub async fn list_tools(&self) -> anyhow::Result<Vec<String>> {
         let tools = self.list_tools_full().await?;
-        Ok(tools.iter().filter_map(|t| t["name"].as_str().map(|s| s.to_string())).collect())
+        Ok(tools
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(|s| s.to_string()))
+            .collect())
     }
 
     pub async fn list_tools_full(&self) -> anyhow::Result<Vec<Value>> {
-        let body = jsonrpc_request("tools/list", None, self.request_id.fetch_add(1, Ordering::Relaxed) + 1);
+        let body = jsonrpc_request(
+            "tools/list",
+            None,
+            self.request_id.fetch_add(1, Ordering::Relaxed) + 1,
+        );
         let resp = self.send(&body).await?;
-        Ok(resp["result"]["tools"].as_array().cloned().unwrap_or_default())
+        Ok(resp["result"]["tools"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
     }
 
     pub async fn call_tool(&self, name: &str, args: &Value) -> anyhow::Result<Value> {
         let params = serde_json::json!({ "name": name, "arguments": args });
-        let body = jsonrpc_request("tools/call", Some(&params), self.request_id.fetch_add(1, Ordering::Relaxed) + 1);
+        let body = jsonrpc_request(
+            "tools/call",
+            Some(&params),
+            self.request_id.fetch_add(1, Ordering::Relaxed) + 1,
+        );
         self.send(&body).await
     }
 

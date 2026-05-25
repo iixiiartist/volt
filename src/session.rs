@@ -107,7 +107,11 @@ pub async fn create_session(pool: &SqlitePool, session: &Session) -> anyhow::Res
     Ok(())
 }
 
-pub async fn save_message(pool: &SqlitePool, session_id: Uuid, msg: &Message) -> anyhow::Result<()> {
+pub async fn save_message(
+    pool: &SqlitePool,
+    session_id: Uuid,
+    msg: &Message,
+) -> anyhow::Result<()> {
     sqlx::query(
         r#"
         INSERT INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at)
@@ -189,8 +193,11 @@ mod tests {
                 message_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            )"
-        ).execute(&pool).await.unwrap();
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -201,8 +208,11 @@ mod tests {
                 tool_result TEXT,
                 tool_name TEXT,
                 created_at TEXT NOT NULL
-            )"
-        ).execute(&pool).await.unwrap();
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 

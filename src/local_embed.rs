@@ -29,18 +29,21 @@ impl LocalEmbedder {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("tokenizer load: {}", e))?;
 
-        let config: Config = serde_json::from_str(
-            &std::fs::read_to_string(&config_path)?
-        )?;
+        let config: Config = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
         let vb = candle_nn::VarBuilder::from_pth(&model_path)?;
         let model = BertModel::new(&device, &config, vb)?;
 
-        Ok(Self { model, tokenizer, device })
+        Ok(Self {
+            model,
+            tokenizer,
+            device,
+        })
     }
 
     /// Embed text to a 384-dimensional vector (mean pooling).
     pub fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let tokens = self.tokenizer
+        let tokens = self
+            .tokenizer
             .encode(text, true)
             .map_err(|e| anyhow::anyhow!("tokenize: {}", e))?;
         let token_ids = Tensor::new(tokens.get_ids(), &self.device)?;

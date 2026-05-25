@@ -22,7 +22,8 @@ fn find_project_root() -> Option<String> {
 fn project_root() -> Option<String> {
     if let Ok(cached) = PROJECT_ROOT.read() {
         if let Some(ref root) = *cached {
-            if Path::new(root).join("Cargo.toml").exists() || Path::new(root).join(".git").exists() {
+            if Path::new(root).join("Cargo.toml").exists() || Path::new(root).join(".git").exists()
+            {
                 return Some(root.clone());
             }
         }
@@ -36,7 +37,8 @@ fn project_root() -> Option<String> {
 
 pub fn sanitize_path(path: &str) -> Result<String, String> {
     let root_str = project_root().ok_or("no project root found")?;
-    let root = Path::new(&root_str).canonicalize()
+    let root = Path::new(&root_str)
+        .canonicalize()
         .map_err(|e| format!("project root canonicalize: {}", e))?;
 
     let p = Path::new(path);
@@ -46,14 +48,20 @@ pub fn sanitize_path(path: &str) -> Result<String, String> {
         root.join(p)
     };
 
-    let canonical = normalized.canonicalize().or_else(|_| {
-        if is_windows() {
-            let extended = Path::new(r"\\?\").join(&normalized);
-            extended.canonicalize()
-        } else {
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "path does not exist"))
-        }
-    }).map_err(|_| format!("path does not exist: {}", path))?;
+    let canonical = normalized
+        .canonicalize()
+        .or_else(|_| {
+            if is_windows() {
+                let extended = Path::new(r"\\?\").join(&normalized);
+                extended.canonicalize()
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "path does not exist",
+                ))
+            }
+        })
+        .map_err(|_| format!("path does not exist: {}", path))?;
 
     if canonical.starts_with(&root) {
         Ok(canonical.to_string_lossy().to_string())
@@ -90,9 +98,12 @@ pub fn resolve_path(path: &str) -> String {
             return canonical.to_string_lossy().to_string();
         }
     }
-    let components: Vec<&str> = path.split(&['/', '\\'][..]).filter(|s| !s.is_empty()).collect();
+    let components: Vec<&str> = path
+        .split(&['/', '\\'][..])
+        .filter(|s| !s.is_empty())
+        .collect();
     for i in (1..=components.len()).rev() {
-        let suffix = components[components.len()-i..].join("/");
+        let suffix = components[components.len() - i..].join("/");
         let candidate = Path::new(&root).join(&suffix);
         if let Ok(canonical) = candidate.canonicalize() {
             if canonical.starts_with(&root) {
