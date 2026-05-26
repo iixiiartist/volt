@@ -114,7 +114,7 @@ All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate
 
 ## Tool Registry
 
-### Built-in Tools (38)
+### Built-in Tools (47)
 
 | Category | Tools | Feature Flag |
 |---|---|---|

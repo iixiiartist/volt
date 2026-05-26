@@ -8,6 +8,7 @@ pub mod delegate;
 #[cfg(feature = "tools-desktop")]
 pub mod desktop_tool;
 pub mod edit;
+pub mod final_answer;
 pub mod git_tool;
 pub mod glob_tool;
 pub mod grep_tool;
@@ -18,6 +19,7 @@ pub mod path;
 #[cfg(feature = "tools-pdf")]
 pub mod pdf_tool;
 pub mod read_tool;
+pub mod registration;
 pub mod registry;
 pub mod scrape_tool;
 #[cfg(feature = "tools-screenshot")]
@@ -27,5 +29,7 @@ pub mod sequential_thinking;
 pub mod time_tool;
 pub mod todo_tool;
 pub mod web_tool;
+pub mod you_tools;
 pub mod write_tool;
+pub use registration::{register_all_tools, setup_tools};
 pub use registry::{ToolFn, ToolRegistry};

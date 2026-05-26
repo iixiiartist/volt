@@ -167,9 +167,9 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // GPT / O-series → OpenAI
-    if m.starts_with("gpt-") || m.starts_with("o1-") || m.starts_with("o3-") || m.contains("openai")
-    {
+    // GPT / O-series → OpenAI (vendor-prefixed models like openai/gpt-oss-20b
+    // are hosted on Groq, not OpenAI; only native GPT/O names here)
+    if m.starts_with("gpt-") || m.starts_with("o1-") || m.starts_with("o3-") {
         let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
         return ProviderRoute {
             kind: ProviderKind::OpenAI,
@@ -258,7 +258,7 @@ impl Orchestrator {
                 let agent = create_agent(spec, tools);
                 let result = match agent.run(&task).await {
                     Ok(output) => {
-                        let state = agent.state.lock().await;
+                        let state = agent.state().lock().await;
                         StepResult {
                             agent_name,
                             output,
@@ -269,7 +269,7 @@ impl Orchestrator {
                         }
                     }
                     Err(e) => {
-                        let state = agent.state.lock().await;
+                        let state = agent.state().lock().await;
                         StepResult {
                             agent_name,
                             output: format!("error: {}", e),
@@ -317,7 +317,7 @@ impl Orchestrator {
             let agent = create_agent(spec, self.tools.clone());
             match agent.run(&task).await {
                 Ok(output) => {
-                    let state = agent.state.lock().await;
+                    let state = agent.state().lock().await;
                     prev_output = output.clone();
                     step_results.push(StepResult {
                         agent_name,
@@ -329,7 +329,7 @@ impl Orchestrator {
                     });
                 }
                 Err(e) => {
-                    let state = agent.state.lock().await;
+                    let state = agent.state().lock().await;
                     step_results.push(StepResult {
                         agent_name,
                         output: format!("error: {}", e),
@@ -422,7 +422,7 @@ impl Orchestrator {
 
         let supervisor = create_agent(supervisor_spec, self.tools.clone());
         let output = supervisor.run(task).await?;
-        let state = supervisor.state.lock().await;
+        let state = supervisor.state().lock().await;
 
         Ok(WorkflowResult {
             steps: vec![StepResult {
@@ -459,4 +459,26 @@ pub fn parse_agent_specs(json: &str) -> anyhow::Result<Vec<AgentSpec>> {
             })
         })
         .collect()
+}
+
+/// Build an LLM provider from a model identifier string.
+pub fn build_provider(model: &str, agent_name: &str) -> (Box<dyn LLMProvider>, String) {
+    let route = resolve_provider(model);
+    let kind_str = match route.kind {
+        ProviderKind::Anthropic => "anthropic",
+        ProviderKind::OpenAI => "openai",
+    };
+    let provider: Box<dyn LLMProvider> = match route.kind {
+        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
+            route.api_key,
+            Some(route.base_url),
+            agent_name.into(),
+        )),
+        ProviderKind::OpenAI => Box::new(OpenAIProvider::new(
+            route.api_key,
+            route.base_url,
+            agent_name.into(),
+        )),
+    };
+    (provider, kind_str.to_string())
 }

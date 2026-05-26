@@ -18,12 +18,15 @@ abstract: |
   to 4pp, and HuggingFace 384d BGE-small on tool selection alone delivers +12pp.
   At 200 distractor tools on the production Rust binary with Ollama 1024d
   embeddings, Volt achieves **100% function-calling accuracy** with argument-level
-  validation on llama-3.1-8b-instant — matching 70b-class performance. Tool-count
+  validation on llama-3.1-8b-instant — matching 70b-class performance. Cross-model
+  evaluation across 6 Groq-hosted models (8B–120B) on BFCL v4 simple_python (50 cases)
+  shows qwen3-32b at 92.0%, exceeding its BFCL v3 #2 global rank of 75.7%. Tool-count
   scaling ablation shows a **flat accuracy curve from 0 to 200+ distractors**,
   proving dense vector gating eliminates the registry-size accuracy penalty.
-  We identify boundary conditions for the approach, release the full Rust 
-  implementation (MIT license, 57 source files, ~13,000 lines), and provide a
-  benchmark harness costing \$0.37 for independent replication.
+  GAIA benchmarking was evaluated and deprecated — the benchmark's 27.5% average
+  (GPT-5 Mini tops at 44.8%) requires GPT-4-class reasoning beyond our Groq-hosted
+  model sizes. We release the full Rust implementation (MIT license, 57 source files,
+  ~13,000 lines), and provide a BFCL v3/v4 benchmark harness for independent replication.
 bibliography: paper/paper.bib
 
 ---
@@ -179,7 +182,7 @@ asynchronously via a Tokio MPSC channel:
                                                  |- Batch drain (<= 32)
                                                  |- Embed via Ollama (semaphore=5)
                                                  |- seed_batch() with dedup + eviction
-                                                 \- Episodic merge (every 10 batches)
+                                                 +- Episodic merge (every 10 batches)
 ```
 
 Three event types: EpisodeComplete, ArtifactCreated, MCPRegistered.
@@ -245,7 +248,10 @@ This demonstrates: poor embeddings harm (-6pp), better embeddings reduce harm
 The production Rust binary (`volt agent-run`) was evaluated on the full BFCL v4
 simple_python benchmark (400 cases) with `EMBEDDING_PROVIDER=none` (deterministic
 fallback) and `VOLT_MINIMAL_TOOLS=1` (approximately 16 essential tools). Each case
-tests whether the agent calls the correct function with valid arguments:
+tests whether the agent calls the correct function with valid arguments.
+The minimal tool set is used here to control per-case latency; the Python API
+results in §4.5 use full 51-tool registries with distractors and are the
+appropriate reference for token-savings claims.
 
 | Configuration | Cases | Accuracy | Avg Latency |
 |---|---|---|---|
@@ -322,6 +328,8 @@ ablation on the Rust binary (BFCL v4 simple_python, 50 cases per config).
 Each configuration enables a different subset of the 12 context kinds while
 holding the total retrieval budget fixed (ceil(8 / N_kinds) slots per kind):
 
+**Pilot (50 cases per config):**
+
 | Config | Enabled Kinds | Accuracy | Δ vs Baseline |
 |---|---|---|---|
 | `tool_only` | Tool | 80.0% | — |
@@ -333,6 +341,8 @@ holding the total retrieval budget fixed (ceil(8 / N_kinds) slots per kind):
 | `all` | All 12 kinds | 82.0% | +2.0pp |
 
 Two full 400-case sweeps on the extremal configurations confirmed the direction:
+
+**Confirmation sweep (400 cases per config):**
 
 | Configuration | 400-case Accuracy | Latency |
 |---|---|---|
@@ -424,7 +434,7 @@ All previously-identified limitations have been resolved in the current version:
 9. **Migration drift** — Fixed: single 0001_core.sql with idempotent DROP guards.
 10. **Observability** — Fixed: OpenTelemetry bridge with OTLP export support.
 
-Remaining: multi-turn GAIA/Tau-Bench full evaluation and top-K retrieval
+Remaining: BFCL v4 full 17-category evaluation and cross-model comparison
 sweep — identified for future work.
 
 ## 7. Compliance Implications

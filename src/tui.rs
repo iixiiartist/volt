@@ -125,7 +125,7 @@ impl TuiChat {
     }
 
     async fn load_agent_messages(&mut self, agent: &Agent) {
-        let state = agent.state.lock().await;
+        let state = agent.state().lock().await;
         for msg in &state.messages {
             self.messages.push(ChatMessage {
                 role: msg.role.clone(),
@@ -168,7 +168,7 @@ impl TuiChat {
             Ok(output) => {
                 self.add_message("assistant", &output);
                 if let Some(ref sp) = sessions_pool {
-                    let s = agent.state.lock().await;
+                    let s = agent.state().lock().await;
                     let _ = crate::session::create_session(
                         sp,
                         &Session {

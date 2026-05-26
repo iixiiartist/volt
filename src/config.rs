@@ -21,12 +21,23 @@ pub struct AgentConfigSection {
     pub temperature: Option<f32>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct EmbeddingConfigSection {
     pub model: Option<String>,
     pub provider: Option<String>,
     pub endpoint: Option<String>,
     pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for EmbeddingConfigSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmbeddingConfigSection")
+            .field("model", &self.model)
+            .field("provider", &self.provider)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

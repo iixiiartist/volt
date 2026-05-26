@@ -1,3 +1,4 @@
+use crate::agent::prompt::build_system_prompt;
 use crate::context::ContextStore;
 use crate::embedding::EmbeddingClient;
 use crate::llm::provider::TokenCallback;
@@ -10,6 +11,7 @@ use crate::skills::SkillRegistry;
 use crate::tools::ToolRegistry;
 use crate::worker::SeedChannel;
 use sqlx::PgPool;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -17,8 +19,8 @@ use tracing::info;
 /// An autonomous agent — holds configuration, LLM provider, tool registry, and session state.
 /// Built via `Agent::new()` with chained `.with_*()` methods for context, skills, sessions, etc.
 pub struct Agent {
-    pub config: AgentConfig,
-    pub state: Arc<Mutex<AgentState>>,
+    config: AgentConfig,
+    state: Arc<Mutex<AgentState>>,
     provider: Box<dyn LLMProvider>,
     tools: Arc<ToolRegistry>,
     db: Option<PgPool>,
@@ -30,6 +32,16 @@ pub struct Agent {
     on_token: Option<TokenCallback>,
     session_id: Option<uuid::Uuid>,
     sqlite_pool: Option<sqlx::SqlitePool>,
+    workspace: Option<PathBuf>,
+}
+
+impl Agent {
+    pub fn config(&self) -> &AgentConfig {
+        &self.config
+    }
+    pub fn state(&self) -> &Arc<Mutex<AgentState>> {
+        &self.state
+    }
 }
 
 impl Agent {
@@ -65,7 +77,13 @@ impl Agent {
             on_token: None,
             session_id: None,
             sqlite_pool: None,
+            workspace: None,
         }
+    }
+
+    pub fn with_workspace(mut self, path: PathBuf) -> Self {
+        self.workspace = Some(path);
+        self
     }
 
     pub fn with_memory(mut self, db: PgPool, embedder: EmbeddingClient) -> Self {
@@ -125,6 +143,34 @@ impl Agent {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
+            }
+        }
+
+        // Inject system prompt at the start of the conversation
+        {
+            let mut state = self.state.lock().await;
+            let has_prompt = state.messages.iter().any(|m| {
+                m.role == "system"
+                    && (m.content.contains("You are Volt")
+                        || self
+                            .config
+                            .system_prompt
+                            .as_ref()
+                            .map_or(false, |sp| m.content.contains(sp.as_str())))
+            });
+            if !has_prompt {
+                let prompt = build_system_prompt(&self.config, self.workspace.as_deref());
+                state.messages.insert(
+                    0,
+                    Message {
+                        role: "system".into(),
+                        content: Arc::new(prompt),
+                        tool_calls: None,
+                        tool_result: None,
+                        tool_name: None,
+                        created_at: chrono::Utc::now(),
+                    },
+                );
             }
         }
 
@@ -215,6 +261,19 @@ impl Agent {
             self.audit_turn(&request, &response, &state).await;
 
             if let Some(tool_calls) = &response.tool_calls {
+                // Check if any tool call is final_answer — extract answer and exit
+                if let Some(final_call) = tool_calls.iter().find(|tc| tc.name == "final_answer") {
+                    let answer = final_call.arguments["answer"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    self.push_assistant_message(&mut state, &response, Some(tool_calls))
+                        .await;
+                    drop(state);
+                    self.save_session_messages().await;
+                    return Ok(answer);
+                }
+
                 self.push_assistant_message(&mut state, &response, Some(tool_calls))
                     .await;
                 // Release the lock before tool execution — tools can take up to 300s,
@@ -258,10 +317,30 @@ impl Agent {
             }
         }
 
+        // Max iterations exhausted — return last meaningful content
         self.save_session_messages().await;
-        Err(anyhow::anyhow!(
-            "max iterations reached without final response"
-        ))
+        let state = self.state.lock().await;
+        let last_answer = state
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant" && !m.content.is_empty())
+            .or_else(|| {
+                state
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == "tool" && !m.content.is_empty())
+            })
+            .map(|m| m.content.as_str().to_string())
+            .unwrap_or_default();
+        if !last_answer.is_empty() {
+            Ok(last_answer)
+        } else {
+            Err(anyhow::anyhow!(
+                "max iterations reached without final response"
+            ))
+        }
     }
 
     /// Audit log: store the complete LLM turn (request + response) as a ContextEntry.

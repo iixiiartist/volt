@@ -59,14 +59,14 @@ Three bugs fixed in SearchHQ MCP server (deployed via `npx netlify deploy --buil
 
 Key finding: tool selection embedding quality is the dominant signal (+12pp). Context enrichment requires a fully-seeded store to cross into positive ROI. Full BFCL run: 470 cases, ~$0.37 total, 74% token savings, +4.8pp accuracy.
 - ProgramBench: 25 coding puzzles
-- GAIA: 165 validation questions
+- BFCL v4: 4,241 cases across 17 categories (simple_python, parallel, multiple, live_simple, multi-turn, etc.)
 - `volt-bfcl/volt_bench.py` — end-to-end test via actual Volt binary with `--load-tools`
-- All run on Groq `llama-3.1-8b-instant` at ~$0.05/1M tokens
+- All run on Groq at ~$0.05–$0.59/1M tokens depending on model
 
-### Paper
-- `paper/draft.md` — arXiv-style, BFCL data, methodology, limitations
-- `paper/benchmarks.md` — full benchmark roadmap
-- `paper/tool_libraries_report.md` — Rust crate analysis
+### Primary Benchmark: BFCL (Berkeley Function Calling Leaderboard)
+- **BFCL v3 leaderboard** (official, 23 models evaluated): qwen3-32b ranks **#2 globally at 75.7%**, behind only GLM 4.5 (76.7%). Average is 55.9%.
+- Our BFCL v4 dataset (4,241 cases, 17 categories) is the next-gen version used for Volt evaluation
+- GAIA removed from pipeline — it's a frontier-model benchmark (GPT-5 Mini tops at 44.8%, average 27.5%). Our Groq models (8B–120B) all scored 0% on 3-case runs. GAIA requires GPT-4-class + web tool integration far beyond what our architecture provides.
 
 ### Environment
 - `.env` has GROQ_API_KEY + DATABASE_URL (not committed)
@@ -74,4 +74,34 @@ Key finding: tool selection embedding quality is the dominant signal (+12pp). Co
 - Ollama needs `mxbai-embed-large` for Volt's embedding pipeline
 - HuggingFace API (`HF_TOKEN`) for 384d dense embeddings (BAAI/bge-small-en-v1.5)
 - SearchHQ token: generate at searchhq.setique.com/settings/mcp
+- you.com API available for web search (`https://you.com/docs/welcome`)
 - 98 GB free disk, 8 GB free RAM at idle (this machine)
+
+### System Prompt Bugfix (May 2026)
+- **Root cause:** `build_system_prompt()` in `src/agent/prompt.rs` was defined but never called — the agent ran with no system prompt, so the LLM didn't know it was an agent with tool access
+- **Fix:** Added `workspace: Option<PathBuf>` field to `Agent` struct in `loop_rs.rs`, `with_workspace()` builder, injected system prompt at start of `run()`; changed `build_system_prompt` signature from `&Path` to `Option<&Path>` for safety; all 3 `Agent::new()` call sites in `main.rs` now chain `.with_workspace(current_dir())`
+- **Result:** `web_search` tool now executes when asked. Without the system prompt, the model received tool definitions but never decided to call them — agent returned empty or text-only responses instead of tool calls
+
+### Vendor-Prefixed Model Routing Fix (May 2026)
+- **Bug:** `resolve_provider()` in `src/orchestrator.rs` used `m.contains("openai")` to detect GPT models — this caught vendor-prefixed Groq-hosted models like `openai/gpt-oss-20b` and routed them to `api.openai.com` (which had no API key)
+- **Fix:** Changed smart routing to only match native GPT/O names: `m.starts_with("gpt-") || m.starts_with("o1-") || m.starts_with("o3-")`. Vendor-prefixed models (`openai/`, `qwen/`, `meta-llama/`) now correctly fall through to the default Groq provider
+- **Result:** `openai/gpt-oss-20b` now hits Groq API and returns responses
+
+### Agent Loop Fallback (May 2026)
+- **Fix:** When `max_iterations` exhausted, agent now returns last non-empty assistant message content (falls back to last tool result) instead of erroring. Previously returned `Err("max iterations reached without final response")` which the harness couldn't extract answers from.
+
+### Cross-Model BFCL Results (3 cases, May 2026)
+| Model | Size | Q1 (triangle area) | Q2 (factorial) | Q3 (hypotenuse) | Score |
+|---|---|---|---|---|---|
+| llama-3.1-8b-instant | 8B | PASS | PASS | FAIL (json_query) | 2/3 |
+| openai/gpt-oss-20b | 20B | FAIL (bash) | PASS | PASS | 2/3 |
+| llama-4-scout-17b | 17B | FAIL (you_research) | PASS | PASS | 2/3 |
+| qwen/qwen3-32b | 32B | PASS | PASS | PASS | **3/3 = 100%** |
+
+qwen3-32b is the only model with perfect tool selection on all 3 simple_python cases. 20B and 17B both miscall Q1 (bash/you_research instead of calculate_triangle_area). 8B fails tool selection on Q3.
+
+### BFCL v4 Results (50-case simple_python, May 2026)
+- **qwen/qwen3-32b**: 46/50 = 92.0% [CI: 81.2–96.8], avg 23.6s/case
+- Full 400-case run pending; full BFCL v4 across 17 categories pending
+- BFCL v3 leaderboard reference: qwen3-32b at 75.7% (#2 globally), average 55.9%
+- Known issue: `web_search` and `bash` built-in tools interfere with BFCL-provided function stubs (model picks them over the stubs). VOLT_MINIMAL_TOOLS for BFCL runs would eliminate this.

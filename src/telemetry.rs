@@ -16,7 +16,11 @@ pub fn init_otel(service_name: &str) {
 
         let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
         let subscriber = tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_target(false))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false)
+                    .with_writer(std::io::stderr),
+            )
             .with(telemetry);
 
         subscriber.init();

@@ -1,10 +1,12 @@
 pub mod catalog;
 pub mod importer;
 
+use crate::cosine_similarity;
 use crate::db::{self, SkillEntry};
 use crate::embedding::EmbeddingClient;
 use sqlx::PgPool;
 use std::path::Path;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Parsed SKILL.md manifest
@@ -171,4 +173,14 @@ pub fn parse_skill_manifest(path: &Path) -> anyhow::Result<SkillManifest> {
     })
 }
 
-use crate::cosine_similarity;
+/// Build a SkillRegistry from the database, loading skills into memory.
+pub async fn setup_skills(
+    pool: Option<sqlx::PgPool>,
+    embedder: Option<EmbeddingClient>,
+) -> Arc<SkillRegistry> {
+    let mut registry = SkillRegistry::new(pool, embedder);
+    if let Err(e) = registry.load_from_db().await {
+        eprintln!("Warning: failed to load skills from database: {}", e);
+    }
+    Arc::new(registry)
+}

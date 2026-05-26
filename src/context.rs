@@ -63,6 +63,35 @@ impl ContextKind {
     }
 }
 
+/// Parse a list of context kind strings into a vector of ContextKind values.
+/// Unknown strings are skipped with a warning. Returns all kinds if input is empty.
+pub fn parse_context_kinds(input: &[String]) -> Vec<ContextKind> {
+    if input.is_empty() {
+        return crate::models::default_context_kinds();
+    }
+    input
+        .iter()
+        .filter_map(|s| match s.to_lowercase().as_str() {
+            "tool" => Some(ContextKind::Tool),
+            "skill" => Some(ContextKind::Skill),
+            "memory" => Some(ContextKind::Memory),
+            "conversation" => Some(ContextKind::Conversation),
+            "agent_run" | "agentrun" => Some(ContextKind::AgentRun),
+            "artifact" => Some(ContextKind::Artifact),
+            "system_prompt" | "systemprompt" => Some(ContextKind::SystemPrompt),
+            "few_shot" | "fewshot" => Some(ContextKind::FewShot),
+            "policy" => Some(ContextKind::Policy),
+            "permission" => Some(ContextKind::Permission),
+            "security" => Some(ContextKind::Security),
+            "mcp_config" | "mcpconfig" => Some(ContextKind::MCPConfig),
+            _ => {
+                eprintln!("[warn] unknown context kind '{}', skipping", s);
+                None
+            }
+        })
+        .collect()
+}
+
 // ── Universal context entry ───────────────────────────────────────────────
 
 /// A single entry in the unified context store — kind, content, embedding, metadata, and stats.

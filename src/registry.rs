@@ -4,6 +4,7 @@ use crate::validation::{validate_manifest, verify_declared_sha};
 use anyhow::Context;
 use reqwest::Client;
 use sqlx::PgPool;
+use std::path::Path;
 use uuid::Uuid;
 
 pub struct RegistryClient {
@@ -90,4 +91,10 @@ pub async fn provision_manifest(
         verified: marketplace_verified,
         execution_id: Uuid::new_v4(),
     })
+}
+
+/// Load a manifest from a JSON file path.
+pub async fn load_manifest(path: &Path) -> anyhow::Result<RegistryManifest> {
+    let body = tokio::fs::read_to_string(path).await?;
+    Ok(serde_json::from_str::<RegistryManifest>(&body)?)
 }

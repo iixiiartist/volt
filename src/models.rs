@@ -225,7 +225,7 @@ pub struct ToolResult {
 // ─── MCP types ────────────────────────────────────────────────
 
 /// Configuration for an MCP (Model Context Protocol) server — name, transport, tools, env vars.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MCPServerConfig {
     pub name: String,
     pub transport: MCPTransport,
@@ -233,8 +233,24 @@ pub struct MCPServerConfig {
     pub env: Option<HashMap<String, String>>,
 }
 
+impl std::fmt::Debug for MCPServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_env = self.env.as_ref().map(|m| {
+            m.keys()
+                .map(|k| (k.clone(), "***".to_string()))
+                .collect::<HashMap<_, _>>()
+        });
+        f.debug_struct("MCPServerConfig")
+            .field("name", &self.name)
+            .field("transport", &self.transport)
+            .field("tools", &self.tools)
+            .field("env", &redacted_env)
+            .finish()
+    }
+}
+
 /// Transport mechanism for an MCP server — HTTP with URL and optional headers, or Stdio.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum MCPTransport {
     #[serde(rename = "stdio")]
@@ -244,6 +260,29 @@ pub enum MCPTransport {
         url: String,
         headers: Option<HashMap<String, String>>,
     },
+}
+
+impl std::fmt::Debug for MCPTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MCPTransport::Stdio { command, args } => f
+                .debug_struct("Stdio")
+                .field("command", command)
+                .field("args", args)
+                .finish(),
+            MCPTransport::Http { url, headers } => {
+                let redacted = headers.as_ref().map(|h| {
+                    h.keys()
+                        .map(|k| (k.clone(), "***".to_string()))
+                        .collect::<HashMap<_, _>>()
+                });
+                f.debug_struct("Http")
+                    .field("url", url)
+                    .field("headers", &redacted)
+                    .finish()
+            }
+        }
+    }
 }
 
 // ─── Existing types ───────────────────────────────────────────
@@ -288,11 +327,21 @@ pub struct AgentTool {
 }
 
 /// Options for fetching from a registry — URL, auth token, timeout, cache settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegistryFetchOptions {
     pub pkg_id: String,
     pub registry_base_url: String,
     pub auth_token: Option<String>,
+}
+
+impl std::fmt::Debug for RegistryFetchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistryFetchOptions")
+            .field("pkg_id", &self.pkg_id)
+            .field("registry_base_url", &self.registry_base_url)
+            .field("auth_token", &self.auth_token.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 /// Result of provisioning a tool from a registry — success flag, manifest, and any warnings.

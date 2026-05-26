@@ -3,7 +3,7 @@
 
 Usage:
     python program_bench.py --limit 5     # run 5 puzzles
-    python program_bench.py --mode all     # run all 50 puzzles
+    python program_bench.py --mode all     # run all 25 puzzles
 
 Cost (Groq): ~$0.07 for full suite
 """

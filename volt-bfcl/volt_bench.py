@@ -137,6 +137,7 @@ def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-
     if not use_embed:
         env["EMBEDDING_PROVIDER"] = "none"
     env["VOLT_MINIMAL_TOOLS"] = "1"
+    env["VOLT_BFCL_MODE"] = "1"
 
     # Write BFCL functions as a JSONL stub file with normalized schemas
     tools_file = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
@@ -151,16 +152,18 @@ def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-
     tools_file.close()
 
     t0 = time.time()
-    timeout = 300 if use_embed else 120  # RAG mode needs more time for embedding computation
+    timeout = 300 if use_embed else 120
     result = subprocess.run(
         [binary, "agent-run", "--model", model, "-a", "--input", input_text,
          "--load-tools", tools_path],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, timeout=timeout,
         env=env,
     )
     elapsed = time.time() - t0
     os.unlink(tools_path)
-    output = result.stdout + "\n" + result.stderr
+    stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
+    stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+    output = stdout + "\n" + stderr
     return output, elapsed
 
 

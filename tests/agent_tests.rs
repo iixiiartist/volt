@@ -88,14 +88,14 @@ async fn test_agent_push_user_message() {
 
     // Check initial state
     {
-        let state = agent.state.lock().await;
+        let state = agent.state().lock().await;
         assert_eq!(state.messages.len(), 0);
     }
 
     agent.run("test input").await.ok();
 
     // After run, there should be at least the user message + assistant response
-    let state = agent.state.lock().await;
+    let state = agent.state().lock().await;
     assert!(state.messages.len() >= 2);
     assert_eq!(state.messages[0].role, "user");
     assert_eq!(state.messages[0].content.as_str(), "test input");

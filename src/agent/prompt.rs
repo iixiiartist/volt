@@ -1,31 +1,33 @@
 use crate::models::AgentConfig;
 use std::path::Path;
 
-pub fn build_system_prompt(config: &AgentConfig, workspace: &Path) -> String {
+pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> String {
     let mut parts = Vec::new();
 
     if let Some(ref sp) = config.system_prompt {
         parts.push(sp.clone());
     }
 
-    let soul_path = workspace.join("SOUL.md");
-    if soul_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&soul_path) {
-            parts.push(format!("## Personality\n{}", content));
+    if let Some(ws) = workspace {
+        let soul_path = ws.join("SOUL.md");
+        if soul_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&soul_path) {
+                parts.push(format!("## Personality\n{}", content));
+            }
         }
-    }
 
-    let memory_path = workspace.join("MEMORY.md");
-    if memory_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&memory_path) {
-            parts.push(format!("## Persistent Memory\n{}", content));
+        let memory_path = ws.join("MEMORY.md");
+        if memory_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&memory_path) {
+                parts.push(format!("## Persistent Memory\n{}", content));
+            }
         }
-    }
 
-    let user_path = workspace.join("USER.md");
-    if user_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&user_path) {
-            parts.push(format!("## User Profile\n{}", content));
+        let user_path = ws.join("USER.md");
+        if user_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&user_path) {
+                parts.push(format!("## User Profile\n{}", content));
+            }
         }
     }
 

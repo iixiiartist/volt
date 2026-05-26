@@ -388,6 +388,19 @@ pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &Embedding
     }
 }
 
+/// Spawn background seeding: workspace, tool intents, permissions, security.
+pub async fn seed_background(
+    store: Arc<ContextStore>,
+    embedder: EmbeddingClient,
+    tools: Arc<ToolRegistry>,
+    sandbox: SandboxPolicy,
+) {
+    seed_from_workspace(&store, &embedder).await;
+    seed_tool_intents(&store, &tools, &embedder).await;
+    seed_permissions(&store, &tools, &embedder).await;
+    seed_security_policy(&store, &sandbox, &embedder).await;
+}
+
 pub async fn seed_tool_intents(
     store: &Arc<ContextStore>,
     tools: &Arc<ToolRegistry>,

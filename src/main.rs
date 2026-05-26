@@ -1,48 +1,15 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::sync::Arc;
 use uuid::Uuid;
 use volt::agent::loop_rs::Agent;
 use volt::config::Settings;
 use volt::context::ContextStore;
 use volt::db;
 use volt::embedding::EmbeddingClient;
-use volt::llm::anthropic::AnthropicProvider;
-use volt::llm::LLMProvider;
-use volt::llm::OpenAIProvider;
 use volt::mcp::MCPServer;
 use volt::models::*;
 use volt::registry::{provision_manifest, RegistryClient};
-use volt::tools::ToolRegistry;
-use volt::{sandbox, validation, worker};
-
-fn parse_context_kinds(input: &[String]) -> Vec<volt::context::ContextKind> {
-    if input.is_empty() {
-        return volt::models::default_context_kinds();
-    }
-    use volt::context::ContextKind;
-    input
-        .iter()
-        .filter_map(|s| match s.to_lowercase().as_str() {
-            "tool" => Some(ContextKind::Tool),
-            "skill" => Some(ContextKind::Skill),
-            "memory" => Some(ContextKind::Memory),
-            "conversation" => Some(ContextKind::Conversation),
-            "agent_run" | "agentrun" => Some(ContextKind::AgentRun),
-            "artifact" => Some(ContextKind::Artifact),
-            "system_prompt" | "systemprompt" => Some(ContextKind::SystemPrompt),
-            "few_shot" | "fewshot" => Some(ContextKind::FewShot),
-            "policy" => Some(ContextKind::Policy),
-            "permission" => Some(ContextKind::Permission),
-            "security" => Some(ContextKind::Security),
-            "mcp_config" | "mcpconfig" => Some(ContextKind::MCPConfig),
-            _ => {
-                eprintln!("[warn] unknown context kind '{}', skipping", s);
-                None
-            }
-        })
-        .collect()
-}
+use volt::{orchestrator, sandbox, validation, worker};
 
 #[derive(Parser, Debug)]
 #[command(name = "volt")]
@@ -228,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
             println!("schema initialized");
         }
         Commands::Validate { manifest } => {
-            let manifest = load_manifest(&manifest).await?;
+            let manifest = volt::registry::load_manifest(&manifest).await?;
             let report = validation::validate_manifest(&manifest);
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !report.accepted {
@@ -239,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
             manifest,
             marketplace_verified,
         } => {
-            let manifest = load_manifest(&manifest).await?;
+            let manifest = volt::registry::load_manifest(&manifest).await?;
             let pool = db::connect(&settings.database_url).await?;
             let embedder = EmbeddingClient::new_smart().await;
             let result =
@@ -366,7 +333,7 @@ async fn main() -> anyhow::Result<()> {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
-            let (provider, provider_kind) = build_provider(&model, "volt-agent");
+            let (provider, provider_kind) = orchestrator::build_provider(&model, "volt-agent");
 
             let cancel = volt::models::CancelToken::new();
             let c = cancel.clone();
@@ -377,7 +344,7 @@ async fn main() -> anyhow::Result<()> {
             });
 
             let embedder = EmbeddingClient::new_smart().await;
-            let tools = setup_tools(Some(&embedder)).await;
+            let tools = volt::tools::setup_tools(Some(&embedder)).await;
 
             // Load tool stubs from a JSONL file (BFCL format)
             if let Some(ref path) = load_tools {
@@ -447,12 +414,13 @@ async fn main() -> anyhow::Result<()> {
                 toolsets: vec!["builtin".into()],
                 hidden: false,
                 allow_all: allow,
-                enabled_context_kinds: parse_context_kinds(&context_kinds),
+                enabled_context_kinds: volt::context::parse_context_kinds(&context_kinds),
                 essential_tools: volt::models::default_essential_tools(),
                 context_kind_quotas: Default::default(),
             };
             let config_quotas = config.context_kind_quotas.clone();
             let mut agent = Agent::new(config, provider, tools_for_agent)
+                .with_workspace(std::env::current_dir().unwrap_or_default())
                 .with_cancel(cancel_for_agent)
                 .with_stream(std::sync::Arc::new(|token| {
                     print!("{}", token);
@@ -497,7 +465,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 agent = agent.with_memory_embedder_only(embedder.clone());
             }
-            let skills = setup_skills(pool.clone(), Some(embedder_for_skills)).await;
+            let skills = volt::skills::setup_skills(pool.clone(), Some(embedder_for_skills)).await;
             agent = agent.with_skills(skills);
 
             let context_store = if let Some(ref p) = pool {
@@ -535,7 +503,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .spawn(seed_rx);
 
-            tokio::spawn(seed_background(
+            tokio::spawn(worker::seed_background(
                 context_store.clone(),
                 embedder.clone(),
                 tools_for_seed.clone(),
@@ -565,89 +533,48 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-            if let Some(ref sp) = sessions_pool {
-                if let Ok(sessions) = volt::session::list_sessions(sp, 10).await {
-                    if !sessions.is_empty() {
-                        println!("Past sessions:");
-                        for (i, s) in sessions.iter().enumerate() {
-                            println!(
-                                "  {}. {} ({} msgs, {})",
-                                i + 1,
-                                s.title,
-                                s.message_count,
-                                s.created_at.format("%b %d %H:%M")
-                            );
+            // Run the input once and print the result (non-interactive)
+            match agent.run(&input).await {
+                Ok(result) => println!("{}", result),
+                Err(e) => {
+                    let state = agent.state().lock().await;
+                    let last_text = state.messages.iter().rev().find_map(|m| {
+                        let c = m.content.trim();
+                        if !c.is_empty() { Some(c.to_string()) } else { 
+                            m.tool_result.as_ref().and_then(|r| {
+                                let t = r.trim();
+                                if !t.is_empty() { Some(t.to_string()) } else { None }
+                            })
                         }
-                        print!("Resume a session? [1-{}/N] ", sessions.len());
-                        use std::io::Write;
-                        std::io::stdout().flush()?;
-                        let answer = tokio::task::spawn_blocking(|| {
-                            let mut buf = String::new();
-                            std::io::stdin().read_line(&mut buf).ok();
-                            buf
-                        })
-                        .await
-                        .unwrap_or_default();
-                        if let Ok(idx) = answer.trim().parse::<usize>() {
-                            if let Some(idx) = idx.checked_sub(1) {
-                                if let Some(s) = sessions.get(idx) {
-                                    if let Ok(msgs) = volt::session::load_messages(sp, s.id).await {
-                                        let mut state = agent.state.lock().await;
-                                        state.session_id = s.id;
-                                        state.messages = msgs;
-                                        println!(
-                                            "Resumed session '{}' with {} messages.",
-                                            s.title,
-                                            state.messages.len()
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                    });
+                    match last_text {
+                        Some(text) => println!("{}", text),
+                        None => eprintln!("error: {}", e),
                     }
                 }
             }
 
-            println!("Volt agent chat - type /quit to exit");
-            loop {
-                print!("> ");
-                use std::io::Write;
-                std::io::stdout().flush()?;
-                let input = tokio::task::spawn_blocking(|| {
-                    let mut buf = String::new();
-                    std::io::stdin().read_line(&mut buf).ok();
-                    buf
-                })
-                .await
-                .unwrap_or_default();
-                let input = input.trim().to_string();
-                if input.is_empty() || input == "/quit" {
-                    break;
-                }
-                let _result = agent.run(&input).await?;
-                println!();
-
-                if let Some(ref sp) = sessions_pool {
-                    let state = agent.state.lock().await;
-                    let _ = volt::session::create_session(
-                        sp,
-                        &Session {
-                            id: state.session_id,
-                            agent_name: state.name.clone(),
-                            title: input.chars().take(60).collect::<String>(),
-                            message_count: state.messages.len() as u32,
-                            created_at: state.created_at,
-                            updated_at: state.updated_at,
-                        },
-                    )
-                    .await;
-                    let _ = volt::session::save_session_messages_atomic(
-                        sp,
-                        state.session_id,
-                        &state.messages,
-                    )
-                    .await;
-                }
+            // Save session messages if available
+            if let Some(ref sp) = sessions_pool {
+                let state = agent.state().lock().await;
+                let _ = volt::session::create_session(
+                    sp,
+                    &Session {
+                        id: state.session_id,
+                        agent_name: state.name.clone(),
+                        title: input.chars().take(60).collect::<String>(),
+                        message_count: state.messages.len() as u32,
+                        created_at: state.created_at,
+                        updated_at: state.updated_at,
+                    },
+                )
+                .await;
+                let _ = volt::session::save_session_messages_atomic(
+                    sp,
+                    state.session_id,
+                    &state.messages,
+                )
+                .await;
             }
         }
         Commands::AgentTui {
@@ -658,8 +585,8 @@ async fn main() -> anyhow::Result<()> {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
-            let (provider, provider_kind) = build_provider(&model, "volt-agent");
-            let tools = register_all_tools().await;
+            let (provider, provider_kind) = orchestrator::build_provider(&model, "volt-agent");
+            let tools = volt::tools::register_all_tools().await;
             let embedder = EmbeddingClient::new_smart().await;
             tools.compute_embeddings(&embedder).await;
 
@@ -677,7 +604,8 @@ async fn main() -> anyhow::Result<()> {
                 essential_tools: volt::models::default_essential_tools(),
                 context_kind_quotas: Default::default(),
             };
-            let mut agent = Agent::new(config, provider, tools.clone());
+            let mut agent = Agent::new(config, provider, tools.clone())
+                .with_workspace(std::env::current_dir().unwrap_or_default());
 
             let context_store = ContextStore::new();
             let (seed_channel, seed_rx) = worker::create_seed_channel();
@@ -689,7 +617,7 @@ async fn main() -> anyhow::Result<()> {
             worker::AutoSeedWorker::new(context_store.clone(), embedder.clone(), cancel_tui)
                 .spawn(seed_rx);
 
-            tokio::spawn(seed_background(
+            tokio::spawn(worker::seed_background(
                 context_store.clone(),
                 embedder.clone(),
                 tools.clone(),
@@ -738,7 +666,7 @@ async fn main() -> anyhow::Result<()> {
                                 if let Some(s) = sessions.get(idx) {
                                     if let Ok(msgs) = volt::session::load_messages(&sp, s.id).await
                                     {
-                                        let mut state = agent.state.lock().await;
+                                        let mut state = agent.state().lock().await;
                                         state.session_id = s.id;
                                         state.messages = msgs;
                                     }
@@ -764,7 +692,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             let tasks: Vec<String> = serde_json::from_str(&tasks)?;
-            let tools = register_all_tools().await;
+            let tools = volt::tools::register_all_tools().await;
             let orch = volt::orchestrator::Orchestrator::new(tools);
             let result = orch.run_workflow(&pattern, specs, tasks).await?;
             println!(
@@ -788,8 +716,8 @@ async fn main() -> anyhow::Result<()> {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
-            let (provider, provider_kind) = build_provider(&model, "eval-agent");
-            let tools = register_all_tools().await;
+            let (provider, provider_kind) = orchestrator::build_provider(&model, "eval-agent");
+            let tools = volt::tools::register_all_tools().await;
             let config = AgentConfig {
                 name: "eval-agent".into(),
                 model,
@@ -804,13 +732,14 @@ async fn main() -> anyhow::Result<()> {
                 essential_tools: volt::models::default_essential_tools(),
                 context_kind_quotas: Default::default(),
             };
-            let agent = Agent::new(config, provider, tools);
+            let agent = Agent::new(config, provider, tools)
+                .with_workspace(std::env::current_dir().unwrap_or_default());
 
             let summary = volt::eval::run_suite(&suite_data, &agent).await;
             volt::eval::print_summary(&summary);
         }
         Commands::McpServe => {
-            let tools = register_all_tools().await;
+            let tools = volt::tools::register_all_tools().await;
             let server = MCPServer::new(tools);
             server.serve_stdio().await?;
         }
@@ -953,873 +882,4 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Spawn background seeding: workspace, tool intents, permissions, security.
-async fn seed_background(
-    store: Arc<volt::context::ContextStore>,
-    embedder: volt::embedding::EmbeddingClient,
-    tools: Arc<volt::tools::ToolRegistry>,
-    sandbox: volt::models::SandboxPolicy,
-) {
-    let store_ref = &store;
-    let embedder_ref = &embedder;
-    let tools_ref = &tools;
-    let sandbox_ref = &sandbox;
-    worker::seed_from_workspace(store_ref, embedder_ref).await;
-    worker::seed_tool_intents(store_ref, tools_ref, embedder_ref).await;
-    worker::seed_permissions(store_ref, tools_ref, embedder_ref).await;
-    worker::seed_security_policy(store_ref, sandbox_ref, embedder_ref).await;
-}
-
-fn build_provider(model: &str, agent_name: &str) -> (Box<dyn LLMProvider>, String) {
-    use volt::orchestrator::{resolve_provider, ProviderKind};
-    let route = resolve_provider(model);
-    let kind_str = match route.kind {
-        ProviderKind::Anthropic => "anthropic",
-        ProviderKind::OpenAI => "openai",
-    };
-    let provider: Box<dyn LLMProvider> = match route.kind {
-        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
-            route.api_key,
-            Some(route.base_url),
-            agent_name.into(),
-        )),
-        ProviderKind::OpenAI => Box::new(OpenAIProvider::new(
-            route.api_key,
-            route.base_url,
-            agent_name.into(),
-        )),
-    };
-    (provider, kind_str.to_string())
-}
-
-async fn load_manifest(path: &PathBuf) -> anyhow::Result<RegistryManifest> {
-    let body = tokio::fs::read_to_string(path).await?;
-    Ok(serde_json::from_str::<RegistryManifest>(&body)?)
-}
-
-async fn setup_skills(
-    pool: Option<sqlx::PgPool>,
-    embedder: Option<EmbeddingClient>,
-) -> Arc<volt::skills::SkillRegistry> {
-    let mut registry = volt::skills::SkillRegistry::new(pool, embedder);
-    if let Err(e) = registry.load_from_db().await {
-        eprintln!("Warning: failed to load skills from database: {}", e);
-    }
-    Arc::new(registry)
-}
-
-async fn setup_tools(embedder: Option<&EmbeddingClient>) -> Arc<ToolRegistry> {
-    let registry = register_all_tools().await;
-    if let Some(emb) = embedder {
-        registry.compute_embeddings(emb).await;
-    }
-    registry
-}
-
-async fn register_all_tools() -> Arc<ToolRegistry> {
-    let registry = ToolRegistry::new();
-    let minimal = std::env::var("VOLT_MINIMAL_TOOLS").is_ok();
-
-    registry
-        .register_with_permission(
-            "bash",
-            "Execute a shell command",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "shell command to run" }
-                },
-                "required": ["command"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let cmd = args["command"].as_str().unwrap_or("");
-                    volt::tools::bash::execute_bash(cmd).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register_with_permission(
-            "read",
-            "Read a file from disk",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "file path to read" }
-                },
-                "required": ["path"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    volt::tools::read_tool::read_file(path).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register_with_permission(
-            "write",
-            "Write content to a file",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "file path" },
-                    "content": { "type": "string", "description": "content to write" }
-                },
-                "required": ["path", "content"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    let content = args["content"].as_str().unwrap_or("");
-                    volt::tools::write_tool::write_file(path, content).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register_with_permission(
-            "edit",
-            "Edit a file by replacing text",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "file path" },
-                    "old_string": { "type": "string", "description": "text to replace" },
-                    "new_string": { "type": "string", "description": "replacement text" }
-                },
-                "required": ["path", "old_string", "new_string"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    let old = args["old_string"].as_str().unwrap_or("");
-                    let new = args["new_string"].as_str().unwrap_or("");
-                    volt::tools::edit::edit_file(path, old, new).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register(
-            "glob",
-            "Find files matching a glob pattern",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "pattern": { "type": "string", "description": "glob pattern" },
-                    "base": { "type": "string", "description": "base directory" }
-                },
-                "required": ["pattern"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let pattern = args["pattern"].as_str().unwrap_or("*");
-                    let base = args["base"].as_str().unwrap_or(".");
-                    volt::tools::glob_tool::glob_files(pattern, base).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "grep",
-            "Search file contents with regex",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "pattern": { "type": "string", "description": "regex pattern" },
-                    "path": { "type": "string", "description": "directory to search" }
-                },
-                "required": ["pattern"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let pattern = args["pattern"].as_str().unwrap_or("");
-                    let path = args["path"].as_str().unwrap_or(".");
-                    volt::tools::grep_tool::grep_files(pattern, path).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register_with_permission(
-            "web_fetch",
-            "Fetch a URL and return its content",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "URL to fetch" }
-                },
-                "required": ["url"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let url = args["url"].as_str().unwrap_or("");
-                    volt::tools::web_tool::web_fetch(url).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register(
-            "memory_append",
-            "Append to persistent memory file",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "kind": { "type": "string", "description": "memory category" },
-                    "content": { "type": "string", "description": "content to remember" }
-                },
-                "required": ["kind", "content"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let kind = args["kind"].as_str().unwrap_or("note");
-                    let content = args["content"].as_str().unwrap_or("");
-                    volt::tools::memory_tool::memory_append(kind, content).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "todo_add",
-            "Add a task to the todo list",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "task": { "type": "string", "description": "task description" }
-                },
-                "required": ["task"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let task = args["task"].as_str().unwrap_or("");
-                    volt::tools::todo_tool::todo_add(task).await
-                })
-            }),
-        )
-        .await;
-
-    let delegate_tools = registry.clone();
-    let delegate_fn = {
-        let dt = delegate_tools.clone();
-        Arc::new(move |args: serde_json::Value| {
-            let dt = dt.clone();
-            Box::pin(async move {
-                let task = args["task"].as_str().unwrap_or("");
-                let context = args["context"].as_str().unwrap_or("");
-                volt::tools::delegate::delegate_task(task, context, dt).await
-            })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send>>
-        })
-    };
-    registry.register_with_permission("delegate", "Delegate a sub-task to a sub-agent and return its result", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "task": { "type": "string", "description": "task description for the sub-agent" },
-            "context": { "type": "string", "description": "context and constraints from the parent agent" }
-        },
-        "required": ["task"]
-    }), "builtin", delegate_fn, PermissionLevel::Prompt).await;
-
-    let workflow_fn = {
-        let wt = registry.clone();
-        Arc::new(move |args: serde_json::Value| {
-            let wt = wt.clone();
-            Box::pin(async move {
-                let pattern = args["pattern"].as_str().unwrap_or("parallel");
-                let agents_json = args["agents"].as_str().unwrap_or("[]");
-                let tasks_json = args["tasks"].as_str().unwrap_or("[]");
-                let started = std::time::Instant::now();
-
-                match volt::orchestrator::parse_agent_specs(agents_json) {
-                    Ok(specs) => match serde_json::from_str::<Vec<String>>(tasks_json) {
-                        Ok(tasks) => {
-                            let orch = volt::orchestrator::Orchestrator::new(wt.clone());
-                            match orch.run_workflow(pattern, specs, tasks).await {
-                                Ok(result) => volt::models::ToolResult {
-                                    success: true,
-                                    output: result.final_output,
-                                    error: None,
-                                    duration_ms: started.elapsed().as_millis(),
-                                },
-                                Err(e) => volt::models::ToolResult {
-                                    success: false,
-                                    output: String::new(),
-                                    error: Some(format!("workflow error: {}", e)),
-                                    duration_ms: started.elapsed().as_millis(),
-                                },
-                            }
-                        }
-                        Err(e) => volt::models::ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(format!("invalid tasks JSON: {}", e)),
-                            duration_ms: started.elapsed().as_millis(),
-                        },
-                    },
-                    Err(e) => volt::models::ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("invalid agents JSON: {}", e)),
-                        duration_ms: started.elapsed().as_millis(),
-                    },
-                }
-            })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send>>
-        })
-    };
-    registry.register_with_permission("run_workflow", "Execute a multi-agent workflow (parallel or pipeline) and return combined results", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "pattern": { "type": "string", "description": "workflow pattern: 'parallel' or 'pipeline'" },
-            "agents": { "type": "string", "description": "JSON array of agent specs, each with 'name' (required) and optional 'model', 'system_prompt', 'max_iterations', 'temperature'" },
-            "tasks": { "type": "string", "description": "JSON array of task strings (one per agent for parallel, one per stage for pipeline)" }
-        },
-        "required": ["pattern", "agents", "tasks"]
-    }), "builtin", workflow_fn, PermissionLevel::Prompt).await;
-
-    registry
-        .register_with_permission(
-            "web_scrape",
-            "Extract structured content from a URL using a CSS selector. Returns text content of all matching elements.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "URL to scrape" },
-                    "selector": { "type": "string", "description": "CSS selector to match elements" }
-                },
-                "required": ["url", "selector"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let url = args["url"].as_str().unwrap_or("");
-                    let selector = args["selector"].as_str().unwrap_or("");
-                    volt::tools::scrape_tool::web_scrape(url, selector).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register_with_permission(
-            "web_scrape_all",
-            "Fetch a URL and extract all human-readable content (headings, paragraphs, links). General-purpose page reading without needing a CSS selector.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "URL to fetch and extract" }
-                },
-                "required": ["url"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let url = args["url"].as_str().unwrap_or("");
-                    volt::tools::scrape_tool::web_scrape_all(url).await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry
-        .register(
-            "json_validate",
-            "Validate JSON string and return its type (object, array, string, number, boolean, null).",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "data": { "type": "string", "description": "JSON string to validate" }
-                },
-                "required": ["data"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let data = args["data"].as_str().unwrap_or("");
-                    volt::tools::json_tool::json_validate(data).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "json_prettify",
-            "Format JSON with custom indentation for readability.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "data": { "type": "string", "description": "JSON string to format" },
-                    "indent": { "type": "integer", "description": "spaces per indent level (default: 2)" }
-                },
-                "required": ["data"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let data = args["data"].as_str().unwrap_or("");
-                    let indent = args["indent"].as_u64().unwrap_or(2) as u8;
-                    volt::tools::json_tool::json_prettify(data, indent).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "json_query",
-            "Extract a value from JSON using a dot-separated path (e.g. 'store.book[0].title'). Supports nested objects and array indexing.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "data": { "type": "string", "description": "JSON string to query" },
-                    "path": { "type": "string", "description": "dot-separated path with optional array indices (e.g. 'items[0].name')" }
-                },
-                "required": ["data", "path"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let data = args["data"].as_str().unwrap_or("");
-                    let path = args["path"].as_str().unwrap_or("");
-                    volt::tools::json_tool::json_query(data, path).await
-                })
-            }),
-        )
-        .await;
-
-    if minimal {
-        // Benchmark / minimal mode: only load essential tools to keep system prompt small
-        return registry;
-    }
-
-    #[cfg(feature = "tools-screenshot")]
-    registry
-        .register_with_permission(
-            "screenshot",
-            "Capture a screenshot of the primary monitor. Returns a base64-encoded PNG image. Use this to see what's on screen.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }),
-            "builtin",
-            Arc::new(|_args| {
-                Box::pin(async move {
-                    volt::tools::screenshot::capture_screenshot().await
-                })
-            }),
-            PermissionLevel::Prompt,
-        )
-        .await;
-
-    registry.register("create_bar_chart","Create a bar chart from labels and values, save as HTML.",
-        serde_json::json!({"type":"object","properties":{"title":{"type":"string"},"labels":{"type":"array","items":{"type":"string"}},"values":{"type":"array","items":{"type":"number"}},"output_path":{"type":"string"}},"required":["title","labels","values","output_path"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let t = args["title"].as_str().unwrap_or("Chart");
-            let l: Vec<String> = args["labels"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-            let v: Vec<f64> = args["values"].as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).collect()).unwrap_or_default();
-            let o = args["output_path"].as_str().unwrap_or("chart.html");
-            volt::tools::chart_tool::create_bar_chart(t, l, v, o).await
-        }))).await;
-
-    registry.register("create_line_chart","Create a line chart from labels and values, save as HTML.",
-        serde_json::json!({"type":"object","properties":{"title":{"type":"string"},"labels":{"type":"array","items":{"type":"string"}},"values":{"type":"array","items":{"type":"number"}},"output_path":{"type":"string"}},"required":["title","labels","values","output_path"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let t = args["title"].as_str().unwrap_or("Chart");
-            let l: Vec<String> = args["labels"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-            let v: Vec<f64> = args["values"].as_array().map(|a| a.iter().filter_map(|n| n.as_f64()).collect()).unwrap_or_default();
-            let o = args["output_path"].as_str().unwrap_or("chart.html");
-            volt::tools::chart_tool::create_line_chart(t, l, v, o).await
-        }))).await;
-    #[cfg(feature = "tools-pdf")]
-    registry.register_with_permission("create_pdf","Create a PDF document from text content.",
-        serde_json::json!({"type":"object","properties":{"content":{"type":"string","description":"text content"},"output_path":{"type":"string","description":"output .pdf path"}},"required":["content","output_path"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let c = args["content"].as_str().unwrap_or(""); let o = args["output_path"].as_str().unwrap_or("output.pdf");
-            volt::tools::pdf_tool::create_pdf(c, o).await
-        })), PermissionLevel::Prompt).await;
-
-    #[cfg(feature = "tools-desktop")]
-    registry.register_with_permission("desktop_click","Click at screen coordinates.",
-        serde_json::json!({"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}},"required":["x","y"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let x = args["x"].as_i64().unwrap_or(0) as i32; let y = args["y"].as_i64().unwrap_or(0) as i32;
-            volt::tools::desktop_tool::desktop_click(x, y).await
-        })), PermissionLevel::Prompt).await;
-
-    #[cfg(feature = "tools-desktop")]
-    registry.register_with_permission("desktop_type","Type text at cursor position.",
-        serde_json::json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let t = args["text"].as_str().unwrap_or("");
-            volt::tools::desktop_tool::desktop_type(t).await
-        })), PermissionLevel::Prompt).await;
-
-    #[cfg(feature = "tools-desktop")]
-    registry.register_with_permission("desktop_key","Press a key (enter, tab, escape, up, down, etc.).",
-        serde_json::json!({"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let k = args["key"].as_str().unwrap_or("");
-            volt::tools::desktop_tool::desktop_key(k).await
-        })), PermissionLevel::Prompt).await;
-
-    #[cfg(feature = "tools-desktop")]
-    registry.register("desktop_find_window","Find a window by title using Windows API.",
-        serde_json::json!({"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let t = args["title"].as_str().unwrap_or("");
-            volt::tools::desktop_tool::desktop_find_window(t).await
-        }))).await;
-
-    #[cfg(feature = "tools-browser")]
-    registry.register_with_permission("browser_navigate","Open a URL in headless Chrome and return the URL.",
-        serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let u = args["url"].as_str().unwrap_or("");
-            volt::tools::browser_tool::browser_navigate(u).await
-        })), PermissionLevel::Prompt).await;
-
-    #[cfg(feature = "tools-browser")]
-    registry.register_with_permission("browser_extract","Open a URL and extract text via CSS selector.",
-        serde_json::json!({"type":"object","properties":{"url":{"type":"string"},"selector":{"type":"string"}},"required":["url","selector"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let u = args["url"].as_str().unwrap_or(""); let s = args["selector"].as_str().unwrap_or("");
-            volt::tools::browser_tool::browser_extract(u, s).await
-        })), PermissionLevel::Prompt).await;
-
-    #[cfg(feature = "tools-browser")]
-    registry.register_with_permission("browser_screenshot","Open a URL and save a page screenshot.",
-        serde_json::json!({"type":"object","properties":{"url":{"type":"string"},"output_path":{"type":"string"}},"required":["url","output_path"]}),"builtin",
-        Arc::new(|args| Box::pin(async move {
-            let u = args["url"].as_str().unwrap_or(""); let o = args["output_path"].as_str().unwrap_or("screenshot.png");
-            volt::tools::browser_tool::browser_screenshot(u, o).await
-        })), PermissionLevel::Prompt).await;
-
-    registry
-        .register(
-            "csv_read",
-            "Read a CSV file and return its contents as formatted rows. Supports flexible column counts and optional headers.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "path to CSV file" },
-                    "has_header": { "type": "boolean", "description": "whether the CSV has a header row (default: true)" }
-                },
-                "required": ["path"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    let has_header = args["has_header"].as_bool().unwrap_or(true);
-                    volt::tools::csv_tool::csv_read(path, has_header).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "csv_write",
-            "Write data to a CSV file. Provide data as comma-separated lines, first line is header if has_header is true.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "path to CSV file" },
-                    "data": { "type": "string", "description": "CSV data, one row per line, comma-separated values" },
-                    "has_header": { "type": "boolean", "description": "whether first line is a header row (default: true)" }
-                },
-                "required": ["path", "data"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    let data = args["data"].as_str().unwrap_or("");
-                    let has_header = args["has_header"].as_bool().unwrap_or(true);
-                    volt::tools::csv_tool::csv_write(path, data, has_header).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "archive_extract",
-            "Extract an archive file (tar.gz, tgz, tar, gz) to a destination directory.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "path to archive file" },
-                    "dest": { "type": "string", "description": "destination directory to extract into" }
-                },
-                "required": ["path", "dest"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    let dest = args["dest"].as_str().unwrap_or("");
-                    volt::tools::archive_tool::archive_extract(path, dest).await
-                })
-            }),
-        )
-        .await;
-
-    registry
-        .register(
-            "archive_create",
-            "Create a tar or tar.gz archive from a list of source files/directories.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "output archive path" },
-                    "sources": { "type": "array", "items": { "type": "string" }, "description": "list of files and directories to include" },
-                    "format": { "type": "string", "description": "archive format: 'tar' or 'tar.gz' (default: 'tar.gz')" }
-                },
-                "required": ["path", "sources"]
-            }),
-            "builtin",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let path = args["path"].as_str().unwrap_or("");
-                    let sources: Vec<String> = args["sources"].as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                        .unwrap_or_default();
-                    let format = args["format"].as_str().unwrap_or("tar.gz");
-                    volt::tools::archive_tool::archive_create(path, &sources, format).await
-                })
-            }),
-        )
-        .await;
-
-    // ── Git tools ─────────────────────────────────────────────────────────
-    registry.register("git_status", "Show the working tree status (porcelain format).", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
-        }
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        volt::tools::git_tool::git_status(repo).await
-    }))).await;
-
-    registry.register("git_diff_unstaged", "Show unstaged changes in the working directory.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
-        }
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        volt::tools::git_tool::git_diff_unstaged(repo).await
-    }))).await;
-
-    registry.register("git_diff_staged", "Show staged changes (diff --cached).", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
-        }
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        volt::tools::git_tool::git_diff_staged(repo).await
-    }))).await;
-
-    registry.register("git_diff", "Show differences between branches or commits.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "target": { "type": "string", "description": "branch, commit, or range to diff against" }
-        },
-        "required": ["target"]
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let target = args["target"].as_str().unwrap_or("HEAD");
-        volt::tools::git_tool::git_diff(repo, target).await
-    }))).await;
-
-    registry.register("git_commit", "Record changes to the repository.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "message": { "type": "string", "description": "commit message" }
-        },
-        "required": ["message"]
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let msg = args["message"].as_str().unwrap_or("");
-        volt::tools::git_tool::git_commit(repo, msg).await
-    }))).await;
-
-    registry.register("git_add", "Add file contents to the staging area.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "files": { "type": "array", "items": { "type": "string" }, "description": "files to stage" }
-        },
-        "required": ["files"]
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let files: Vec<String> = args["files"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-        volt::tools::git_tool::git_add(repo, &files).await
-    }))).await;
-
-    registry.register("git_reset", "Unstage all staged changes.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
-        }
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        volt::tools::git_tool::git_reset(repo).await
-    }))).await;
-
-    registry.register("git_log", "Show commit logs (oneline format).", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "max_count": { "type": "number", "description": "maximum number of commits to show (default: 20)" }
-        }
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let count = args["max_count"].as_u64().unwrap_or(20) as u32;
-        volt::tools::git_tool::git_log(repo, count).await
-    }))).await;
-
-    registry.register("git_create_branch", "Create a new branch.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "branch": { "type": "string", "description": "name of the new branch" },
-            "base": { "type": "string", "description": "optional base branch or commit" }
-        },
-        "required": ["branch"]
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let branch = args["branch"].as_str().unwrap_or("");
-        let base = args["base"].as_str();
-        volt::tools::git_tool::git_create_branch(repo, branch, base).await
-    }))).await;
-
-    registry.register("git_checkout", "Switch branches.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "branch": { "type": "string", "description": "branch to switch to" }
-        },
-        "required": ["branch"]
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let branch = args["branch"].as_str().unwrap_or("");
-        volt::tools::git_tool::git_checkout(repo, branch).await
-    }))).await;
-
-    registry.register("git_show", "Show the contents of a commit.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" },
-            "revision": { "type": "string", "description": "revision (commit hash, branch, tag)" }
-        },
-        "required": ["revision"]
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        let rev = args["revision"].as_str().unwrap_or("HEAD");
-        volt::tools::git_tool::git_show(repo, rev).await
-    }))).await;
-
-    registry.register("git_branch", "List git branches.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "repo_path": { "type": "string", "description": "path to git repository (default: current dir)" }
-        }
-    }), "git", Arc::new(|args| Box::pin(async move {
-        let repo = args["repo_path"].as_str().unwrap_or(".");
-        volt::tools::git_tool::git_branch(repo).await
-    }))).await;
-
-    // ── Time tools ─────────────────────────────────────────────────────────
-    registry.register("get_current_time", "Get the current time in a specific timezone.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "timezone": { "type": "string", "description": "IANA timezone (e.g. 'America/New_York', 'UTC', 'Asia/Tokyo')" }
-        },
-        "required": ["timezone"]
-    }), "utilities", Arc::new(|args| Box::pin(async move {
-        let tz = args["timezone"].as_str().unwrap_or("UTC");
-        volt::tools::time_tool::get_current_time(tz).await
-    }))).await;
-
-    registry
-        .register(
-            "convert_time",
-            "Convert time between timezones.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "timezone": { "type": "string", "description": "source IANA timezone" },
-                    "timezone_to": { "type": "string", "description": "target IANA timezone" }
-                },
-                "required": ["timezone", "timezone_to"]
-            }),
-            "utilities",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let from = args["timezone"].as_str().unwrap_or("UTC");
-                    let to = args["timezone_to"].as_str().unwrap_or("UTC");
-                    volt::tools::time_tool::convert_time(from, to).await
-                })
-            }),
-        )
-        .await;
-
-    // ── Sequential thinking ────────────────────────────────────────────────
-    registry.register("sequentialthinking", "A detailed tool for dynamic and reflective problem-solving through structured thoughts. Use when the task requires careful reasoning, multi-step analysis, or exploring alternative solutions.", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "thought": { "type": "string", "description": "your current thought or reasoning step" },
-            "next_thought_needed": { "type": "boolean", "description": "whether another thought step is needed" },
-            "branch_id": { "type": "string", "description": "optional branch ID to explore alternative reasoning paths" },
-            "branch_from_thought": { "type": "number", "description": "optional thought number to branch from" }
-        },
-        "required": ["thought", "next_thought_needed"]
-    }), "reasoning", Arc::new(|args| Box::pin(async move {
-        let thought = args["thought"].as_str().unwrap_or("");
-        let next = args["next_thought_needed"].as_bool().unwrap_or(true);
-        let branch_id = args["branch_id"].as_str();
-        let branch_from = args["branch_from_thought"].as_u64().map(|n| n as u32);
-        volt::tools::sequential_thinking::sequentialthinking(thought, next, branch_id, branch_from).await
-    }))).await;
-
-    registry
 }
