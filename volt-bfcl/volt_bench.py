@@ -151,10 +151,11 @@ def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-
     tools_file.close()
 
     t0 = time.time()
+    timeout = 300 if use_embed else 120  # RAG mode needs more time for embedding computation
     result = subprocess.run(
         [binary, "agent-run", "--model", model, "-a", "--input", input_text,
          "--load-tools", tools_path],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=timeout,
         env=env,
     )
     elapsed = time.time() - t0

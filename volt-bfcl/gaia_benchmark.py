@@ -204,7 +204,7 @@ def normalize_answer(ans: str) -> str:
 
 def evaluate_answer(predicted: str, expected: str) -> bool:
     """Check if predicted answer matches the expected GAIA answer.
-    Uses exact-match after normalization — compliant with GAIA scoring standard."""
+    Exact-match after normalization — GAIA scoring standard compliant."""
     pred_norm = normalize_answer(predicted)
     exp_norm = normalize_answer(expected)
     if not pred_norm or not exp_norm:
@@ -224,11 +224,6 @@ def evaluate_answer(predicted: str, expected: str) -> bool:
             return True
     except ValueError:
         pass
-
-    # Exact substring: predicted answer wrapped exactly at start/end of pred_norm
-    # (replaces the old lenient "in" check which was too loose)
-    if pred_norm.startswith(exp_norm) or pred_norm.endswith(exp_norm):
-        return True
 
     return False
 
