@@ -409,28 +409,32 @@ impl ContextStore {
         min_cluster: usize,
     ) -> Vec<Vec<usize>> {
         let entries = self.entries.read().await;
+        // Pre-filter to this kind with embeddings to avoid O(n²) over all entries
+        let kind_entries: Vec<(usize, &StoredEntry)> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.entry.kind == kind && s.entry.embedding.is_some())
+            .collect();
+        let n = kind_entries.len();
         let mut clusters: Vec<Vec<usize>> = Vec::new();
-        let mut visited = vec![false; entries.len()];
+        let mut visited = vec![false; n];
 
-        for i in 0..entries.len() {
-            if visited[i] || entries[i].entry.kind != kind || entries[i].entry.embedding.is_none() {
+        for i in 0..n {
+            if visited[i] {
                 continue;
             }
-            let mut cluster = vec![i];
+            let mut cluster = vec![kind_entries[i].0];
             visited[i] = true;
-            let emb_i = entries[i].entry.embedding.as_ref().unwrap();
+            let emb_i = kind_entries[i].1.entry.embedding.as_ref().unwrap();
 
-            for j in (i + 1)..entries.len() {
-                if visited[j]
-                    || entries[j].entry.kind != kind
-                    || entries[j].entry.embedding.is_none()
-                {
+            for j in (i + 1)..n {
+                if visited[j] {
                     continue;
                 }
-                let emb_j = entries[j].entry.embedding.as_ref().unwrap();
+                let emb_j = kind_entries[j].1.entry.embedding.as_ref().unwrap();
                 let sim = cosine_similarity(emb_i, emb_j);
                 if sim >= threshold {
-                    cluster.push(j);
+                    cluster.push(kind_entries[j].0);
                     visited[j] = true;
                 }
             }

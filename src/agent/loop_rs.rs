@@ -138,11 +138,12 @@ impl Agent {
                 self.tools.get_definitions().await
             };
 
+            let model_ctx = crate::models::ModelContext::for_model(&self.config.model);
             let request = LLMRequest {
                 model: self.config.model.clone(),
                 messages: llm_messages,
                 temperature: Some(self.config.temperature),
-                max_tokens: Some(4096),
+                max_tokens: Some(model_ctx.max_tokens),
                 stop: None,
                 tools: Some(tool_defs),
                 stream: false,
@@ -354,6 +355,12 @@ impl Agent {
                     })
                     .collect();
                 let mut state = self.state.lock().await;
+                // Remove stale context blocks from prior iterations
+                state.messages.retain(|m| {
+                    !(m.role == "system"
+                        && (m.content.starts_with("<retrieved_context>")
+                            || m.content.starts_with("<retrieved_skills>")))
+                });
                 state.messages.push(Message {
                     role: "system".into(),
                     content: Arc::new(format!(

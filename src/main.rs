@@ -529,7 +529,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::spawn(async move {
                 worker::seed_from_workspace(&seed_store, &seed_embedder).await;
                 worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_permissions(&seed_store, &seed_tools).await;
+                worker::seed_permissions(&seed_store, &seed_tools, &seed_embedder).await;
                 worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
             });
 
@@ -608,7 +608,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::spawn(async move {
                 worker::seed_from_workspace(&seed_store, &seed_embedder).await;
                 worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_permissions(&seed_store, &seed_tools).await;
+                worker::seed_permissions(&seed_store, &seed_tools, &seed_embedder).await;
                 worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
             });
 
@@ -758,7 +758,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::spawn(async move {
                 worker::seed_from_workspace(&seed_store, &seed_embedder).await;
                 worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_permissions(&seed_store, &seed_tools).await;
+                worker::seed_permissions(&seed_store, &seed_tools, &seed_embedder).await;
                 worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
             });
 

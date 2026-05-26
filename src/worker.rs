@@ -120,7 +120,9 @@ pub struct SeedChannel {
 
 impl SeedChannel {
     pub fn send(&self, event: SeedEvent) {
-        let _ = self.tx.send(event);
+        if let Err(e) = self.tx.send(event) {
+            tracing::warn!("[volt worker] seed channel closed, event dropped: {:?}", e);
+        }
     }
 
     pub fn episode_complete(
@@ -431,7 +433,11 @@ pub async fn seed_tool_intents(
     }
 }
 
-pub async fn seed_permissions(store: &Arc<ContextStore>, tools: &Arc<ToolRegistry>) {
+pub async fn seed_permissions(
+    store: &Arc<ContextStore>,
+    tools: &Arc<ToolRegistry>,
+    embedder: &EmbeddingClient,
+) {
     let defs = tools.get_definitions().await;
     let mut entries: Vec<ContextEntry> = Vec::new();
 
@@ -447,11 +453,15 @@ pub async fn seed_permissions(store: &Arc<ContextStore>, tools: &Arc<ToolRegistr
             def.name,
             def.description,
         );
+        let embedding = match embedder.embed_description(&content).await {
+            Ok(emb) => Some(emb),
+            Err(_) => None,
+        };
         entries.push(ContextEntry {
             id: uuid::Uuid::new_v4(),
             kind: ContextKind::Permission,
             content,
-            embedding: None,
+            embedding,
             metadata: serde_json::json!({
                 "tool_name": def.name,
                 "permission": match perm {
