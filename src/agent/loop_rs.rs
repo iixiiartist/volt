@@ -112,7 +112,11 @@ impl Agent {
                 Ok(msgs) if !msgs.is_empty() => {
                     let mut state = self.state.lock().await;
                     state.messages.extend(msgs);
-                    tracing::info!("[session] loaded {} messages from {}", state.messages.len(), sid);
+                    tracing::info!(
+                        "[session] loaded {} messages from {}",
+                        state.messages.len(),
+                        sid
+                    );
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
@@ -131,10 +135,13 @@ impl Agent {
             let llm_messages = self.compress_if_needed(llm_messages).await;
 
             let tool_defs = if let Some(ref emb) = context_embedding {
-                let essential: Vec<&str> = self.config.essential_tools.iter().map(|s| s.as_str()).collect();
-                self.tools
-                    .search_tools(emb, 8, &essential)
-                    .await
+                let essential: Vec<&str> = self
+                    .config
+                    .essential_tools
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                self.tools.search_tools(emb, 8, &essential).await
             } else {
                 self.tools.get_definitions().await
             };
@@ -195,8 +202,8 @@ impl Agent {
             state.iteration += 1;
             state.updated_at = chrono::Utc::now();
             if let Some(ref usage) = response.usage {
-                state.total_prompt_tokens += usage.prompt_tokens as u64;
-                state.total_completion_tokens += usage.completion_tokens as u64;
+                state.total_prompt_tokens += usage.prompt_tokens;
+                state.total_completion_tokens += usage.completion_tokens;
             }
 
             // Audit log: record this complete LLM turn (request + response) in ContextStore
@@ -763,7 +770,8 @@ impl Agent {
                     let mut description = result.output.clone();
                     #[cfg(feature = "tools-ast")]
                     if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
-                        if let Some(artifact) = crate::code_parser::parse_file(&file_path, &content) {
+                        if let Some(artifact) = crate::code_parser::parse_file(&file_path, &content)
+                        {
                             if !artifact.functions.is_empty() {
                                 description.push_str("\n\nFunctions: ");
                                 description.push_str(&artifact.functions.join(", "));

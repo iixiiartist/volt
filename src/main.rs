@@ -634,7 +634,12 @@ async fn main() -> anyhow::Result<()> {
                         },
                     )
                     .await;
-                    let _ = volt::session::save_session_messages_atomic(sp, state.session_id, &state.messages).await;
+                    let _ = volt::session::save_session_messages_atomic(
+                        sp,
+                        state.session_id,
+                        &state.messages,
+                    )
+                    .await;
                 }
             }
         }

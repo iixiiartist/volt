@@ -32,8 +32,7 @@ pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) 
     let safe_context = sanitize_prompt_input(context, MAX_CONTEXT_CHARS);
 
     // Use parent agent's model; fall back to LLM_MODEL env var or Groq default
-    let model = std::env::var("LLM_MODEL")
-        .unwrap_or_else(|_| "llama-3.1-8b-instant".into());
+    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into());
     let route = resolve_provider(&model);
     let provider: Box<dyn crate::llm::LLMProvider> = match route.kind {
         ProviderKind::Anthropic => Box::new(AnthropicProvider::new(

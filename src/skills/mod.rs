@@ -170,5 +170,4 @@ pub fn parse_skill_manifest(path: &Path) -> anyhow::Result<SkillManifest> {
     })
 }
 
-
 use crate::cosine_similarity;

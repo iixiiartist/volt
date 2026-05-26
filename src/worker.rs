@@ -453,10 +453,7 @@ pub async fn seed_permissions(
             def.name,
             def.description,
         );
-        let embedding = match embedder.embed_description(&content).await {
-            Ok(emb) => Some(emb),
-            Err(_) => None,
-        };
+        let embedding = embedder.embed_description(&content).await.ok();
         entries.push(ContextEntry {
             id: uuid::Uuid::new_v4(),
             kind: ContextKind::Permission,

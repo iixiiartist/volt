@@ -11,12 +11,14 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use uuid::Uuid;
 
+type BucketMap = HashMap<u64, Vec<(Uuid, Vec<f32>)>>;
+
 /// LSH index with random hyperplane projections.
 pub struct LshIndex {
     /// k random projection planes, each dim-dimensional
     planes: Vec<Vec<f32>>,
     /// Map from k-bit hash → list of (id, vector) pairs
-    buckets: RwLock<HashMap<u64, Vec<(Uuid, Vec<f32>)>>>,
+    buckets: RwLock<BucketMap>,
     /// Number of hash bits (controls speed/accuracy)
     k: usize,
     /// Number of stored vectors (for statistics)
@@ -140,6 +142,11 @@ impl LshIndex {
     pub fn len(&self) -> usize {
         *self.count.read().unwrap()
     }
+
+    /// Whether the index is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[cfg(test)]
@@ -151,9 +158,15 @@ mod tests {
         let dim = 16;
         let index = LshIndex::new(dim, 8, 1000);
 
-        let v1: Vec<f32> = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let v2: Vec<f32> = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let v3: Vec<f32> = vec![1.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]; // near v1
+        let v1: Vec<f32> = vec![
+            1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        let v2: Vec<f32> = vec![
+            0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        let v3: Vec<f32> = vec![
+            1.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ]; // near v1
 
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
@@ -167,7 +180,7 @@ mod tests {
         let results = index.search(&v1, 3, 2);
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].0, id1); // itself
-        // v3 should be closer to v1 than v2 is
+                                       // v3 should be closer to v1 than v2 is
         let sim_v3 = crate::cosine_similarity(&v3, &v1);
         let sim_v2 = crate::cosine_similarity(&v2, &v1);
         assert!(sim_v3 > sim_v2);
@@ -193,6 +206,10 @@ mod tests {
         let results = index.search(query, 5, 2);
         assert!(!results.is_empty());
         // First result should have high similarity (>0.9 for cosine)
-        assert!(results[0].1 > 0.8, "Recall should be high: got {}", results[0].1);
+        assert!(
+            results[0].1 > 0.8,
+            "Recall should be high: got {}",
+            results[0].1
+        );
     }
 }

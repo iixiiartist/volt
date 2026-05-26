@@ -31,7 +31,11 @@ impl LocalEmbedder {
 
         let config: Config = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
         let vb = unsafe {
-            candle_nn::VarBuilder::from_mmaped_safetensors(&[model_path], candle_core::DType::F32, &device)?
+            candle_nn::VarBuilder::from_mmaped_safetensors(
+                &[model_path],
+                candle_core::DType::F32,
+                &device,
+            )?
         };
         let model = BertModel::load(vb, &config)?;
 

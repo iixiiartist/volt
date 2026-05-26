@@ -29,11 +29,9 @@ pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
     .await?;
 
     // Run migrations based on current version
-    let current: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(version), 0) FROM schema_version"
-    )
-    .fetch_one(&pool)
-    .await?;
+    let current: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM schema_version")
+        .fetch_one(&pool)
+        .await?;
 
     if current < 1 {
         run_migration_v1(&pool).await?;
@@ -75,19 +73,15 @@ async fn run_migration_v1(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "INSERT INTO schema_version (version, applied_at) VALUES (1, ?)"
-    )
-    .bind(chrono::Utc::now().to_rfc3339())
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (1, ?)")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(pool)
+        .await?;
 
     // Performance index for session message lookups
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)"
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

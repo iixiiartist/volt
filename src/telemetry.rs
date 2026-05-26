@@ -31,9 +31,10 @@ fn build_provider(service_name: &str) -> opentelemetry_sdk::trace::TracerProvide
             .build()
             .expect("build OTLP exporter");
 
-        let resource = opentelemetry_sdk::Resource::new(vec![
-            opentelemetry::KeyValue::new("service.name", service_name.to_string()),
-        ]);
+        let resource = opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+            "service.name",
+            service_name.to_string(),
+        )]);
 
         eprintln!("[otel] OTLP exporter -> {}", endpoint);
         opentelemetry_sdk::trace::TracerProvider::builder()

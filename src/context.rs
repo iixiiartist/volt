@@ -1,5 +1,5 @@
-use crate::embedding::EmbeddingClient;
 use crate::cosine_similarity;
+use crate::embedding::EmbeddingClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -143,7 +143,10 @@ impl ContextStore {
 
     fn quota_for(&self, kind: ContextKind) -> usize {
         let overrides = self.quota_overrides.read().unwrap();
-        overrides.get(&kind).copied().unwrap_or_else(|| kind.quota())
+        overrides
+            .get(&kind)
+            .copied()
+            .unwrap_or_else(|| kind.quota())
     }
 
     fn db(&self) -> Option<&sqlx::PgPool> {
@@ -219,12 +222,22 @@ impl ContextStore {
             let kind_str = kind_filter.as_ref().map(|k| k.as_str());
             // Ask for 2x limit so composite re-ranking has room to improve ordering
             let db_limit = (limit as i64) * 2;
-            match crate::db::search_context_entries(pool, query_embedding, db_limit, kind_str, min_score).await {
+            match crate::db::search_context_entries(
+                pool,
+                query_embedding,
+                db_limit,
+                kind_str,
+                min_score,
+            )
+            .await
+            {
                 Ok(db_entries) => {
                     let mut scored: Vec<(f32, ContextEntry)> = db_entries
                         .into_iter()
                         .map(|mut e| {
-                            let sim = e.embedding.as_ref()
+                            let sim = e
+                                .embedding
+                                .as_ref()
                                 .map(|emb| cosine_similarity(emb, query_embedding))
                                 .unwrap_or(0.0);
                             let score = 0.6 * sim + 0.4 * e.composite_score();
@@ -233,7 +246,8 @@ impl ContextStore {
                             (score, e)
                         })
                         .collect();
-                    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    scored
+                        .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
                     return scored
                         .into_iter()
                         .filter(|(score, _)| *score >= min_score)
@@ -561,7 +575,6 @@ impl ContextStore {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,9 +588,19 @@ mod tests {
         let skill_emb = vec![0.0, 1.0, 0.0, 0.0];
         let memory_emb = vec![0.0, 0.0, 1.0, 0.0];
 
-        let tool_id = store.add(ContextKind::Tool, "read file", serde_json::json!({})).await;
-        let skill_id = store.add(ContextKind::Skill, "parse markdown", serde_json::json!({})).await;
-        let memory_id = store.add(ContextKind::Memory, "user likes rust", serde_json::json!({})).await;
+        let tool_id = store
+            .add(ContextKind::Tool, "read file", serde_json::json!({}))
+            .await;
+        let skill_id = store
+            .add(ContextKind::Skill, "parse markdown", serde_json::json!({}))
+            .await;
+        let memory_id = store
+            .add(
+                ContextKind::Memory,
+                "user likes rust",
+                serde_json::json!({}),
+            )
+            .await;
 
         {
             let mut entries = store.entries.write().await;
@@ -592,18 +615,24 @@ mod tests {
         }
 
         // Search for tool-kind only — should return exactly the tool entry
-        let tool_results = store.search(&tool_emb, 8, Some(ContextKind::Tool), 0.0).await;
+        let tool_results = store
+            .search(&tool_emb, 8, Some(ContextKind::Tool), 0.0)
+            .await;
         assert_eq!(tool_results.len(), 1);
         assert_eq!(tool_results[0].id, tool_id);
         assert_eq!(tool_results[0].kind, ContextKind::Tool);
 
         // Search for skill-kind only
-        let skill_results = store.search(&skill_emb, 8, Some(ContextKind::Skill), 0.0).await;
+        let skill_results = store
+            .search(&skill_emb, 8, Some(ContextKind::Skill), 0.0)
+            .await;
         assert_eq!(skill_results.len(), 1);
         assert_eq!(skill_results[0].id, skill_id);
 
         // Search for memory-kind only
-        let memory_results = store.search(&memory_emb, 8, Some(ContextKind::Memory), 0.0).await;
+        let memory_results = store
+            .search(&memory_emb, 8, Some(ContextKind::Memory), 0.0)
+            .await;
         assert_eq!(memory_results.len(), 1);
         assert_eq!(memory_results[0].id, memory_id);
 
@@ -619,8 +648,12 @@ mod tests {
         let tool_emb = vec![1.0, 0.0, 0.0, 0.0];
         let skill_emb = vec![0.0, 1.0, 0.0, 0.0];
 
-        store.add(ContextKind::Tool, "read file", serde_json::json!({})).await;
-        store.add(ContextKind::Skill, "parse markdown", serde_json::json!({})).await;
+        store
+            .add(ContextKind::Tool, "read file", serde_json::json!({}))
+            .await;
+        store
+            .add(ContextKind::Skill, "parse markdown", serde_json::json!({}))
+            .await;
 
         {
             let mut entries = store.entries.write().await;
@@ -636,7 +669,9 @@ mod tests {
         // Query aligned with skill but filter to Tool — should still return the Tool entry
         // (similarity is low but composite score keeps it above min_score=0.0).
         // The key ablation invariant: kind filter never lets excluded kinds through.
-        let filtered = store.search(&skill_emb, 8, Some(ContextKind::Tool), 0.0).await;
+        let filtered = store
+            .search(&skill_emb, 8, Some(ContextKind::Tool), 0.0)
+            .await;
         assert!(!filtered.is_empty());
         for entry in &filtered {
             assert_eq!(entry.kind, ContextKind::Tool);

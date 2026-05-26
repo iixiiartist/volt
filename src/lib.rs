@@ -17,9 +17,9 @@ pub mod session;
 pub mod skills;
 pub mod telemetry;
 pub mod tools;
-pub mod vector_index;
 pub mod tui;
 pub mod validation;
+pub mod vector_index;
 pub mod worker;
 
 #[cfg(any(test, feature = "testutils"))]
