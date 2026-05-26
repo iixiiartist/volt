@@ -99,6 +99,7 @@ pub struct ContextStore {
     pub entries: RwLock<Vec<StoredEntry>>,
     insert_count: RwLock<usize>,
     db: std::sync::OnceLock<sqlx::PgPool>,
+    quota_overrides: std::sync::RwLock<std::collections::HashMap<ContextKind, usize>>,
 }
 
 pub struct StoredEntry {
@@ -111,6 +112,7 @@ impl ContextStore {
             entries: RwLock::new(Vec::new()),
             insert_count: RwLock::new(0),
             db: std::sync::OnceLock::new(),
+            quota_overrides: std::sync::RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -121,11 +123,26 @@ impl ContextStore {
             entries: RwLock::new(Vec::new()),
             insert_count: RwLock::new(0),
             db,
+            quota_overrides: std::sync::RwLock::new(std::collections::HashMap::new()),
         })
     }
 
     pub fn set_db(&self, pool: sqlx::PgPool) {
         let _ = self.db.set(pool);
+    }
+
+    /// Set per-kind quota overrides. Merges with hardcoded defaults.
+    pub fn set_quotas(&self, overrides: &std::collections::HashMap<ContextKind, usize>) {
+        let mut q = self.quota_overrides.write().unwrap();
+        q.clear();
+        for (k, v) in overrides {
+            q.insert(*k, *v);
+        }
+    }
+
+    fn quota_for(&self, kind: ContextKind) -> usize {
+        let overrides = self.quota_overrides.read().unwrap();
+        overrides.get(&kind).copied().unwrap_or_else(|| kind.quota())
     }
 
     fn db(&self) -> Option<&sqlx::PgPool> {
@@ -373,7 +390,7 @@ impl ContextStore {
 
             let mut indices_to_remove: Vec<usize> = Vec::new();
             for (kind, indices) in &kind_counts {
-                let quota = kind.quota();
+                let quota = self.quota_for(*kind);
                 if indices.len() <= quota {
                     continue;
                 }

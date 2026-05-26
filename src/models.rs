@@ -27,6 +27,11 @@ pub struct AgentConfig {
     /// Defaults to core file/web tools. Set to empty for pure RAG only.
     #[serde(default = "default_essential_tools")]
     pub essential_tools: Vec<String>,
+    /// Per-kind quota overrides for the unified context store.
+    /// If empty, the hardcoded defaults in ContextKind::quota() are used.
+    /// Keys not present fall back to defaults. Set to experiment with retrieval budgets.
+    #[serde(default)]
+    pub context_kind_quotas: std::collections::HashMap<crate::context::ContextKind, usize>,
 }
 
 pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {

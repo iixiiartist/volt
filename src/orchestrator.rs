@@ -84,6 +84,7 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
             allow_all: spec.allow_all,
             enabled_context_kinds: crate::models::default_context_kinds(),
             essential_tools: crate::models::default_essential_tools(),
+            context_kind_quotas: Default::default(),
         },
         llm_provider,
         tools,

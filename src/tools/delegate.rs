@@ -57,6 +57,7 @@ pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) 
         allow_all: true,
         enabled_context_kinds: crate::models::default_context_kinds(),
         essential_tools: crate::models::default_essential_tools(),
+        context_kind_quotas: Default::default(),
     };
 
     let sub_agent = Agent::new(config, provider, tools);

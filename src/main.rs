@@ -442,7 +442,9 @@ async fn main() -> anyhow::Result<()> {
                 allow_all: allow,
                 enabled_context_kinds: parse_context_kinds(&context_kinds),
                 essential_tools: volt::models::default_essential_tools(),
+                context_kind_quotas: Default::default(),
             };
+            let config_quotas = config.context_kind_quotas.clone();
             let mut agent = Agent::new(config, provider, tools_for_agent)
                 .with_cancel(cancel_for_agent)
                 .with_stream(std::sync::Arc::new(|token| {
@@ -502,6 +504,9 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 ContextStore::new()
             };
+            if !config_quotas.is_empty() {
+                context_store.set_quotas(&config_quotas);
+            }
 
             if let Some(ref pool) = pool {
                 let skill_store = context_store.clone();
@@ -587,6 +592,7 @@ async fn main() -> anyhow::Result<()> {
                 allow_all: allow,
                 enabled_context_kinds: volt::models::default_context_kinds(),
                 essential_tools: volt::models::default_essential_tools(),
+                context_kind_quotas: Default::default(),
             };
             let mut agent = Agent::new(config, provider, tools.clone())
                 .with_cancel(cancel_for_agent)
@@ -738,6 +744,7 @@ async fn main() -> anyhow::Result<()> {
                 allow_all: allow,
                 enabled_context_kinds: volt::models::default_context_kinds(),
                 essential_tools: volt::models::default_essential_tools(),
+                context_kind_quotas: Default::default(),
             };
             let mut agent = Agent::new(config, provider, tools.clone());
 
@@ -868,6 +875,7 @@ async fn main() -> anyhow::Result<()> {
                 allow_all: true,
                 enabled_context_kinds: volt::models::default_context_kinds(),
                 essential_tools: volt::models::default_essential_tools(),
+                context_kind_quotas: Default::default(),
             };
             let agent = Agent::new(config, provider, tools);
 

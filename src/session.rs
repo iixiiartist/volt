@@ -16,6 +16,33 @@ pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
         .await
         .context("failed to open SQLite sessions DB")?;
 
+    // Schema version tracking for future migrations
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
+    // Run migrations based on current version
+    let current: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+    )
+    .fetch_one(&pool)
+    .await?;
+
+    if current < 1 {
+        run_migration_v1(&pool).await?;
+    }
+
+    Ok(pool)
+}
+
+async fn run_migration_v1(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS sessions (
@@ -28,7 +55,7 @@ pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
         )
         "#,
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     sqlx::query(
@@ -45,10 +72,17 @@ pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
         )
         "#,
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
-    Ok(pool)
+    sqlx::query(
+        "INSERT INTO schema_version (version, applied_at) VALUES (1, ?)"
+    )
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn list_sessions(pool: &SqlitePool, limit: i64) -> anyhow::Result<Vec<Session>> {
