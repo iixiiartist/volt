@@ -191,6 +191,12 @@ impl ToolRegistry {
 
         result
     }
+
+    /// Record that tools were used together in the same turn.
+    /// Builds co-occurrence edges in the ToolGraph for future retrieval.
+    pub fn record_co_occurrence(&self, tool_names: &[String]) {
+        self.graph.record_co_occurrence(tool_names);
+    }
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

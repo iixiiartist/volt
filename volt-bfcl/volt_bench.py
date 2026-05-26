@@ -75,57 +75,11 @@ def _extract_calls(output: str) -> list[tuple[str, dict]]:
     return calls
 
 
-def _validate_args(args: dict, schema: dict) -> list[str]:
-    """Validate arguments against JSON Schema. Returns list of issues."""
-    issues = []
-    props = schema.get("properties", {})
-    required = schema.get("required", [])
-
-    # Check required fields present
-    for req in required:
-        if isinstance(req, str) and req not in args:
-            issues.append(f"missing required param '{req}'")
-        elif isinstance(req, list):
-            for r in req:
-                if isinstance(r, str) and r not in args:
-                    issues.append(f"missing required param '{r}'")
-
-    # Check argument types
-    for key, val in args.items():
-        if key in props:
-            prop_schema = props[key]
-            expected_type = prop_schema.get("type", "string")
-            type_ok = _check_type(val, expected_type)
-            if not type_ok:
-                issues.append(f"param '{key}' type mismatch: got {type(val).__name__}, expected {expected_type}")
-
-    # Check for hallucinated params (not in schema)
-    for key in args:
-        if key not in props and key not in ("unit", "units"):
-            issues.append(f"hallucinated param '{key}'")
-
-    return issues
-
-
-def _check_type(val, expected: str) -> bool:
-    """Check if value matches expected JSON Schema type."""
-    type_map = {
-        "string": str,
-        "integer": int,
-        "number": (int, float),
-        "boolean": bool,
-        "array": list,
-        "object": dict,
-    }
-    if expected in type_map:
-        expected_types = type_map[expected]
-        return isinstance(val, expected_types) if not isinstance(expected_types, tuple) else isinstance(val, expected_types)
-    return True  # unknown types pass
-
-
 def evaluate_case(case: dict, output: str) -> tuple[bool, str, dict]:
     """Check if Volt called the expected function with valid arguments.
+    Uses full JSON Schema validation (incl. enum, pattern, format, min/max, nested objects).
     Returns (passed, reason, details_dict)."""
+    from arg_validator import validate_function_call
     expected_funcs = _get_expected_functions(case)
     calls = _extract_calls(output)
     called_names = set(name for name, _ in calls)
@@ -140,18 +94,17 @@ def evaluate_case(case: dict, output: str) -> tuple[bool, str, dict]:
         ok = len(calls) > 0
         return ok, f"called {called_names}" if ok else "no expected functions", details
 
-    # Check name match
+    # Check name match with full argument validation
     matched_names = expected_funcs.keys() & called_names
     if matched_names:
-        # Check arguments for matched functions
         all_issues = []
         for name in matched_names:
             schema = expected_funcs[name]
             matching_calls = [c for c in calls if c[0] == name]
             for _, args in matching_calls:
-                issues = _validate_args(args, schema)
+                issues = validate_function_call(args, schema)
                 if issues:
-                    all_issues.extend(f"{name}: {i}" for i in issues)
+                    all_issues.extend(str(i) for i in issues)
         details["arg_issues"] = all_issues
 
         if all_issues:
@@ -167,7 +120,7 @@ def evaluate_case(case: dict, output: str) -> tuple[bool, str, dict]:
         return False, "no tool calls detected", details
 
 
-def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-instant") -> tuple[str, float]:
+def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-instant", use_embed: bool = False) -> tuple[str, float]:
     """Run Volt binary with the given input and available tools."""
     import tempfile
 
@@ -180,8 +133,9 @@ def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-
             if line.startswith("GROQ_API_KEY="):
                 env["GROQ_API_KEY"] = line.split("=", 1)[1].strip()
                 break
-    # Benchmark optimizations
-    env["EMBEDDING_PROVIDER"] = "none"
+    # Benchmark optimizations (skip for RAG mode)
+    if not use_embed:
+        env["EMBEDDING_PROVIDER"] = "none"
     env["VOLT_MINIMAL_TOOLS"] = "1"
 
     # Write BFCL functions as a JSONL stub file with normalized schemas
@@ -291,9 +245,12 @@ def main():
     parser = argparse.ArgumentParser(description="BFCL benchmark via Volt binary")
     parser.add_argument("--category", default="simple_python")
     parser.add_argument("--model", default="llama-3.1-8b-instant")
-    parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--runs", type=int, default=1, help="Run each case N times for statistical averaging")
     parser.add_argument("--distractors", type=int, default=0,
                         help="Add N distractor tools per case to simulate large registries")
+    parser.add_argument("--embed", action="store_true",
+                        help="Enable actual embeddings (not PROVIDER=none fallback)")
     parser.add_argument("--output", help="Save results to JSON file")
     parser.add_argument("--sweep", action="store_true",
                         help="Run tool-count scaling sweep at [0,10,50,100,200] distractors")
@@ -306,13 +263,17 @@ def main():
     cases = load_test_cases(args.category)
     cases = cases[:args.limit] if args.limit > 0 else cases
     distractor_label = f" +{args.distractors} distractors" if args.distractors else ""
-    print(f"Loaded {len(cases)} cases from {args.category}{distractor_label}")
+    embed_label = " (RAG enabled)" if args.embed else ""
+    print(f"Loaded {len(cases)} cases from {args.category}{distractor_label}{embed_label}")
+    if args.runs > 1:
+        print(f"Running {args.runs} passes per case ({len(cases) * args.runs} total runs)")
 
     results = []
     passed = 0
     total_latency = 0
     total_prompt_tokens = 0
     total_completion_tokens = 0
+    per_case_runs = {}  # case_idx -> list of (passed, latency)
 
     for i, case in enumerate(cases):
         query = _get_question(case)
@@ -327,60 +288,84 @@ def main():
             f"Question: {query}"
         )
 
-        output, latency = run_volt(prompt, functions, args.model)
-        ok, reason, details = evaluate_case(case, output)
-        total_latency += latency
+        case_pass, case_lat = 0, 0.0
+        for run_i in range(args.runs):
+            label = f" [run {run_i+1}/{args.runs}]" if args.runs > 1 else ""
+            output, latency = run_volt(prompt, functions, args.model, use_embed=args.embed)
+            ok, reason, details = evaluate_case(case, output)
+            case_pass += 1 if ok else 0
+            case_lat += latency
 
-        # Track token usage from agent output
-        p_tok, c_tok = _extract_token_usage(output)
-        total_prompt_tokens += p_tok
-        total_completion_tokens += c_tok
+            p_tok, c_tok = _extract_token_usage(output)
+            total_prompt_tokens += p_tok
+            total_completion_tokens += c_tok
 
-        status = "PASS" if ok else "FAIL"
-        extra = ""
-        if p_tok + c_tok > 0:
-            extra = f" | {p_tok}+{c_tok} tok"
-        if details.get("arg_issues"):
-            extra += f" | args: {details['arg_issues'][:1]}"
-        print(f"  [{status}] {reason} ({latency:.1f}s{extra})")
+            status = "PASS" if ok else "FAIL"
+            arg_info = ""
+            if details.get("arg_issues"):
+                arg_info = f" | args: {details['arg_issues'][:1]}"
+            print(f"  [{status}]{label} {reason} ({latency:.1f}s{arg_info})")
 
-        if ok:
+        avg_lat = case_lat / args.runs
+        total_latency += avg_lat
+        case_ok = case_pass >= args.runs / 2  # majority vote
+        if case_ok:
             passed += 1
+
+        if args.runs > 1:
+            per_case_runs[i] = {"passes": case_pass, "total": args.runs, "avg_latency": avg_lat}
 
         results.append({
             "id": case.get("id", f"case_{i}"),
             "query": query,
             "expected": list(_get_expected_functions(case).keys()),
-            "passed": ok,
+            "passed": case_ok,
+            "run_passes": f"{case_pass}/{args.runs}" if args.runs > 1 else None,
             "reason": reason,
             "arg_issues": details.get("arg_issues", []),
             "calls": details.get("called", []),
-            "latency_s": latency,
+            "latency_s": avg_lat,
             "output": output[:500],
         })
 
-    accuracy = passed / len(cases) * 100 if cases else 0
-    print(f"\nAccuracy: {passed}/{len(cases)} = {accuracy:.1f}%")
-    print(f"Total latency: {total_latency:.1f}s")
+    # -- Statistical reporting --
+    n_effective = len(cases) * args.runs  # total individual runs
+    total_passed_runs = sum(r["passes"] for r in per_case_runs.values()) if args.runs > 1 else passed
+
+    from stats_utils import binomial_proportion_ci, format_accuracy
+    ci = binomial_proportion_ci(passed, len(cases))
+
+    print(f"\n{'='*70}")
+    print(f"RESULTS | {args.category} | {args.model}")
+    print(f"{'='*70}")
+    print(f"  Accuracy (majority): {passed}/{len(cases)} = {format_accuracy(ci['accuracy_pct'], ci['ci_lower'], ci['ci_upper'])}")
+    if args.runs > 1:
+        print(f"  Per-run accuracy:    {total_passed_runs}/{n_effective} = {total_passed_runs/n_effective*100:.1f}%")
+    print(f"  Avg latency:         {total_latency/len(cases):.1f}s per case")
     if total_prompt_tokens + total_completion_tokens > 0:
         total_tok = total_prompt_tokens + total_completion_tokens
-        print(f"Token usage: {total_prompt_tokens} prompt + {total_completion_tokens} completion = {total_tok} total")
-        # Compare to static injection (all tools in every prompt)
-        tool_tokens_per_case = sum(
-            len(json.dumps({"name": f.get("name", f.get("function", {}).get("name", "")),
-                            "description": f.get("description", f.get("function", {}).get("description", "")),
-                            "parameters": f.get("parameters", f.get("function", {}).get("parameters", {}))}))
-            for f in (load_test_cases(args.category)[:1] or [{"function": []}]).get("function", [])
-        ) // 3  # rough: chars/3 = tokens
-        est_static_tokens = total_prompt_tokens + (tool_tokens_per_case * len(cases) * (1 + args.distractors))
-        if total_tok > 0:
-            savings = (1 - total_tok / max(est_static_tokens, 1)) * 100
-            print(f"Est. token savings vs static injection: {savings:.0f}%")
+        print(f"  Token usage:         {total_prompt_tokens} prompt + {total_completion_tokens} completion = {total_tok} total")
+    print(f"{'='*70}")
 
     if args.output:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "category": args.category,
+            "model": args.model,
+            "cases": len(cases),
+            "runs_per_case": args.runs,
+            "passed": passed,
+            "accuracy_pct": ci["accuracy_pct"],
+            "ci_lower": ci["ci_lower"],
+            "ci_upper": ci["ci_upper"],
+            "avg_latency_s": round(total_latency / len(cases), 2),
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "embed_enabled": args.embed,
+            "results": results,
+        }
         with open(RESULTS_DIR / args.output, "w") as f:
-            json.dump({"results": results, "accuracy": accuracy, "category": args.category}, f, indent=2)
+            json.dump(summary, f, indent=2)
         print(f"Saved to {RESULTS_DIR / args.output}")
 
 

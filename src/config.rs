@@ -430,6 +430,10 @@ impl Settings {
         let embedding_provider = match embedding_provider_str.as_str() {
             "moonshot" => EmbeddingProvider::Moonshot,
             "ollama" => EmbeddingProvider::Ollama,
+            "openai" => EmbeddingProvider::OpenAI,
+            "huggingface" => EmbeddingProvider::HuggingFace,
+            "llamacpp" => EmbeddingProvider::LlamaCpp,
+            "nvidia" => EmbeddingProvider::Nvidia,
             _ => EmbeddingProvider::Nvidia,
         };
 

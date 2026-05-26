@@ -193,7 +193,7 @@ def _get_question(case: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Volt Context Kind Ablation Study")
     parser.add_argument("--category", default="simple_python")
-    parser.add_argument("--limit", type=int, default=20, help="Cases per config")
+    parser.add_argument("--limit", type=int, default=50, help="Cases per config")
     parser.add_argument("--model", default="llama-3.1-8b-instant")
     parser.add_argument("--configs", default=None, help="Comma-separated config names to run (default: all)")
     parser.add_argument("--output", default=None, help="Output JSON path")

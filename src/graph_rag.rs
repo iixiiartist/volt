@@ -44,6 +44,23 @@ impl ToolGraph {
         }
     }
 
+    /// Increment edge weights between co-occurring tools (used together in same turn).
+    /// Each tool pair gets +0.1 for each co-occurrence, up to 1.0.
+    pub fn record_co_occurrence(&self, tool_names: &[String]) {
+        if tool_names.len() < 2 {
+            return;
+        }
+        for i in 0..tool_names.len() {
+            for j in (i + 1)..tool_names.len() {
+                let a = &tool_names[i];
+                let b = &tool_names[j];
+                // Add bidirectional weak edges; repeated co-occurrence strengthens them
+                self.add_relationship(a, b, 0.1);
+                self.add_relationship(b, a, 0.1);
+            }
+        }
+    }
+
     /// Find tools related to the given tool within `depth` hops.
     /// Returns tool names sorted by proximity.
     pub fn find_related(&self, tool: &str, depth: usize) -> Vec<String> {

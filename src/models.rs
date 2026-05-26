@@ -321,18 +321,42 @@ pub struct ModelContext {
 
 impl ModelContext {
     pub fn for_model(model: &str) -> Self {
-        let max_context =
-            if model.contains("gemma") || model.contains("phi") || model.contains("qwen") {
-                8192
-            } else if model.contains("claude-3-5-sonnet") {
-                200000
-            } else if model.contains("claude-3") {
-                100000
-            } else if model.contains("gpt-4") {
-                128000
-            } else {
-                4096
-            };
+        let model_lower = model.to_lowercase();
+        let max_context = if model_lower.contains("gemma") || model_lower.contains("phi") || model_lower.contains("qwen") {
+            if model_lower.contains("qwen3") || model_lower.contains("qwen2.5") { 131072 } else { 8192 }
+        } else if model_lower.contains("claude-sonnet-4") || model_lower.contains("claude-4") {
+            200000
+        } else if model_lower.contains("claude-3-5-sonnet") || model_lower.contains("claude-3.5") {
+            200000
+        } else if model_lower.contains("claude-3") {
+            100000
+        } else if model_lower.contains("claude") {
+            200000
+        } else if model_lower.contains("gpt-4o-mini") || model_lower.contains("gpt-4o") {
+            128000
+        } else if model_lower.contains("gpt-4.1") || model_lower.contains("gpt-4") {
+            128000
+        } else if model_lower.contains("o1") || model_lower.contains("o3") {
+            200000
+        } else if model_lower.contains("gpt-3.5") {
+            16385
+        } else if model_lower.contains("deepseek") {
+            65536
+        } else if model_lower.contains("mistral") {
+            if model_lower.contains("large") { 131072 } else { 32768 }
+        } else if model_lower.contains("gemini") {
+            100000
+        } else if model_lower.contains("llama-3.3") || model_lower.contains("llama-3.2") || model_lower.contains("llama-3.1") || model_lower.contains("llama-4") {
+            131072
+        } else if model_lower.contains("llama-3") {
+            8192
+        } else if model_lower.contains("mixtral") && model_lower.contains("8x7") {
+            32768
+        } else if model_lower.contains("mixtral") || model_lower.contains("llama") {
+            32768
+        } else {
+            32768
+        };
         Self {
             model: model.to_string(),
             max_tokens: 4096,

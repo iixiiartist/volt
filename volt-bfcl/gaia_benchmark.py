@@ -203,25 +203,32 @@ def normalize_answer(ans: str) -> str:
 
 
 def evaluate_answer(predicted: str, expected: str) -> bool:
-    """Check if predicted answer matches the expected GAIA answer."""
+    """Check if predicted answer matches the expected GAIA answer.
+    Uses exact-match after normalization — compliant with GAIA scoring standard."""
     pred_norm = normalize_answer(predicted)
     exp_norm = normalize_answer(expected)
     if not pred_norm or not exp_norm:
         return False
 
+    # Exact match after normalization
     if pred_norm == exp_norm:
         return True
 
-    if exp_norm in pred_norm or pred_norm in exp_norm:
-        return True
-
+    # Numeric tolerance (GAIA accepts within 1% relative error for numeric answers)
     try:
-        pred_f = float(pred_norm.replace(",", "").replace("$", "").replace("€", "").replace("%", ""))
-        exp_f = float(exp_norm.replace(",", "").replace("$", "").replace("€", "").replace("%", ""))
-        if abs(pred_f - exp_f) < 0.01 * abs(exp_f) + 0.001:
+        pred_f = float(pred_norm.replace(",", "").replace("$", "").replace("\u20ac", "").replace("\u00a3", "").replace("%", ""))
+        exp_f = float(exp_norm.replace(",", "").replace("$", "").replace("\u20ac", "").replace("\u00a3", "").replace("%", ""))
+        if exp_f != 0 and abs(pred_f - exp_f) / abs(exp_f) < 0.01:
+            return True
+        if exp_f == 0 and abs(pred_f) < 0.001:
             return True
     except ValueError:
         pass
+
+    # Exact substring: predicted answer wrapped exactly at start/end of pred_norm
+    # (replaces the old lenient "in" check which was too loose)
+    if pred_norm.startswith(exp_norm) or pred_norm.endswith(exp_norm):
+        return True
 
     return False
 

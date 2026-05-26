@@ -534,7 +534,8 @@ async fn main() -> anyhow::Result<()> {
             });
 
             println!();
-            match agent.run(&input).await {
+            let result = agent.run(&input).await;
+            match &result {
                 Ok(_) => {
                     println!();
                     println!();
@@ -546,8 +547,11 @@ async fn main() -> anyhow::Result<()> {
                     save_agent_session(&agent).await;
                 }
             }
-            // Force clean exit for agent-run — background tokio tasks may keep runtime alive
-            std::process::exit(0);
+            // Cancel background worker and let tokio drain
+            cancel.cancel();
+            // Brief window for background tasks to observe cancellation
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
         }
         Commands::AgentChat { model, allow } => {
             let model = model.unwrap_or_else(|| {

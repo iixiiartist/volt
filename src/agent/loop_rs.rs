@@ -204,6 +204,11 @@ impl Agent {
                 self.push_assistant_message(&mut state, &response, Some(tool_calls))
                     .await;
                 self.execute_tool_calls(tool_calls, &mut state).await;
+                // Build co-occurrence edges in ToolGraph for future retrieval
+                if tool_calls.len() > 1 {
+                    let names: Vec<String> = tool_calls.iter().map(|tc| tc.name.clone()).collect();
+                    self.tools.record_co_occurrence(&names);
+                }
             } else {
                 self.push_assistant_message(&mut state, &response, None)
                     .await;
