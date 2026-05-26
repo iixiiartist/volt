@@ -6,7 +6,6 @@ pub mod db;
 pub mod embedding;
 pub mod eval;
 pub mod graph_rag;
-pub mod hnsw_index;
 pub mod llm;
 pub mod local_embed;
 pub mod mcp;
