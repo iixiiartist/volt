@@ -441,6 +441,7 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: allow,
                 enabled_context_kinds: parse_context_kinds(&context_kinds),
+                essential_tools: volt::models::default_essential_tools(),
             };
             let mut agent = Agent::new(config, provider, tools_for_agent)
                 .with_cancel(cancel_for_agent)
@@ -585,6 +586,7 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: allow,
                 enabled_context_kinds: volt::models::default_context_kinds(),
+                essential_tools: volt::models::default_essential_tools(),
             };
             let mut agent = Agent::new(config, provider, tools.clone())
                 .with_cancel(cancel_for_agent)
@@ -738,6 +740,7 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: allow,
                 enabled_context_kinds: volt::models::default_context_kinds(),
+                essential_tools: volt::models::default_essential_tools(),
             };
             let mut agent = Agent::new(config, provider, tools.clone());
 
@@ -867,6 +870,7 @@ async fn main() -> anyhow::Result<()> {
                 hidden: false,
                 allow_all: true,
                 enabled_context_kinds: volt::models::default_context_kinds(),
+                essential_tools: volt::models::default_essential_tools(),
             };
             let agent = Agent::new(config, provider, tools);
 

@@ -131,8 +131,9 @@ impl Agent {
             let llm_messages = self.compress_if_needed(llm_messages).await;
 
             let tool_defs = if let Some(ref emb) = context_embedding {
+                let essential: Vec<&str> = self.config.essential_tools.iter().map(|s| s.as_str()).collect();
                 self.tools
-                    .search_tools(emb, 8, &["read", "glob", "grep", "web_fetch"])
+                    .search_tools(emb, 8, &essential)
                     .await
             } else {
                 self.tools.get_definitions().await

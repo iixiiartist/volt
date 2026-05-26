@@ -23,6 +23,10 @@ pub struct AgentConfig {
     /// Defaults to all 12 kinds. Set to a subset for ablation studies.
     #[serde(default = "default_context_kinds")]
     pub enabled_context_kinds: Vec<crate::context::ContextKind>,
+    /// Tools always force-included regardless of semantic retrieval score.
+    /// Defaults to core file/web tools. Set to empty for pure RAG only.
+    #[serde(default = "default_essential_tools")]
+    pub essential_tools: Vec<String>,
 }
 
 pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {
@@ -40,6 +44,16 @@ pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {
         ContextKind::Permission,
         ContextKind::Security,
         ContextKind::MCPConfig,
+    ]
+}
+
+/// Core tools always force-included for safety and basic operation.
+pub fn default_essential_tools() -> Vec<String> {
+    vec![
+        "read".into(),
+        "glob".into(),
+        "grep".into(),
+        "web_fetch".into(),
     ]
 }
 
