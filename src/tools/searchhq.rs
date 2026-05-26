@@ -1,5 +1,5 @@
 use crate::mcp::client::MCPClient;
-use crate::models::*;
+use crate::models::{MCPTransport, ToolResult};
 use crate::tools::ToolRegistry;
 use serde_json::Value;
 use std::sync::Arc;

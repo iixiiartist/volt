@@ -512,7 +512,7 @@ async fn main() -> anyhow::Result<()> {
                 ContextStore::new()
             };
             if !config_quotas.is_empty() {
-                context_store.set_quotas(&config_quotas);
+                context_store.set_quotas(&config_quotas).await;
             }
 
             if let Some(ref pool) = pool {

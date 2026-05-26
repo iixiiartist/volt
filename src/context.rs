@@ -100,8 +100,8 @@ pub struct ContextStore {
     entries: RwLock<Vec<StoredEntry>>,
     insert_count: RwLock<usize>,
     db: std::sync::OnceLock<sqlx::PgPool>,
-    quota_overrides: std::sync::RwLock<std::collections::HashMap<ContextKind, usize>>,
-    evict_every: std::sync::RwLock<usize>,
+    quota_overrides: RwLock<std::collections::HashMap<ContextKind, usize>>,
+    evict_every: RwLock<usize>,
 }
 
 pub struct StoredEntry {
@@ -114,8 +114,8 @@ impl ContextStore {
             entries: RwLock::new(Vec::new()),
             insert_count: RwLock::new(0),
             db: std::sync::OnceLock::new(),
-            quota_overrides: std::sync::RwLock::new(std::collections::HashMap::new()),
-            evict_every: std::sync::RwLock::new(100),
+            quota_overrides: RwLock::new(std::collections::HashMap::new()),
+            evict_every: RwLock::new(100),
         })
     }
 
@@ -126,8 +126,8 @@ impl ContextStore {
             entries: RwLock::new(Vec::new()),
             insert_count: RwLock::new(0),
             db,
-            quota_overrides: std::sync::RwLock::new(std::collections::HashMap::new()),
-            evict_every: std::sync::RwLock::new(100),
+            quota_overrides: RwLock::new(std::collections::HashMap::new()),
+            evict_every: RwLock::new(100),
         })
     }
 
@@ -136,8 +136,8 @@ impl ContextStore {
     }
 
     /// Set per-kind quota overrides. Merges with hardcoded defaults.
-    pub fn set_quotas(&self, overrides: &std::collections::HashMap<ContextKind, usize>) {
-        let mut q = self.quota_overrides.write().unwrap();
+    pub async fn set_quotas(&self, overrides: &std::collections::HashMap<ContextKind, usize>) {
+        let mut q = self.quota_overrides.write().await;
         q.clear();
         for (k, v) in overrides {
             q.insert(*k, *v);
@@ -146,8 +146,8 @@ impl ContextStore {
 
     /// Set the eviction frequency (number of inserts between eviction passes).
     /// Default: 100. Lower values = more frequent cleanup, higher = more memory.
-    pub fn set_evict_every(&self, n: usize) {
-        *self.evict_every.write().unwrap() = n;
+    pub async fn set_evict_every(&self, n: usize) {
+        *self.evict_every.write().await = n;
     }
 
     /// Append entries directly to the store (used by episodic merger).
@@ -158,8 +158,8 @@ impl ContextStore {
         }
     }
 
-    fn quota_for(&self, kind: ContextKind) -> usize {
-        let overrides = self.quota_overrides.read().unwrap();
+    async fn quota_for(&self, kind: ContextKind) -> usize {
+        let overrides = self.quota_overrides.read().await;
         overrides
             .get(&kind)
             .copied()
@@ -411,7 +411,7 @@ impl ContextStore {
         // 2. Track insert count; evict periodically
         let mut count = self.insert_count.write().await;
         *count += inserted;
-        if *count >= *self.evict_every.read().unwrap() {
+        if *count >= *self.evict_every.read().await {
             *count = 0;
             drop(count);
 
@@ -423,7 +423,7 @@ impl ContextStore {
 
             let mut indices_to_remove: Vec<usize> = Vec::new();
             for (kind, indices) in &kind_counts {
-                let quota = self.quota_for(*kind);
+                let quota = self.quota_for(*kind).await;
                 if indices.len() <= quota {
                     continue;
                 }

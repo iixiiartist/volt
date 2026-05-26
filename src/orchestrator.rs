@@ -2,7 +2,7 @@ use crate::agent::loop_rs::Agent;
 use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai::OpenAIProvider;
 use crate::llm::LLMProvider;
-use crate::models::*;
+use crate::models::AgentConfig;
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Instant;
