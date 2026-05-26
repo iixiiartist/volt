@@ -450,39 +450,68 @@ impl Agent {
 
     async fn compress_if_needed(&self, llm_messages: Vec<LLMMessage>) -> Vec<LLMMessage> {
         let model_ctx = ModelContext::for_model(&self.config.model);
-        let total_tokens: u32 = llm_messages
+        let budget = model_ctx.max_context_tokens.saturating_sub(2048);
+        let before = llm_messages.len();
+
+        // Compute per-message token counts (already using tiktoken via ModelContext)
+        let msg_tokens: Vec<u32> = llm_messages
             .iter()
             .map(|m| ModelContext::estimate_tokens(m.content.as_str()))
-            .sum();
+            .collect();
+        let total_tokens: u32 = msg_tokens.iter().sum();
 
-        if total_tokens <= model_ctx.max_context_tokens.saturating_sub(2048) {
+        if total_tokens <= budget {
             return llm_messages;
         }
 
+        // Token-accurate rolling truncation: keep messages from the most recent
+        // backward until the budget is exhausted. This replaces the old /10 heuristic
+        // with real token counting, matching LightThinker++ (Apr 2026) and PRISM (May 2026).
+        let mut running: u32 = 0;
+        let mut keep_start = before;
+        for (i, tok) in msg_tokens.iter().rev().enumerate() {
+            if running + tok > budget {
+                keep_start = before.saturating_sub(i);
+                break;
+            }
+            running += tok;
+        }
+
         let snapshot = self.state.lock().await;
-        let max_keep = model_ctx.max_context_tokens.saturating_sub(2048) as usize / 10;
-        let before = llm_messages.len();
-        let compressed: Vec<LLMMessage> =
-            crate::agent::context::compress_context(&snapshot.messages, max_keep)
-                .into_iter()
-                .map(|m| LLMMessage {
-                    role: m.role,
-                    content: m.content,
-                    tool_calls: m.tool_calls,
-                    tool_call_id: m.tool_name,
-                })
-                .collect();
+        let recent = if keep_start < snapshot.messages.len() {
+            snapshot.messages[keep_start..].to_vec()
+        } else {
+            snapshot.messages.clone()
+        };
+
+        let mut compressed: Vec<LLMMessage> = Vec::with_capacity(recent.len() + 1);
+        if keep_start > 0 {
+            compressed.push(LLMMessage {
+                role: "system".into(),
+                content: std::sync::Arc::new(format!(
+                    "[Earlier conversation compressed: {} messages, ~{} tokens truncated. Key context follows.]",
+                    keep_start,
+                    msg_tokens[..keep_start].iter().sum::<u32>()
+                )),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+        for m in recent {
+            compressed.push(LLMMessage {
+                role: m.role,
+                content: m.content,
+                tool_calls: m.tool_calls,
+                tool_call_id: m.tool_name,
+            });
+        }
+
         info!(
-            "context compressed: {} messages -> {} (est {} tokens)",
+            "context compressed: {} messages -> {} (budget: {} tokens, keeping {} tokens)",
             before,
             compressed.len(),
-            ModelContext::estimate_tokens(
-                &compressed
-                    .iter()
-                    .map(|m| m.content.as_str())
-                    .collect::<Vec<_>>()
-                    .join("")
-            )
+            budget,
+            running
         );
         compressed
     }
