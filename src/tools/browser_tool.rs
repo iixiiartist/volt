@@ -43,7 +43,7 @@ mod browser_impl {
         }
     }
 
-    pub async fn extract(url: &str) -> ToolResult {
+    pub async fn extract(url: &str, selector: &str) -> ToolResult {
         let started = Instant::now();
         match Browser::new(LaunchOptions::default()) {
             Ok(browser) => match browser.new_tab() {
@@ -57,12 +57,34 @@ mod browser_impl {
                         };
                     }
                     match tab.get_content() {
-                        Ok(html) => ToolResult {
-                            success: true,
-                            output: html.chars().take(2000).collect(),
-                            error: None,
-                            duration_ms: started.elapsed().as_millis(),
-                        },
+                        Ok(html) => {
+                            // Apply CSS selector if one was requested
+                            let output = if selector.is_empty() {
+                                html.chars().take(2000).collect()
+                            } else {
+                                match scraper::Selector::parse(selector) {
+                                    Ok(sel) => {
+                                        let doc = scraper::Html::parse_document(&html);
+                                        let texts: Vec<String> = doc
+                                            .select(&sel)
+                                            .map(|el| el.text().collect::<String>())
+                                            .collect();
+                                        if texts.is_empty() {
+                                            format!("selector '{}' matched no elements", selector)
+                                        } else {
+                                            texts.join("\n").chars().take(2000).collect()
+                                        }
+                                    }
+                                    Err(e) => format!("invalid CSS selector '{}': {:?}", selector, e),
+                                }
+                            };
+                            ToolResult {
+                                success: true,
+                                output,
+                                error: None,
+                                duration_ms: started.elapsed().as_millis(),
+                            }
+                        }
                         Err(e) => ToolResult {
                             success: false,
                             output: String::new(),
@@ -151,8 +173,8 @@ pub async fn browser_navigate(url: &str) -> ToolResult {
     browser_impl::navigate(url).await
 }
 #[cfg(feature = "tools-browser")]
-pub async fn browser_extract(url: &str, _selector: &str) -> ToolResult {
-    browser_impl::extract(url).await
+pub async fn browser_extract(url: &str, selector: &str) -> ToolResult {
+    browser_impl::extract(url, selector).await
 }
 #[cfg(feature = "tools-browser")]
 pub async fn browser_screenshot(url: &str, output_path: &str) -> ToolResult {
