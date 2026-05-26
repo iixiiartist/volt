@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 // ─── Agent types ──────────────────────────────────────────────
 
+/// Configuration for an agent instance — model, iteration limits, toolsets, context kinds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub name: String,
@@ -62,6 +63,7 @@ pub fn default_essential_tools() -> Vec<String> {
     ]
 }
 
+/// Runtime state for an agent during a session — iteration count, messages, token usage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentState {
     pub id: Uuid,
@@ -80,6 +82,7 @@ pub struct AgentState {
     pub total_completion_tokens: u64,
 }
 
+/// A single message in the agent's conversation history (user, assistant, system, or tool result).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
@@ -90,6 +93,7 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
 }
 
+/// A tool call issued by the LLM — name, arguments, and a unique call ID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
@@ -97,6 +101,7 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
+/// Schema definition for a tool registered in the tool registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
@@ -107,6 +112,7 @@ pub struct ToolDefinition {
 
 // ─── LLM types ────────────────────────────────────────────────
 
+/// Request payload sent to the LLM — model, messages, tools, temperature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMRequest {
     pub model: String,
@@ -118,6 +124,7 @@ pub struct LLMRequest {
     pub stream: bool,
 }
 
+/// A single message in the LLM request format (role + content + optional tool call info).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMMessage {
     pub role: String,
@@ -126,6 +133,7 @@ pub struct LLMMessage {
     pub tool_call_id: Option<String>,
 }
 
+/// Response from the LLM — content, tool calls, token usage, finish reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMResponse {
     pub content: Arc<String>,
@@ -134,6 +142,7 @@ pub struct LLMResponse {
     pub usage: Option<Usage>,
 }
 
+/// Token usage stats for a single LLM call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: u64,
@@ -164,6 +173,7 @@ impl std::fmt::Debug for LLMProviderConfig {
 
 // ─── Memory types ─────────────────────────────────────────────
 
+/// A conversation session — ID, agent name, title, and message count.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
@@ -200,6 +210,7 @@ pub struct ExecutionRecord {
 
 // ─── Tool execution types ─────────────────────────────────────
 
+/// Result of executing a tool — success flag, output text, optional error, and duration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub success: bool,
@@ -312,12 +323,14 @@ fn default_parameter_schema() -> Value {
     serde_json::json!({ "type": "object" })
 }
 
+/// Permission level for a tool — Allow (auto-execute) or Prompt (requires human approval).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionLevel {
     Allow,
     Prompt,
 }
 
+/// A cancellable token for cooperative task shutdown. Clone to share across tasks.
 #[derive(Debug, Clone)]
 pub struct CancelToken(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
 
