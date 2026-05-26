@@ -203,9 +203,9 @@ impl LLMProvider for OpenAIProvider {
                     }
                     if let Some(u) = val.get("usage") {
                         usage = Some(Usage {
-                            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-                            total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as u32,
+                            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
+                            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
+                            total_tokens: u["total_tokens"].as_u64().unwrap_or(0),
                         });
                     }
                 }
@@ -254,9 +254,9 @@ fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse>
     });
 
     let usage = resp["usage"].as_object().map(|u| Usage {
-        prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-        completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-        total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as u32,
+        prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
+        completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
+        total_tokens: u["total_tokens"].as_u64().unwrap_or(0),
     });
 
     Ok(LLMResponse {

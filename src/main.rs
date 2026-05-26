@@ -713,10 +713,7 @@ async fn main() -> anyhow::Result<()> {
                         },
                     )
                     .await;
-                    let _ = volt::session::delete_session_messages(sp, state.session_id).await;
-                    for msg in &state.messages {
-                        let _ = volt::session::save_message(sp, state.session_id, msg).await;
-                    }
+                    let _ = volt::session::save_session_messages_atomic(sp, state.session_id, &state.messages).await;
                 }
             }
         }
@@ -1068,10 +1065,7 @@ async fn save_agent_session(agent: &Agent) {
             },
         )
         .await;
-        let _ = volt::session::delete_session_messages(&sp, state.session_id).await;
-        for msg in &state.messages {
-            let _ = volt::session::save_message(&sp, state.session_id, msg).await;
-        }
+        let _ = volt::session::save_session_messages_atomic(&sp, state.session_id, &state.messages).await;
     }
 }
 

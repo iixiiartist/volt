@@ -700,7 +700,6 @@ impl Agent {
         }
     }
 
-    #[allow(unused_mut)]
     async fn seed_artifact_if_applicable(&self, tool_name: &str, result: &ToolResult) {
         if let Some(ref ch) = self.seed_channel {
             if !result.success {
@@ -731,7 +730,7 @@ impl Agent {
                         _ => ext,
                     };
 
-                    // Enrich artifact with AST symbols when tools-ast is enabled
+                    #[cfg_attr(not(feature = "tools-ast"), allow(unused_mut))]
                     let mut description = result.output.clone();
                     #[cfg(feature = "tools-ast")]
                     if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
@@ -755,6 +754,21 @@ impl Agent {
                 }
                 "bash" => {
                     ch.artifact_created("shell_execution", &result.output, "shell", tool_name);
+                }
+                "csv_write" => {
+                    ch.artifact_created("csv_data", &result.output, "csv", tool_name);
+                }
+                "create_pdf" => {
+                    // Truncate PDF binary output to first 500 chars of description
+                    let desc = result.output.chars().take(500).collect::<String>();
+                    ch.artifact_created("pdf_document", &desc, "pdf", tool_name);
+                }
+                "screenshot" | "browser_screenshot" => {
+                    ch.artifact_created("screenshot", &result.output, "image", tool_name);
+                }
+                "create_bar_chart" | "create_line_chart" => {
+                    let desc = result.output.chars().take(300).collect::<String>();
+                    ch.artifact_created("chart", &desc, "chart", tool_name);
                 }
                 _ => {}
             }

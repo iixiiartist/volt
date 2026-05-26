@@ -157,8 +157,8 @@ impl LLMProvider for AnthropicProvider {
         let mut tool_calls_acc: Vec<ToolCall> = Vec::new();
         let mut current_tool_call: Option<ToolCall> = None;
         let mut stop_reason: Option<String> = None;
-        let mut input_tokens = 0u32;
-        let mut output_tokens = 0u32;
+        let mut input_tokens = 0u64;
+        let mut output_tokens = 0u64;
 
         let mut stream = response.bytes_stream();
         while let Some(chunk_result) = stream.next().await {
@@ -222,12 +222,12 @@ impl LLMProvider for AnthropicProvider {
                             stop_reason =
                                 val["delta"]["stop_reason"].as_str().map(|s| s.to_string());
                             if let Some(u) = val.get("usage") {
-                                output_tokens = u["output_tokens"].as_u64().unwrap_or(0) as u32;
+                                output_tokens = u["output_tokens"].as_u64().unwrap_or(0);
                             }
                         }
                         Some("message_start") => {
                             if let Some(u) = val.get("message").and_then(|m| m.get("usage")) {
-                                input_tokens = u["input_tokens"].as_u64().unwrap_or(0) as u32;
+                                input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
                             }
                         }
                         _ => {}
@@ -277,10 +277,10 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
     }
 
     let usage = resp["usage"].as_object().map(|u| Usage {
-        prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
-        completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
+        prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0),
+        completion_tokens: u["output_tokens"].as_u64().unwrap_or(0),
         total_tokens: (u["input_tokens"].as_u64().unwrap_or(0)
-            + u["output_tokens"].as_u64().unwrap_or(0)) as u32,
+            + u["output_tokens"].as_u64().unwrap_or(0)),
     });
 
     Ok(LLMResponse {

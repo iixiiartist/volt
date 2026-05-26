@@ -114,7 +114,7 @@ pub async fn save_message(
 ) -> anyhow::Result<()> {
     sqlx::query(
         r#"
-        INSERT INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at)
+        INSERT OR REPLACE INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
     )
@@ -127,6 +127,35 @@ pub async fn save_message(
     .bind(msg.created_at.to_rfc3339())
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Atomically replace all messages for a session (delete-then-insert in a transaction).
+pub async fn save_session_messages_atomic(
+    pool: &SqlitePool,
+    session_id: Uuid,
+    messages: &[Message],
+) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM messages WHERE session_id = ?")
+        .bind(session_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    for msg in messages {
+        sqlx::query(
+            "INSERT INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(session_id.to_string())
+        .bind(&msg.role)
+        .bind(msg.content.as_str())
+        .bind(msg.tool_calls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
+        .bind(msg.tool_result.as_ref())
+        .bind(msg.tool_name.as_ref())
+        .bind(msg.created_at.to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
