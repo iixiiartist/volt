@@ -23,6 +23,8 @@ pub struct Agent {
     seed_channel: Option<SeedChannel>,
     cancel: Option<CancelToken>,
     on_token: Option<TokenCallback>,
+    session_id: Option<uuid::Uuid>,
+    sqlite_pool: Option<sqlx::SqlitePool>,
 }
 
 impl Agent {
@@ -56,6 +58,8 @@ impl Agent {
             seed_channel: None,
             cancel: None,
             on_token: None,
+            session_id: None,
+            sqlite_pool: None,
         }
     }
 
@@ -95,7 +99,26 @@ impl Agent {
         self
     }
 
+    pub fn with_session(mut self, session_id: uuid::Uuid, sqlite_pool: sqlx::SqlitePool) -> Self {
+        self.session_id = Some(session_id);
+        self.sqlite_pool = Some(sqlite_pool);
+        self
+    }
+
     pub async fn run(&self, input: &str) -> anyhow::Result<String> {
+        // Load previous session messages for episodic memory
+        if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
+            match crate::session::load_messages(pool, sid).await {
+                Ok(msgs) if !msgs.is_empty() => {
+                    let mut state = self.state.lock().await;
+                    state.messages.extend(msgs);
+                    tracing::info!("[session] loaded {} messages from {}", state.messages.len(), sid);
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
+            }
+        }
+
         self.push_user_message(input).await;
 
         for _iteration in 0..self.config.max_iterations {
@@ -193,10 +216,13 @@ impl Agent {
                 .await;
                 self.seed_episode_complete(input, response.content.as_str(), &state)
                     .await;
+                drop(state);
+                self.save_session_messages().await;
                 return Ok(Arc::unwrap_or_clone(response.content));
             }
         }
 
+        self.save_session_messages().await;
         Err(anyhow::anyhow!(
             "max iterations reached without final response"
         ))
@@ -204,6 +230,20 @@ impl Agent {
 
     /// Audit log: store the complete LLM turn (request + response) as a ContextEntry.
     /// Enables full traceability for EU AI Act Article 12 compliance.
+    async fn save_session_messages(&self) {
+        if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
+            let state = self.state.lock().await;
+            // Only save messages that are new (not loaded from session)
+            // We track by checking if messages exceed what was originally loaded
+            // Simple heuristic: save all messages — SQLite INSERT is idempotent via ON CONFLICT
+            for msg in &state.messages {
+                if let Err(e) = crate::session::save_message(pool, sid, msg).await {
+                    tracing::warn!("[session] failed to save message: {}", e);
+                }
+            }
+        }
+    }
+
     async fn audit_turn(
         &self,
         request: &LLMRequest,

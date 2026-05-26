@@ -120,6 +120,9 @@ enum Commands {
         /// Comma-separated context kinds to retrieve (default: all)
         #[arg(long, value_delimiter = ',')]
         context_kinds: Vec<String>,
+        /// Session ID for multi-turn episodic memory (creates new session if omitted)
+        #[arg(long)]
+        session_id: Option<String>,
     },
 
     /// Start an interactive agent chat session.
@@ -351,6 +354,7 @@ async fn main() -> anyhow::Result<()> {
             allow,
             load_tools,
             context_kinds,
+            session_id,
         } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
@@ -443,6 +447,31 @@ async fn main() -> anyhow::Result<()> {
                 .with_stream(std::sync::Arc::new(|token| {
                     print!("{}", token);
                 }));
+
+            // Wire up SQLite session for episodic memory
+            let session_db_path = std::path::Path::new("volt_sessions.db");
+            if let Ok(sqlite_pool) = volt::session::open_sessions(session_db_path).await {
+                let sid = if let Some(ref sid_str) = session_id {
+                    uuid::Uuid::parse_str(sid_str).unwrap_or_else(|_| uuid::Uuid::new_v4())
+                } else {
+                    uuid::Uuid::new_v4()
+                };
+                let session = volt::models::Session {
+                    id: sid,
+                    agent_name: "volt-agent".into(),
+                    title: input.clone(),
+                    message_count: 0,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+                let _ = volt::session::create_session(&sqlite_pool, &session).await;
+                agent = agent.with_session(sid, sqlite_pool);
+                if session_id.is_none() {
+                    eprintln!("[session] created new session {}", sid);
+                } else {
+                    eprintln!("[session] resumed session {}", sid);
+                }
+            }
             let pool = match db::connect(&settings.database_url).await {
                 Ok(pool) => Some(pool),
                 Err(e) => {
@@ -517,6 +546,8 @@ async fn main() -> anyhow::Result<()> {
                     save_agent_session(&agent).await;
                 }
             }
+            // Force clean exit for agent-run — background tokio tasks may keep runtime alive
+            std::process::exit(0);
         }
         Commands::AgentChat { model, allow } => {
             let model = model.unwrap_or_else(|| {
@@ -1057,6 +1088,7 @@ async fn setup_tools(embedder: Option<&EmbeddingClient>) -> Arc<ToolRegistry> {
 
 async fn register_all_tools() -> Arc<ToolRegistry> {
     let registry = ToolRegistry::new();
+    let minimal = std::env::var("VOLT_MINIMAL_TOOLS").is_ok();
 
     registry
         .register_with_permission(
@@ -1455,6 +1487,11 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
             }),
         )
         .await;
+
+    if minimal {
+        // Benchmark / minimal mode: only load essential tools to keep system prompt small
+        return registry;
+    }
 
     #[cfg(feature = "tools-screenshot")]
     registry

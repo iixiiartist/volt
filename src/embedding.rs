@@ -213,8 +213,7 @@ impl EmbeddingClient {
                 if let Some(config) = ProviderConfig::from_env(p) {
                     providers.push(config);
                 }
-                // Auto-detected providers act as fallback
-                providers.extend(auto_detect_providers(&http).await);
+                // Only add auto-detected fallbacks when provider is "auto"
                 providers
             }
             _ => auto_detect_providers(&http).await,
@@ -250,9 +249,13 @@ impl EmbeddingClient {
 
         // Truncate to fit within typical embedding model context windows.
         // mxbai-embed-large: 512 tokens, BGE-small: 512 tokens.
-        // ~2000 chars is a safe upper bound for most models.
+        // ~2000 bytes is a safe upper bound for most models.
         let truncated = if description.len() > 2000 {
-            &description[..2000]
+            let mut idx = 2000;
+            while !description.is_char_boundary(idx) && idx > 0 {
+                idx -= 1;
+            }
+            &description[..idx]
         } else {
             description
         };

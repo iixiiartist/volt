@@ -171,8 +171,18 @@ def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-
     """Run Volt binary with the given input and available tools."""
     import tempfile
 
-    binary = str(Path(__file__).parent.parent / "target" / "debug" / "volt.exe")
+    binary = str(Path(__file__).parent.parent / "target" / "release" / "volt.exe")
     env = os.environ.copy()
+    # Load API key from .env
+    env_file = Path(__file__).parent.parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("GROQ_API_KEY="):
+                env["GROQ_API_KEY"] = line.split("=", 1)[1].strip()
+                break
+    # Benchmark optimizations
+    env["EMBEDDING_PROVIDER"] = "none"
+    env["VOLT_MINIMAL_TOOLS"] = "1"
 
     # Write BFCL functions as a JSONL stub file with normalized schemas
     tools_file = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
@@ -190,7 +200,7 @@ def run_volt(input_text: str, functions: list[dict], model: str = "llama-3.1-8b-
     result = subprocess.run(
         [binary, "agent-run", "--model", model, "-a", "--input", input_text,
          "--load-tools", tools_path],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True, text=True, timeout=120,
         env=env,
     )
     elapsed = time.time() - t0

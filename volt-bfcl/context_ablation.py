@@ -41,6 +41,21 @@ ABLATION_CONFIGS = [
 ]
 
 
+def _load_env():
+    """Load .env and set benchmark-optimized env vars."""
+    env = os.environ.copy()
+    env_file = Path(__file__).parent.parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip()
+    # Benchmark optimizations
+    env["EMBEDDING_PROVIDER"] = "none"
+    env["VOLT_MINIMAL_TOOLS"] = "1"
+    return env
+
+
 def run_ablation_config(config: dict, args) -> dict:
     """Run a single ablation configuration."""
     name = config["name"]
@@ -64,6 +79,8 @@ def run_ablation_config(config: dict, args) -> dict:
     total_completion_tokens = 0
     details = []
 
+    env = _load_env()
+
     for i, case in enumerate(cases):
         question = _get_question(case)
         functions = case.get("function", [])
@@ -80,7 +97,6 @@ def run_ablation_config(config: dict, args) -> dict:
         tools_path = tools_file.name
         tools_file.close()
 
-        env = os.environ.copy()
         t0 = time.time()
         try:
             result = subprocess.run(
@@ -88,10 +104,10 @@ def run_ablation_config(config: dict, args) -> dict:
                  "--input", question,
                  "--load-tools", tools_path,
                  "--context-kinds", kinds],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, timeout=120,
                 env=env,
             )
-            output = result.stdout + "\n" + result.stderr
+            output = result.stdout.decode("utf-8", errors="replace") + "\n" + result.stderr.decode("utf-8", errors="replace")
             elapsed = time.time() - t0
 
             # Reuse volt_bench evaluator

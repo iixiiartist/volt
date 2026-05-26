@@ -95,6 +95,31 @@ def download_attachment(task_id: str, file_name: str) -> Path | None:
 
 # -- LLM Call ----------------------------------------------------------
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: 1 token ≈ 4 chars."""
+    return len(text) // 4
+
+
+def compress_messages(messages: list[dict], max_tokens: int = 6000) -> list[dict]:
+    """Drop oldest tool results when total tokens exceed max_tokens."""
+    total = sum(_estimate_tokens(m.get("content", "") or "") for m in messages)
+    if total <= max_tokens:
+        return messages
+    # Keep system + user + last few assistant/tool exchanges
+    kept = []
+    tool_count = 0
+    for m in reversed(messages):
+        kept.insert(0, m)
+        if m["role"] in ("assistant", "tool"):
+            tool_count += 1
+            if tool_count >= 6:  # keep last 3 tool turns
+                break
+    # Always include system message
+    if kept[0]["role"] != "system" and messages[0]["role"] == "system":
+        kept.insert(0, messages[0])
+    return kept
+
+
 def call_llm(messages: list[dict], tools: list[dict] | None = None, model: str = DEFAULT_MODEL) -> dict:
     from openai import OpenAI
 
@@ -400,7 +425,14 @@ def run_benchmark(mode: str, model: str, limit: int = 0):
 
         for turn in range(15):
             step_count += 1
-            response = call_llm(messages, GAIA_TOOLS, model)
+            try:
+                response = call_llm(messages, GAIA_TOOLS, model)
+            except Exception as e:
+                # Handle API errors (tool_use_failed, rate limits, etc.)
+                print(f"    [warn] API error on turn {turn}: {e}")
+                if not final_answer:
+                    final_answer = "(api_error)"
+                break
             case_tokens_in += response["input_tokens"]
             case_tokens_out += response["output_tokens"]
 
@@ -438,6 +470,8 @@ def run_benchmark(mode: str, model: str, limit: int = 0):
                         "tool_call_id": tc["id"],
                         "content": result,
                     })
+                # Compress if context getting long
+                messages = compress_messages(messages)
 
                 if has_final:
                     break
@@ -503,7 +537,7 @@ def run_benchmark(mode: str, model: str, limit: int = 0):
 
 
 def _load_env():
-    """Load .env from Volt project root."""
+    """Load .env from Volt project root (overrides stale env vars)."""
     env_path = Path(__file__).parent.parent / ".env"
     if env_path.exists():
         with open(env_path) as f:
@@ -511,11 +545,14 @@ def _load_env():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-    if not os.getenv("OPENAI_API_KEY") and os.getenv("GROQ_API_KEY"):
-        os.environ["OPENAI_API_KEY"] = os.environ["GROQ_API_KEY"]
-    if not os.getenv("OPENAI_BASE_URL") and os.getenv("LLM_BASE_URL"):
-        os.environ["OPENAI_BASE_URL"] = os.environ["LLM_BASE_URL"]
+                    os.environ[k.strip()] = v.strip()
+    if os.getenv("GROQ_API_KEY"):
+        os.environ.setdefault("OPENAI_API_KEY", os.environ["GROQ_API_KEY"])
+        os.environ.setdefault("OPENAI_BASE_URL", "https://api.groq.com/openai/v1")
+    if os.getenv("LLM_BASE_URL"):
+        os.environ.setdefault("OPENAI_BASE_URL", os.environ["LLM_BASE_URL"])
+    if os.getenv("LLM_API_KEY"):
+        os.environ.setdefault("OPENAI_API_KEY", os.environ["LLM_API_KEY"])
 
 
 if __name__ == "__main__":
