@@ -528,97 +528,12 @@ async fn main() -> anyhow::Result<()> {
             )
             .spawn(seed_rx);
 
-            let seed_store = context_store.clone();
-            let seed_embedder = embedder.clone();
-            let seed_tools = tools_for_seed.clone();
-            let seed_sandbox = settings.sandbox_policy.clone();
-            tokio::spawn(async move {
-                worker::seed_from_workspace(&seed_store, &seed_embedder).await;
-                worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_permissions(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
-            });
-
-            println!();
-            let result = agent.run(&input).await;
-            match &result {
-                Ok(_) => {
-                    println!();
-                    println!();
-                    // Save agent state for session resume
-                    save_agent_session(&agent).await;
-                }
-                Err(e) => {
-                    eprintln!("error: {}", e);
-                    save_agent_session(&agent).await;
-                }
-            }
-            // Cancel background worker and let tokio drain
-            cancel.cancel();
-            // Brief window for background tasks to observe cancellation
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            std::process::exit(if result.is_ok() { 0 } else { 1 });
-        }
-        Commands::AgentChat { model, allow } => {
-            let model = model.unwrap_or_else(|| {
-                std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
-            });
-            let (provider, provider_kind) = build_provider(&model, "volt-agent");
-
-            let cancel = volt::models::CancelToken::new();
-            let c = cancel.clone();
-            tokio::spawn(async move {
-                tokio::signal::ctrl_c().await.ok();
-                eprintln!("\n[interrupt] shutting down...");
-                c.cancel();
-            });
-
-            let tools = register_all_tools().await;
-            let embedder = EmbeddingClient::new_smart().await;
-            tools.compute_embeddings(&embedder).await;
-
-            let cancel_for_agent = cancel.clone();
-            let cancel_for_worker = cancel.clone();
-
-            let config = AgentConfig {
-                name: "volt-agent".into(),
-                model,
-                provider: provider_kind,
-                system_prompt: None,
-                max_iterations: 25,
-                temperature: 0.3,
-                toolsets: vec!["builtin".into()],
-                hidden: false,
-                allow_all: allow,
-                enabled_context_kinds: volt::models::default_context_kinds(),
-                essential_tools: volt::models::default_essential_tools(),
-                context_kind_quotas: Default::default(),
-            };
-            let mut agent = Agent::new(config, provider, tools.clone())
-                .with_cancel(cancel_for_agent)
-                .with_stream(std::sync::Arc::new(|token| {
-                    print!("{}", token);
-                }));
-
-            let context_store = ContextStore::new();
-            let (seed_channel, seed_rx) = worker::create_seed_channel();
-            agent = agent
-                .with_context(context_store.clone())
-                .with_seed_channel(seed_channel);
-
-            worker::AutoSeedWorker::new(context_store.clone(), embedder.clone(), cancel_for_worker)
-                .spawn(seed_rx);
-
-            let seed_store = context_store.clone();
-            let seed_embedder = embedder.clone();
-            let seed_tools = tools.clone();
-            let seed_sandbox = settings.sandbox_policy.clone();
-            tokio::spawn(async move {
-                worker::seed_from_workspace(&seed_store, &seed_embedder).await;
-                worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_permissions(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
-            });
+            tokio::spawn(seed_background(
+                context_store.clone(),
+                embedder.clone(),
+                tools_for_seed.clone(),
+                settings.sandbox_policy.clone(),
+            ));
 
             if let Ok(pool) = db::connect(&settings.database_url).await {
                 context_store.set_db(pool.clone());
@@ -758,16 +673,12 @@ async fn main() -> anyhow::Result<()> {
             worker::AutoSeedWorker::new(context_store.clone(), embedder.clone(), cancel_tui)
                 .spawn(seed_rx);
 
-            let seed_store = context_store.clone();
-            let seed_embedder = embedder.clone();
-            let seed_tools = tools.clone();
-            let seed_sandbox = settings.sandbox_policy.clone();
-            tokio::spawn(async move {
-                worker::seed_from_workspace(&seed_store, &seed_embedder).await;
-                worker::seed_tool_intents(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_permissions(&seed_store, &seed_tools, &seed_embedder).await;
-                worker::seed_security_policy(&seed_store, &seed_sandbox, &seed_embedder).await;
-            });
+            tokio::spawn(seed_background(
+                context_store.clone(),
+                embedder.clone(),
+                tools.clone(),
+                settings.sandbox_policy.clone(),
+            ));
 
             if let Ok(pool) = db::connect(&settings.database_url).await {
                 context_store.set_db(pool.clone());
@@ -1020,9 +931,29 @@ async fn main() -> anyhow::Result<()> {
 
             std::fs::remove_dir_all(&tmp_dir).ok();
         }
+        Commands::AgentChat { .. } => {
+            eprintln!("AgentChat is deprecated — use AgentRun or AgentTui");
+        }
     }
 
     Ok(())
+}
+
+/// Spawn background seeding: workspace, tool intents, permissions, security.
+async fn seed_background(
+    store: Arc<volt::context::ContextStore>,
+    embedder: volt::embedding::EmbeddingClient,
+    tools: Arc<volt::tools::ToolRegistry>,
+    sandbox: volt::models::SandboxPolicy,
+) {
+    let store_ref = &store;
+    let embedder_ref = &embedder;
+    let tools_ref = &tools;
+    let sandbox_ref = &sandbox;
+    worker::seed_from_workspace(store_ref, embedder_ref).await;
+    worker::seed_tool_intents(store_ref, tools_ref, embedder_ref).await;
+    worker::seed_permissions(store_ref, tools_ref, embedder_ref).await;
+    worker::seed_security_policy(store_ref, sandbox_ref, embedder_ref).await;
 }
 
 fn build_provider(model: &str, agent_name: &str) -> (Box<dyn LLMProvider>, String) {
