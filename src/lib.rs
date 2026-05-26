@@ -31,3 +31,13 @@ pub fn http_client(timeout_secs: u64) -> reqwest::Client {
         .build()
         .expect("reqwest client build must succeed")
 }
+
+/// Cosine similarity between two vectors of equal length.
+/// Shared utility used by context store, tool registry, skills, and vector index.
+#[inline]
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    dot / (norm_a * norm_b).max(f32::EPSILON)
+}

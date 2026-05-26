@@ -1,6 +1,8 @@
 use crate::agent::loop_rs::Agent;
+use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai::OpenAIProvider;
 use crate::models::{AgentConfig, ToolResult};
+use crate::orchestrator::{resolve_provider, ProviderKind};
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,17 +28,26 @@ fn sanitize_prompt_input(s: &str, max: usize) -> String {
 pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) -> ToolResult {
     let started = Instant::now();
 
-    let api_key = std::env::var("NVIDIA_API_KEY")
-        .or_else(|_| std::env::var("LLM_API_KEY"))
-        .unwrap_or_default();
-    let base_url =
-        std::env::var("LLM_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".into());
-    let model = std::env::var("LLM_MODEL")
-        .unwrap_or_else(|_| "nvidia/llama-3.1-nemotron-70b-instruct".into());
-
-    let provider = Box::new(OpenAIProvider::new(api_key, base_url, "delegate".into()));
     let safe_task = sanitize_prompt_input(task, MAX_TASK_CHARS);
     let safe_context = sanitize_prompt_input(context, MAX_CONTEXT_CHARS);
+
+    // Use parent agent's model; fall back to LLM_MODEL env var or Groq default
+    let model = std::env::var("LLM_MODEL")
+        .unwrap_or_else(|_| "llama-3.1-8b-instant".into());
+    let route = resolve_provider(&model);
+    let provider: Box<dyn crate::llm::LLMProvider> = match route.kind {
+        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
+            route.api_key,
+            Some(route.base_url),
+            "delegate".into(),
+        )),
+        ProviderKind::OpenAI => Box::new(OpenAIProvider::new(
+            route.api_key,
+            route.base_url,
+            "delegate".into(),
+        )),
+    };
+
     let system_prompt = format!(
         "You are a sub-agent delegated to complete a specific task.\n\
          Context from parent agent:\n{context}\n\n\
@@ -45,10 +56,14 @@ pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) 
         context = safe_context
     );
 
+    let provider_kind = match route.kind {
+        ProviderKind::Anthropic => "anthropic",
+        _ => "openai",
+    };
     let config = AgentConfig {
         name: "sub-agent".into(),
         model,
-        provider: "nvidia".into(),
+        provider: provider_kind.into(),
         system_prompt: Some(system_prompt),
         max_iterations: 10,
         temperature: 0.3,

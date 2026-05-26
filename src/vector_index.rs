@@ -116,7 +116,7 @@ impl LshIndex {
         // Compute cosine similarity for candidates
         let mut scored: Vec<(f32, Uuid)> = candidates
             .into_iter()
-            .map(|(id, v)| (cosine_similarity(&v, query), id))
+            .map(|(id, v)| (crate::cosine_similarity(&v, query), id))
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         scored.into_iter().take(k).map(|(s, id)| (id, s)).collect()
@@ -140,13 +140,6 @@ impl LshIndex {
     pub fn len(&self) -> usize {
         *self.count.read().unwrap()
     }
-}
-
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    dot / (norm_a * norm_b).max(f32::EPSILON)
 }
 
 #[cfg(test)]
@@ -175,8 +168,8 @@ mod tests {
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].0, id1); // itself
         // v3 should be closer to v1 than v2 is
-        let sim_v3 = cosine_similarity(&v3, &v1);
-        let sim_v2 = cosine_similarity(&v2, &v1);
+        let sim_v3 = crate::cosine_similarity(&v3, &v1);
+        let sim_v2 = crate::cosine_similarity(&v2, &v1);
         assert!(sim_v3 > sim_v2);
     }
 

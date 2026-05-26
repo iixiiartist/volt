@@ -983,31 +983,6 @@ async fn load_manifest(path: &PathBuf) -> anyhow::Result<RegistryManifest> {
     Ok(serde_json::from_str::<RegistryManifest>(&body)?)
 }
 
-async fn save_agent_session(agent: &Agent) {
-    let sessions_path = std::path::PathBuf::from("volt_sessions.db");
-    if let Ok(sp) = volt::session::open_sessions(&sessions_path).await {
-        let state = agent.state.lock().await;
-        let title = state
-            .messages
-            .first()
-            .map(|m| m.content.chars().take(60).collect::<String>())
-            .unwrap_or_else(|| "unnamed".into());
-        let _ = volt::session::create_session(
-            &sp,
-            &Session {
-                id: state.session_id,
-                agent_name: state.name.clone(),
-                title,
-                message_count: state.messages.len() as u32,
-                created_at: state.created_at,
-                updated_at: chrono::Utc::now(),
-            },
-        )
-        .await;
-        let _ = volt::session::save_session_messages_atomic(&sp, state.session_id, &state.messages).await;
-    }
-}
-
 async fn setup_skills(
     pool: Option<sqlx::PgPool>,
     embedder: Option<EmbeddingClient>,
