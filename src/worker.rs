@@ -10,6 +10,9 @@ use tracing::info;
 // ── Seed event types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Events emitted by the agent loop and consumed by the background auto-seeding worker.
+/// Three variants: EpisodeComplete (after agent run), ArtifactCreated (file/code side effects),
+/// and MCPRegistered (MCP server tool schemas).
 pub enum SeedEvent {
     EpisodeComplete {
         session_id: uuid::Uuid,
@@ -113,6 +116,8 @@ impl SeedEvent {
 
 // ── MPSC channel wrapper ───────────────────────────────────────────────────
 
+/// Clone-able sender for the MPSC channel from agent loop to background worker.
+/// Non-blocking — silently logs warnings if the worker has stopped.
 #[derive(Clone)]
 pub struct SeedChannel {
     tx: mpsc::UnboundedSender<SeedEvent>,
@@ -184,6 +189,9 @@ const MERGE_CLUSTER_THRESHOLD: f32 = 0.85;
 const MERGE_MIN_CLUSTER: usize = 3;
 const MERGE_EVERY_N_BATCHES: u32 = 10;
 
+/// Background daemon that drains seed events from the MPSC channel, computes embeddings,
+/// and seeds entries into the unified context store with dedup and eviction.
+/// Runs episodic merging every 10 batches.
 pub struct AutoSeedWorker {
     context_store: Arc<ContextStore>,
     embedder: EmbeddingClient,

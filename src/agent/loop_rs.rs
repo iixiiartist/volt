@@ -14,6 +14,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
 
+/// An autonomous agent — holds configuration, LLM provider, tool registry, and session state.
+/// Built via `Agent::new()` with chained `.with_*()` methods for context, skills, sessions, etc.
 pub struct Agent {
     pub config: AgentConfig,
     pub state: Arc<Mutex<AgentState>>,

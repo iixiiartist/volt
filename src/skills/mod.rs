@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 /// Parsed SKILL.md manifest
 #[derive(Debug, Clone)]
+/// Compiled skill manifest — name, version, description, content, and referenced MCP servers.
 pub struct SkillManifest {
     pub name: String,
     pub version: String,

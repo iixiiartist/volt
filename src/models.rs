@@ -150,6 +150,7 @@ pub struct Usage {
     pub total_tokens: u64,
 }
 
+/// Configuration for an LLM provider — name, API key, base URL, supported models.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LLMProviderConfig {
     pub name: String,
@@ -184,6 +185,7 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A persistent memory entry — content, embedding vector, session ID, and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
     pub id: i64,
@@ -194,6 +196,7 @@ pub struct MemoryEntry {
     pub created_at: DateTime<Utc>,
 }
 
+/// An audit record of a tool execution — agent name, tool, status, tokens, timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionRecord {
     pub id: i64,
@@ -221,6 +224,7 @@ pub struct ToolResult {
 
 // ─── MCP types ────────────────────────────────────────────────
 
+/// Configuration for an MCP (Model Context Protocol) server — name, transport, tools, env vars.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MCPServerConfig {
     pub name: String,
@@ -229,6 +233,7 @@ pub struct MCPServerConfig {
     pub env: Option<HashMap<String, String>>,
 }
 
+/// Transport mechanism for an MCP server — HTTP with URL and optional headers, or Stdio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum MCPTransport {
@@ -243,6 +248,7 @@ pub enum MCPTransport {
 
 // ─── Existing types ───────────────────────────────────────────
 
+/// A manifest describing an agent registry entry — name, version, tools, dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryManifest {
     pub tool_name: String,
@@ -261,12 +267,14 @@ pub struct RegistryManifest {
     pub metadata: Value,
 }
 
+/// A relationship between two registry assets — source, target, and relationship type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetRelationshipSpec {
     pub child_tool_name: String,
     pub relationship_type: String,
 }
 
+/// A tool registered in the agent tool registry — ID, name, description, language, verification status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTool {
     pub id: i32,
@@ -279,6 +287,7 @@ pub struct AgentTool {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Options for fetching from a registry — URL, auth token, timeout, cache settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryFetchOptions {
     pub pkg_id: String,
@@ -286,6 +295,7 @@ pub struct RegistryFetchOptions {
     pub auth_token: Option<String>,
 }
 
+/// Result of provisioning a tool from a registry — success flag, manifest, and any warnings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvisionResult {
     pub tool_name: String,
@@ -294,6 +304,7 @@ pub struct ProvisionResult {
     pub execution_id: Uuid,
 }
 
+/// Report from validating a tool manifest — valid flag, errors, warnings, and SHA-256 hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationReport {
     pub accepted: bool,
@@ -302,6 +313,7 @@ pub struct ValidationReport {
     pub warnings: Vec<String>,
 }
 
+/// Sandbox execution policy — allowed commands, network access, timeout, and resource limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxPolicy {
     pub timeout_ms: u64,
@@ -309,6 +321,7 @@ pub struct SandboxPolicy {
     pub working_dir: Option<String>,
 }
 
+/// Result of a sandboxed command execution — exit code, stdout, stderr, and duration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxResult {
     pub status: String,
@@ -357,6 +370,7 @@ impl CancelToken {
 }
 
 #[derive(Debug, Clone)]
+/// Per-model context window sizing. Maps model names to their token limits for compression.
 pub struct ModelContext {
     pub model: String,
     pub max_tokens: u32,

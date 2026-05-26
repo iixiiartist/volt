@@ -2,17 +2,20 @@ use crate::agent::loop_rs::Agent;
 use std::time::Instant;
 
 #[derive(Debug, Clone, serde::Deserialize)]
+/// A single evaluation task — question and optional expected answer substrings.
 pub struct EvalTask {
     pub task: String,
     pub expected_substrings: Option<Vec<String>>,
 }
 
+/// A named evaluation suite containing multiple tasks.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EvalSuite {
     pub name: String,
     pub tasks: Vec<EvalTask>,
 }
 
+/// Result of a single evaluation task — passed/failed, output, duration, missing substrings.
 #[derive(Debug, Clone)]
 pub struct EvalResult {
     pub task: String,
@@ -22,6 +25,7 @@ pub struct EvalResult {
     pub missing_substrings: Vec<String>,
 }
 
+/// Summary of an evaluation suite run — totals, pass/fail counts, duration, per-task results.
 #[derive(Debug, Clone)]
 pub struct EvalSummary {
     pub suite_name: String,
