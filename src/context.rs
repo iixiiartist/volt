@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 // ── Context kinds — every context field an agent ingests or produces ────────
 
+/// The 12 kinds of context entries stored in the unified RAG store.
+/// Each kind has its own quota and is seeded from different sources.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     Skill,
@@ -63,6 +65,7 @@ impl ContextKind {
 
 // ── Universal context entry ───────────────────────────────────────────────
 
+/// A single entry in the unified context store — kind, content, embedding, metadata, and stats.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextEntry {
     pub id: Uuid,
@@ -96,6 +99,8 @@ impl ContextEntry {
 
 // ── In-memory context store ────────────────────────────────────────────────
 
+/// The unified RAG context store. Manages 12 kinds of context entries with vector search,
+/// four-pillar eviction, episodic merging, and optional pgvector persistence.
 pub struct ContextStore {
     entries: RwLock<Vec<StoredEntry>>,
     insert_count: RwLock<usize>,

@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Open (or create) the SQLite sessions database and run pending schema migrations.
 pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(path)

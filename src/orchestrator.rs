@@ -7,6 +7,7 @@ use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// The cloud provider type for LLM API routing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderKind {
     OpenAI,
@@ -14,6 +15,8 @@ pub enum ProviderKind {
 }
 
 #[derive(Clone)]
+/// Resolved route for an LLM provider — kind, base URL, and API key.
+// NOTE: Debug is manual to redact api_key.
 pub struct ProviderRoute {
     pub kind: ProviderKind,
     pub base_url: String,
@@ -30,6 +33,7 @@ impl std::fmt::Debug for ProviderRoute {
     }
 }
 
+/// Specification for an agent in a multi-agent workflow — name, model, prompt, limits.
 #[derive(Debug, Clone)]
 pub struct AgentSpec {
     pub name: String,
