@@ -355,7 +355,7 @@ pub fn first_run_wizard() -> bool {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Settings {
     pub database_url: String,
     pub registry_base_url: String,
@@ -365,6 +365,37 @@ pub struct Settings {
     pub embedding_provider: EmbeddingProvider,
     pub embedding_endpoint: String,
     pub sandbox_policy: SandboxPolicy,
+}
+
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Settings")
+            .field("database_url", &redact_url(&self.database_url))
+            .field("registry_base_url", &self.registry_base_url)
+            .field("registry_token", &redact_opt(&self.registry_token))
+            .field("embedding_api_key", &redact_opt(&self.embedding_api_key))
+            .field("embedding_model", &self.embedding_model)
+            .field("embedding_provider", &self.embedding_provider)
+            .field("embedding_endpoint", &self.embedding_endpoint)
+            .field("sandbox_policy", &self.sandbox_policy)
+            .finish()
+    }
+}
+
+fn redact_opt(s: &Option<String>) -> &str {
+    s.as_ref().map(|_| "***").unwrap_or("(none)")
+}
+
+fn redact_url(s: &str) -> String {
+    if let Some(at) = s.find('@') {
+        format!(
+            "{}:***@{}",
+            &s[..s.find("://").map(|i| i + 3).unwrap_or(0)],
+            &s[at + 1..]
+        )
+    } else {
+        s.to_string()
+    }
 }
 
 impl Settings {

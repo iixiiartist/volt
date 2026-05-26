@@ -212,11 +212,28 @@ impl Agent {
             if let Some(tool_calls) = &response.tool_calls {
                 self.push_assistant_message(&mut state, &response, Some(tool_calls))
                     .await;
-                self.execute_tool_calls(tool_calls, &mut state).await;
+                // Release the lock before tool execution — tools can take up to 300s,
+                // and holding the MutexGuard blocks all other state access
+                let allow_session = state.allow_session;
+                drop(state);
+                let tool_results = self.execute_tool_calls(tool_calls, allow_session).await;
                 // Build co-occurrence edges in ToolGraph for future retrieval
                 if tool_calls.len() > 1 {
                     let names: Vec<String> = tool_calls.iter().map(|tc| tc.name.clone()).collect();
                     self.tools.record_co_occurrence(&names);
+                }
+                // Re-acquire lock to record tool outputs in conversation state
+                let mut state = self.state.lock().await;
+                for (tool_name, call_id, output, result) in tool_results {
+                    self.seed_artifact_if_applicable(&tool_name, &result).await;
+                    state.messages.push(Message {
+                        role: "tool".into(),
+                        content: Arc::new(output.clone()),
+                        tool_calls: None,
+                        tool_result: Some(output),
+                        tool_name: Some(call_id),
+                        created_at: chrono::Utc::now(),
+                    });
                 }
             } else {
                 self.push_assistant_message(&mut state, &response, None)
@@ -542,17 +559,19 @@ impl Agent {
     async fn execute_tool_calls(
         &self,
         tool_calls: &[ToolCall],
-        state: &mut tokio::sync::MutexGuard<'_, AgentState>,
-    ) {
+        allow_session: bool,
+    ) -> Vec<(String, String, String, ToolResult)> {
+        // (tool_name, call_id, output, ToolResult)
         // Check permissions upfront
+        let mut allow_session = allow_session;
         for tc in tool_calls {
             if self.is_cancelled() {
-                return;
+                return Vec::new();
             }
             let needs_approval = self.tools.get_permission(&tc.name).await
                 == PermissionLevel::Prompt
                 && !self.config.allow_all
-                && !state.allow_session;
+                && !allow_session;
             if needs_approval {
                 eprintln!(
                     "\n\x1b[33m[approval]\x1b[0m tool '{}({:?})' requires approval.",
@@ -568,48 +587,18 @@ impl Agent {
                 })
                 .await
                 .unwrap_or_default();
-                let approved = answer == "y" || answer == "a";
                 if answer == "a" {
-                    state.allow_session = true;
-                }
-                if !approved {
-                    info!("tool '{}' rejected by user", tc.name);
-                    state.messages.push(Message {
-                        role: "tool".into(),
-                        content: Arc::new("skipped: rejected by user".to_string()),
-                        tool_calls: None,
-                        tool_result: Some("skipped: rejected by user".into()),
-                        tool_name: Some(tc.id.clone()),
-                        created_at: chrono::Utc::now(),
-                    });
+                    allow_session = true;
                 }
             }
         }
 
         if self.is_cancelled() {
-            return;
-        }
-
-        // Collect approved tool calls
-        let approved: Vec<&ToolCall> = tool_calls
-            .iter()
-            .filter(|tc| {
-                state
-                    .messages
-                    .iter()
-                    .rev()
-                    .find(|m| m.tool_name.as_deref() == Some(&tc.id))
-                    .map(|m| !m.content.contains("skipped"))
-                    .unwrap_or(true)
-            })
-            .collect();
-
-        if approved.is_empty() {
-            return;
+            return Vec::new();
         }
 
         // Execute approved tools concurrently
-        let futures: Vec<_> = approved
+        let futures: Vec<_> = tool_calls
             .iter()
             .map(|tc| {
                 let tools = self.tools.clone();
@@ -630,13 +619,11 @@ impl Agent {
                             duration_ms: 0,
                         });
 
-                    // rag_learn in background
                     if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
                         if let Ok(_emb) = emb.embed_description(&name).await {
-                            let query = args.to_string();
                             store
                                 .record_run(
-                                    &query,
+                                    &args.to_string(),
                                     &name,
                                     result.success,
                                     serde_json::json!({
@@ -656,26 +643,20 @@ impl Agent {
                         format!("error: {}", error_msg.unwrap_or_default())
                     };
 
-                    (id, output, result)
+                    (name, id, output, result)
                 }
             })
             .collect();
 
         let results = futures::future::join_all(futures).await;
 
-        for (id, output, result) in results {
-            // Auto-seed artifact
-            self.seed_artifact_if_applicable(&id, &result).await;
-
-            state.messages.push(Message {
-                role: "tool".into(),
-                content: Arc::new(output.clone()),
-                tool_calls: None,
-                tool_result: Some(output),
-                tool_name: Some(id),
-                created_at: chrono::Utc::now(),
-            });
+        // Update allow_session before returning
+        if allow_session {
+            let mut state = self.state.lock().await;
+            state.allow_session = true;
         }
+
+        results
     }
 
     async fn store_memory(

@@ -327,10 +327,7 @@ impl AutoSeedWorker {
             merged_entries.push(entry);
         }
 
-        let mut store = self.context_store.entries.write().await;
-        for entry in merged_entries {
-            store.push(crate::context::StoredEntry { entry });
-        }
+        self.context_store.append_entries(merged_entries).await;
 
         info!(
             "[volt worker] episodic merge: {} clusters merged into {} high-density entries",

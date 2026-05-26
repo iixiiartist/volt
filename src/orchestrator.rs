@@ -13,11 +13,21 @@ pub enum ProviderKind {
     Anthropic,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderRoute {
     pub kind: ProviderKind,
     pub base_url: String,
     pub api_key: String,
+}
+
+impl std::fmt::Debug for ProviderRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderRoute")
+            .field("kind", &self.kind)
+            .field("base_url", &self.base_url)
+            .field("api_key", &"***")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]

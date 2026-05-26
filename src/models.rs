@@ -141,13 +141,25 @@ pub struct Usage {
     pub total_tokens: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LLMProviderConfig {
     pub name: String,
     pub api_key: Option<String>,
     pub base_url: String,
     pub models: Vec<String>,
     pub priority: u32,
+}
+
+impl std::fmt::Debug for LLMProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LLMProviderConfig")
+            .field("name", &self.name)
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("base_url", &self.base_url)
+            .field("models", &self.models)
+            .field("priority", &self.priority)
+            .finish()
+    }
 }
 
 // ─── Memory types ─────────────────────────────────────────────

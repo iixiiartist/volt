@@ -97,7 +97,7 @@ impl ContextEntry {
 // ── In-memory context store ────────────────────────────────────────────────
 
 pub struct ContextStore {
-    pub entries: RwLock<Vec<StoredEntry>>,
+    entries: RwLock<Vec<StoredEntry>>,
     insert_count: RwLock<usize>,
     db: std::sync::OnceLock<sqlx::PgPool>,
     quota_overrides: std::sync::RwLock<std::collections::HashMap<ContextKind, usize>>,
@@ -148,6 +148,14 @@ impl ContextStore {
     /// Default: 100. Lower values = more frequent cleanup, higher = more memory.
     pub fn set_evict_every(&self, n: usize) {
         *self.evict_every.write().unwrap() = n;
+    }
+
+    /// Append entries directly to the store (used by episodic merger).
+    pub async fn append_entries(&self, entries: Vec<ContextEntry>) {
+        let mut store = self.entries.write().await;
+        for entry in entries {
+            store.push(StoredEntry { entry });
+        }
     }
 
     fn quota_for(&self, kind: ContextKind) -> usize {
