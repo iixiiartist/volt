@@ -14,6 +14,8 @@ fn agent_config() -> AgentConfig {
         hidden: false,
         allow_all: false,
         enabled_context_kinds: volt::models::default_context_kinds(),
+        essential_tools: volt::models::default_essential_tools(),
+        context_kind_quotas: Default::default(),
     }
 }
 

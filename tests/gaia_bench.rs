@@ -55,6 +55,9 @@ async fn test_gaia_smoke() {
         toolsets: vec![],
         hidden: false,
         allow_all: true,
+        enabled_context_kinds: volt::models::default_context_kinds(),
+        essential_tools: volt::models::default_essential_tools(),
+        context_kind_quotas: Default::default(),
     };
     let agent = Agent::new(config, provider, tools);
 

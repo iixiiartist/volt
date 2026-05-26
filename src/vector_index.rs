@@ -202,7 +202,8 @@ mod tests {
         }
 
         // Search for a known vector — should find itself first
-        let query = &index.buckets.read().unwrap().values().next().unwrap()[0].1;
+        let buckets = index.buckets.read().unwrap();
+        let query = &buckets.values().next().unwrap()[0].1;
         let results = index.search(query, 5, 2);
         assert!(!results.is_empty());
         // First result should have high similarity (>0.9 for cosine)
