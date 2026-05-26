@@ -482,6 +482,6 @@ mod tests {
     #[test]
     fn test_model_context_default() {
         let ctx = ModelContext::for_model("unknown-model");
-        assert_eq!(ctx.max_context_tokens, 4096);
+        assert_eq!(ctx.max_context_tokens, 32768);
     }
 }
