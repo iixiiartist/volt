@@ -80,6 +80,7 @@ pub fn validate_url(url_str: &str) -> Result<Url, String> {
 
 pub async fn web_fetch(url: &str) -> ToolResult {
     let started = Instant::now();
+    const MAX_BYTES: usize = 2_000_000; // 2MB cap prevents OOM on large pages
 
     let parsed = match validate_url(url) {
         Ok(u) => u,
@@ -111,16 +112,25 @@ pub async fn web_fetch(url: &str) -> ToolResult {
         Ok(resp) => {
             let status = resp.status();
             match resp.text().await {
-                Ok(body) => ToolResult {
-                    success: status.is_success(),
-                    output: body,
-                    error: if status.is_success() {
-                        None
+                Ok(body) => {
+                    // Truncate to prevent OOM on large responses
+                    let truncated: String = body.chars().take(MAX_BYTES).collect();
+                    let truncated_notice = if body.len() > MAX_BYTES {
+                        format!(" [truncated from {} bytes]", body.len())
                     } else {
-                        Some(format!("HTTP {}", status))
-                    },
-                    duration_ms: started.elapsed().as_millis(),
-                },
+                        String::new()
+                    };
+                    ToolResult {
+                        success: status.is_success(),
+                        output: format!("{}{}", truncated, truncated_notice),
+                        error: if status.is_success() {
+                            None
+                        } else {
+                            Some(format!("HTTP {}", status))
+                        },
+                        duration_ms: started.elapsed().as_millis(),
+                    }
+                }
                 Err(e) => ToolResult {
                     success: false,
                     output: String::new(),
@@ -136,6 +146,11 @@ pub async fn web_fetch(url: &str) -> ToolResult {
             duration_ms: started.elapsed().as_millis(),
         },
     }
+}
+
+pub async fn web_scrape(url: &str) -> ToolResult {
+    // web_scrape delegates to web_fetch; the ToolRegistry routes both.
+    web_fetch(url).await
 }
 
 #[cfg(test)]

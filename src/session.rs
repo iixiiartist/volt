@@ -82,6 +82,13 @@ async fn run_migration_v1(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    // Performance index for session message lookups
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)"
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 

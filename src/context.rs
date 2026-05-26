@@ -250,15 +250,17 @@ impl ContextStore {
         let entries = self.entries.read().await;
         let mut scored: Vec<(f32, &StoredEntry)> = entries
             .iter()
-            .filter(|s| {
-                s.entry.embedding.is_some()
+            .filter_map(|s| {
+                if s.entry.embedding.is_some()
                     && kind_filter.as_ref().is_none_or(|k| s.entry.kind == *k)
-            })
-            .map(|s| {
-                let emb = s.entry.embedding.as_ref().unwrap();
-                let sim = cosine_similarity(emb, query_embedding);
-                let score = 0.6 * sim + 0.4 * s.entry.composite_score();
-                (score, s)
+                {
+                    let emb = s.entry.embedding.as_ref()?;
+                    let sim = cosine_similarity(emb, query_embedding);
+                    let score = 0.6 * sim + 0.4 * s.entry.composite_score();
+                    Some((score, s))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -442,13 +444,17 @@ impl ContextStore {
             }
             let mut cluster = vec![kind_entries[i].0];
             visited[i] = true;
-            let emb_i = kind_entries[i].1.entry.embedding.as_ref().unwrap();
+            let Some(emb_i) = kind_entries[i].1.entry.embedding.as_ref() else {
+                continue;
+            };
 
             for j in (i + 1)..n {
                 if visited[j] {
                     continue;
                 }
-                let emb_j = kind_entries[j].1.entry.embedding.as_ref().unwrap();
+                let Some(emb_j) = kind_entries[j].1.entry.embedding.as_ref() else {
+                    continue;
+                };
                 let sim = cosine_similarity(emb_i, emb_j);
                 if sim >= threshold {
                     cluster.push(kind_entries[j].0);

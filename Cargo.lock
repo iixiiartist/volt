@@ -5432,6 +5432,7 @@ dependencies = [
  "opentelemetry-stdout",
  "opentelemetry_sdk",
  "petgraph",
+ "rand 0.8.6",
  "ratatui",
  "regex",
  "reqwest",
