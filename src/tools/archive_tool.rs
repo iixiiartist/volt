@@ -220,7 +220,10 @@ async fn create_tar_gz(path: &str, sources: &[String], gzip: bool) -> ToolResult
     for src in sources {
         let src_path = Path::new(src);
         if src_path.is_file() {
-            if let Err(e) = archive.append_path_with_name(src_path, src_path.file_name().unwrap()) {
+            let name = src_path
+                .file_name()
+                .unwrap_or(std::ffi::OsStr::new("unknown"));
+            if let Err(e) = archive.append_path_with_name(src_path, name) {
                 return ToolResult {
                     success: false,
                     output: String::new(),
@@ -229,7 +232,10 @@ async fn create_tar_gz(path: &str, sources: &[String], gzip: bool) -> ToolResult
                 };
             }
         } else if src_path.is_dir() {
-            if let Err(e) = archive.append_dir(src_path.file_name().unwrap(), src_path) {
+            let dir_name = src_path
+                .file_name()
+                .unwrap_or(std::ffi::OsStr::new("unknown"));
+            if let Err(e) = archive.append_dir(dir_name, src_path) {
                 return ToolResult {
                     success: false,
                     output: String::new(),

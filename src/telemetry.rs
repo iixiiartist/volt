@@ -25,11 +25,22 @@ pub fn init_otel(service_name: &str) {
 
 fn build_provider(service_name: &str) -> opentelemetry_sdk::trace::TracerProvider {
     if let Ok(endpoint) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
-        let exporter = opentelemetry_otlp::SpanExporter::builder()
+        let exporter = match opentelemetry_otlp::SpanExporter::builder()
             .with_http()
             .with_endpoint(&endpoint)
             .build()
-            .expect("build OTLP exporter");
+        {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!(
+                    "[otel] failed to build OTLP exporter, falling back to stdout: {}",
+                    e
+                );
+                return opentelemetry_sdk::trace::TracerProvider::builder()
+                    .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
+                    .build();
+            }
+        };
 
         let resource = opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
             "service.name",

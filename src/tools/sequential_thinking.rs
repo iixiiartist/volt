@@ -1,7 +1,8 @@
 use crate::models::ToolResult;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::Instant;
+use tokio::sync::Mutex;
 
 static THOUGHTS: LazyLock<Mutex<HashMap<String, Vec<Thought>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -20,7 +21,7 @@ pub async fn sequentialthinking(
     let started = Instant::now();
     let branch_key = branch_id.unwrap_or("default").to_string();
 
-    let mut store = THOUGHTS.lock().unwrap();
+    let mut store = THOUGHTS.lock().await;
     let thoughts = store.entry(branch_key.clone()).or_default();
 
     let thought_number = thoughts.len() as u32 + 1;

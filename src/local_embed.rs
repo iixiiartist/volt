@@ -30,6 +30,9 @@ impl LocalEmbedder {
             .map_err(|e| anyhow::anyhow!("tokenizer load: {}", e))?;
 
         let config: Config = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
+        // SAFETY: The safetensors model file is memory-mapped for zero-copy loading.
+        // The file is read-only and not modified during the lifetime of the VarBuilder.
+        // The mapping is valid for the duration of the LocalEmbedder instance.
         let vb = unsafe {
             candle_nn::VarBuilder::from_mmaped_safetensors(
                 &[model_path],
