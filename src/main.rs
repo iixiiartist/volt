@@ -123,6 +123,9 @@ enum Commands {
         /// Session ID for multi-turn episodic memory (creates new session if omitted)
         #[arg(long)]
         session_id: Option<String>,
+        /// Maximum agent loop iterations (default: 8)
+        #[arg(long)]
+        max_iterations: Option<u32>,
     },
 
     /// Start an interactive agent chat session.
@@ -142,6 +145,9 @@ enum Commands {
         model: Option<String>,
         #[arg(long, short = 'a', default_value_t = false)]
         allow: bool,
+        /// Maximum agent loop iterations (default: 25)
+        #[arg(long)]
+        max_iterations: Option<u32>,
     },
 
     /// Multi-agent workflow: parallel, pipeline, or supervisor.
@@ -355,6 +361,7 @@ async fn main() -> anyhow::Result<()> {
             load_tools,
             context_kinds,
             session_id,
+            max_iterations,
         } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
@@ -435,7 +442,7 @@ async fn main() -> anyhow::Result<()> {
                 model,
                 provider: provider_kind,
                 system_prompt: None,
-                max_iterations: 8,
+                max_iterations: max_iterations.unwrap_or(8),
                 temperature: 0.3,
                 toolsets: vec!["builtin".into()],
                 hidden: false,
@@ -643,7 +650,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::AgentTui { model, allow } => {
+        Commands::AgentTui {
+            model,
+            allow,
+            max_iterations,
+        } => {
             let model = model.unwrap_or_else(|| {
                 std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
             });
@@ -657,7 +668,7 @@ async fn main() -> anyhow::Result<()> {
                 model,
                 provider: provider_kind,
                 system_prompt: None,
-                max_iterations: 25,
+                max_iterations: max_iterations.unwrap_or(25),
                 temperature: 0.3,
                 toolsets: vec!["builtin".into()],
                 hidden: false,

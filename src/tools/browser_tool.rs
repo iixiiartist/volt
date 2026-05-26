@@ -75,7 +75,9 @@ mod browser_impl {
                                             texts.join("\n").chars().take(2000).collect()
                                         }
                                     }
-                                    Err(e) => format!("invalid CSS selector '{}': {:?}", selector, e),
+                                    Err(e) => {
+                                        format!("invalid CSS selector '{}': {:?}", selector, e)
+                                    }
                                 }
                             };
                             ToolResult {

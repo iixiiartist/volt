@@ -101,6 +101,7 @@ pub struct ContextStore {
     insert_count: RwLock<usize>,
     db: std::sync::OnceLock<sqlx::PgPool>,
     quota_overrides: std::sync::RwLock<std::collections::HashMap<ContextKind, usize>>,
+    evict_every: std::sync::RwLock<usize>,
 }
 
 pub struct StoredEntry {
@@ -114,6 +115,7 @@ impl ContextStore {
             insert_count: RwLock::new(0),
             db: std::sync::OnceLock::new(),
             quota_overrides: std::sync::RwLock::new(std::collections::HashMap::new()),
+            evict_every: std::sync::RwLock::new(100),
         })
     }
 
@@ -125,6 +127,7 @@ impl ContextStore {
             insert_count: RwLock::new(0),
             db,
             quota_overrides: std::sync::RwLock::new(std::collections::HashMap::new()),
+            evict_every: std::sync::RwLock::new(100),
         })
     }
 
@@ -139,6 +142,12 @@ impl ContextStore {
         for (k, v) in overrides {
             q.insert(*k, *v);
         }
+    }
+
+    /// Set the eviction frequency (number of inserts between eviction passes).
+    /// Default: 100. Lower values = more frequent cleanup, higher = more memory.
+    pub fn set_evict_every(&self, n: usize) {
+        *self.evict_every.write().unwrap() = n;
     }
 
     fn quota_for(&self, kind: ContextKind) -> usize {
@@ -345,7 +354,6 @@ impl ContextStore {
     // ── Seed batch with dedup and quota eviction ─────────────────────────
 
     const DEDUP_THRESHOLD: f32 = 0.92;
-    const EVICT_EVERY_N_INSERTS: usize = 100;
 
     pub async fn seed_batch(&self, entries: Vec<ContextEntry>) {
         let mut store = self.entries.write().await;
@@ -395,7 +403,7 @@ impl ContextStore {
         // 2. Track insert count; evict periodically
         let mut count = self.insert_count.write().await;
         *count += inserted;
-        if *count >= Self::EVICT_EVERY_N_INSERTS {
+        if *count >= *self.evict_every.read().unwrap() {
             *count = 0;
             drop(count);
 
