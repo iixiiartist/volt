@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="chat-container">
+    <header class="chat-header">
+        <div class="header-main">
+            <div class="header-info">
+                <h1>Volt</h1>
+                <span class="model-badge">{{ model }}</span>
+                <span class="mode-badge mode-{{ mode }}">{{ mode }}</span>
+                {% if allow_all %}
+                <span class="allow-badge">auto-approve</span>
+                {% endif %}
+            </div>
+            <button class="settings-btn" id="settings-btn" title="Settings">&#9881;</button>
+        </div>
+    </header>
+
+    <div class="settings-panel" id="settings-panel">
+        <h3>Settings</h3>
+        <label>Model
+            <select id="settings-model">
+                <option value="{{ model }}" selected>{{ model }}</option>
+                <option value="qwen/qwen3-32b">qwen/qwen3-32b</option>
+                <option value="llama-4-scout-17b">llama-4-scout-17b</option>
+                <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+                <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+                <option value="openai/gpt-oss-20b">openai/gpt-oss-20b</option>
+            </select>
+        </label>
+        <label>Mode
+            <select id="settings-mode">
+                <option value="balanced" {% if mode == "balanced" %}selected{% endif %}>Balanced (5 context kinds)</option>
+                <option value="precision" {% if mode == "precision" %}selected{% endif %}>Precision (2 context kinds)</option>
+                <option value="autonomous" {% if mode == "autonomous" %}selected{% endif %}>Autonomous (12 context kinds)</option>
+            </select>
+        </label>
+        <label>Max iterations
+            <input type="number" id="settings-iterations" value="{{ max_iterations }}" min="1" max="100">
+        </label>
+        <label><input type="checkbox" id="settings-allow" {% if allow_all %}checked{% endif %}> Auto-approve tools</label>
+        <div class="settings-actions">
+            <button id="settings-close">Close</button>
+        </div>
+    </div>
+
+    <div class="messages" id="messages">
+        {% if messages.is_empty() %}
+        <div class="empty-state">
+            <div class="empty-icon">&#9889;</div>
+            <div>Send a message to start.</div>
+            <div class="empty-hint">I can browse the web, write and run code, search files, and more.</div>
+            <button class="hint-btn" onclick="sendHint('What can you do?')">What can you do?</button>
+            <button class="hint-btn" onclick="sendHint('Browse the web and summarize the latest AI news')">Browse web for AI news</button>
+            <button class="hint-btn" onclick="sendHint('Write a Python script to calculate fibonacci numbers')">Write a Python script</button>
+        </div>
+        {% endif %}
+        {% for msg in messages %}
+        <div class="message {{ msg.role }}">
+            {{ msg.content }}
+            <div class="timestamp">{{ msg.created_at }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <form class="chat-form" id="chat-form">
+        <input type="text" id="message-input" placeholder="Type your message..." autofocus>
+        <button type="submit" id="send-btn">Send</button>
+    </form>
+
+    <div class="session-bar" id="session-bar">
+        <span>Session: <strong id="session-display">{{ session_id_short }}</strong></span>
+        <button id="new-session-btn" title="New session">&#x2795; New</button>
+    </div>
+</div>
+
+<script>
+    const messagesEl = document.getElementById('messages');
+    const form = document.getElementById('chat-form');
+    const input = document.getElementById('message-input');
+    const sendBtn = document.getElementById('send-btn');
+    let sessionId = '{{ session_id }}';
+    let currentAssistantEl = null;
+    let eventSource = null;
+
+    function addMessage(role, content) {
+        const div = document.createElement('div');
+        div.className = 'message ' + role;
+        const now = new Date();
+        const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        div.innerHTML = content + '<div class="timestamp">' + ts + '</div>';
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return div;
+    }
+
+    function addTyping() {
+        const div = document.createElement('div');
+        div.className = 'typing';
+        div.id = 'typing-indicator';
+        div.innerHTML = '<span></span><span></span><span></span>';
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function removeTyping() {
+        const el = document.getElementById('typing-indicator');
+        if (el) el.remove();
+    }
+
+    function startSSE(sid) {
+        if (eventSource) eventSource.close();
+        eventSource = new EventSource('/events/' + sid);
+        currentAssistantEl = null;
+
+        eventSource.addEventListener('token', function(e) {
+            removeTyping();
+            if (!currentAssistantEl) {
+                currentAssistantEl = addMessage('assistant', '');
+                currentAssistantEl.id = 'streaming-msg';
+            }
+            const textNode = currentAssistantEl.firstChild;
+            if (textNode) textNode.textContent += e.data;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        });
+
+        eventSource.addEventListener('done', function() {
+            removeTyping();
+            if (currentAssistantEl) { currentAssistantEl.id = ''; currentAssistantEl = null; }
+            if (eventSource) { eventSource.close(); eventSource = null; }
+            setEnabled(true);
+        });
+
+        eventSource.addEventListener('error', function() {
+            removeTyping();
+            if (currentAssistantEl) { currentAssistantEl.id = ''; currentAssistantEl = null; }
+            if (eventSource) { eventSource.close(); eventSource = null; }
+            setEnabled(true);
+        });
+    }
+
+    function setEnabled(en) {
+        sendBtn.disabled = !en;
+        input.disabled = !en;
+        if (en) input.focus();
+    }
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+
+        const model = document.getElementById('settings-model').value;
+        const mode = document.getElementById('settings-mode').value;
+        const iterations = document.getElementById('settings-iterations').value;
+        const allow = document.getElementById('settings-allow').checked;
+
+        input.value = '';
+        setEnabled(false);
+        addMessage('user', escapeHtml(message));
+        addTyping();
+
+        try {
+            document.querySelector('.empty-state')?.remove();
+            const resp = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message,
+                    session_id: sessionId,
+                    model,
+                    mode,
+                    max_iterations: parseInt(iterations),
+                    allow_all: allow
+                })
+            });
+            if (!resp.ok) {
+                const err = await resp.text();
+                addMessage('system', 'Error: ' + err);
+                setEnabled(true);
+                removeTyping();
+                return;
+            }
+            const data = await resp.json();
+            sessionId = data.session_id;
+            document.getElementById('session-display').textContent = sessionId.slice(0, 8);
+            startSSE(sessionId);
+        } catch (err) {
+            addMessage('system', 'Connection error: ' + err.message);
+            setEnabled(true);
+            removeTyping();
+        }
+    });
+
+    document.getElementById('new-session-btn').addEventListener('click', async function() {
+        if (eventSource) { eventSource.close(); eventSource = null; }
+        const resp = await fetch('/session/new', { method: 'POST' });
+        const data = await resp.json();
+        sessionId = data.session_id;
+        document.getElementById('session-display').textContent = sessionId.slice(0, 8);
+        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9889;</div><div>New session started.</div></div>';
+        setEnabled(true);
+    });
+
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsPanel = document.getElementById('settings-panel');
+    settingsBtn.addEventListener('click', function() {
+        settingsPanel.classList.toggle('open');
+    });
+    document.getElementById('settings-close').addEventListener('click', function() {
+        settingsPanel.classList.remove('open');
+    });
+
+    function sendHint(text) {
+        input.value = text;
+        form.dispatchEvent(new Event('submit'));
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+</script>
+{% endblock %}

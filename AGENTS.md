@@ -77,6 +77,17 @@ Key finding: tool selection embedding quality is the dominant signal (+12pp). Co
 - you.com API available for web search (`https://you.com/docs/welcome`)
 - 98 GB free disk, 8 GB free RAM at idle (this machine)
 
+### Local ONNX Embedder Upgrade (May 2026)
+- **Replaced** Candle BGE-small-en-v1.5 (384d) with tract-onnx BGE-large-en-v1.5 (1024d)
+- **Pure Rust:** tract-onnx ONNX inference engine — no C++/MSVC dependency, works on all platforms
+- **Default model:** `Xenova/bge-large-en-v1.5` via hf-hub, downloads int8 quantized ONNX (~337MB) + tokenizer on first use (cached to ~/.cache/huggingface)
+- **Configurable via:**
+  - `VOLT_ONNX_MODEL_DIR` — local path to directory with model.onnx + tokenizer.json
+  - `EMBEDDING_MODEL` — HuggingFace model ID (default: Xenova/bge-large-en-v1.5)
+- **Architecture:** Mean pooling over last_hidden_state, L2 normalization (native 1024d, no padding needed)
+- **Feature flag:** `tools-local-embeddings` (now enables tract-onnx + hf-hub + tokenizers + ndarray)
+- **Removed:** candle-core, candle-transformers, candle-nn dependencies
+
 ### System Prompt Bugfix (May 2026)
 - **Root cause:** `build_system_prompt()` in `src/agent/prompt.rs` was defined but never called — the agent ran with no system prompt, so the LLM didn't know it was an agent with tool access
 - **Fix:** Added `workspace: Option<PathBuf>` field to `Agent` struct in `loop_rs.rs`, `with_workspace()` builder, injected system prompt at start of `run()`; changed `build_system_prompt` signature from `&Path` to `Option<&Path>` for safety; all 3 `Agent::new()` call sites in `main.rs` now chain `.with_workspace(current_dir())`

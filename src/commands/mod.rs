@@ -60,6 +60,7 @@ pub mod agent_tui;
 pub mod eval;
 pub mod mcp;
 pub mod provision;
+pub mod serve;
 pub mod skills;
 pub mod tools;
 pub mod workflow;
