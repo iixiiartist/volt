@@ -177,7 +177,9 @@ impl ToolRegistry {
                 .collect();
             let bm25 = crate::vector_index::Bm25Scorer::build(
                 corpus.iter().enumerate().map(|(i, t)| (i, t.as_str())),
-                1.2, 0.75, 0.5,
+                1.2,
+                0.75,
+                0.5,
             );
             let results = bm25.search(qt);
             results.iter().map(|(idx, _)| *idx).collect()

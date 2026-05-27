@@ -30,11 +30,20 @@ const CATEGORIES: &[(&str, &str)] = &[
     ("live_multiple", "BFCL_v4_live_multiple.json"),
     ("live_irrelevance", "BFCL_v4_live_irrelevance.json"),
     ("live_relevance", "BFCL_v4_live_relevance.json"),
-    ("live_parallel_multiple", "BFCL_v4_live_parallel_multiple.json"),
+    (
+        "live_parallel_multiple",
+        "BFCL_v4_live_parallel_multiple.json",
+    ),
     ("multi_turn_base", "BFCL_v4_multi_turn_base.json"),
-    ("multi_turn_long_context", "BFCL_v4_multi_turn_long_context.json"),
+    (
+        "multi_turn_long_context",
+        "BFCL_v4_multi_turn_long_context.json",
+    ),
     ("multi_turn_miss_func", "BFCL_v4_multi_turn_miss_func.json"),
-    ("multi_turn_miss_param", "BFCL_v4_multi_turn_miss_param.json"),
+    (
+        "multi_turn_miss_param",
+        "BFCL_v4_multi_turn_miss_param.json",
+    ),
 ];
 
 const GROQ_MODELS: &[&str] = &[
@@ -131,7 +140,7 @@ fn extract_query(question: &Value) -> String {
     String::new()
 }
 
-fn load_cases(data_dir: &PathBuf) -> anyhow::Result<Vec<(String, Vec<BfclCase>)>> {
+fn load_cases(data_dir: &std::path::Path) -> anyhow::Result<Vec<(String, Vec<BfclCase>)>> {
     let mut all = Vec::new();
     for &(name, filename) in CATEGORIES {
         let path = data_dir.join(filename);
@@ -156,15 +165,9 @@ fn load_cases(data_dir: &PathBuf) -> anyhow::Result<Vec<(String, Vec<BfclCase>)>
     Ok(all)
 }
 
-fn evaluate_tool_call(
-    predicted: &[ToolDefinition],
-    expected: &[BfclFunction],
-) -> (bool, String) {
+fn evaluate_tool_call(predicted: &[ToolDefinition], expected: &[BfclFunction]) -> (bool, String) {
     let pred_names: Vec<&str> = predicted.iter().map(|t| t.name.as_str()).collect();
-    let exp_names: Vec<&str> = expected
-        .iter()
-        .filter_map(|f| f.name.as_deref())
-        .collect();
+    let exp_names: Vec<&str> = expected.iter().filter_map(|f| f.name.as_deref()).collect();
 
     if pred_names.is_empty() {
         return (false, "no tool calls".to_string());
@@ -178,20 +181,32 @@ fn evaluate_tool_call(
     if pred_set == exp_set {
         (true, format!("called {:?} (exact match)", pred_set))
     } else if is_subset && !pred_set.is_empty() {
-        (true, format!("called {:?} (subset of {:?}, accepted)", pred_set, exp_set))
+        (
+            true,
+            format!("called {:?} (subset of {:?}, accepted)", pred_set, exp_set),
+        )
     } else if is_subset {
-        (false, format!("subset: called {:?} of {:?}", pred_set, exp_set))
+        (
+            false,
+            format!("subset: called {:?} of {:?}", pred_set, exp_set),
+        )
     } else if exp_set.is_subset(&pred_set) {
-        (false, format!("superset: called {:?} vs expected {:?}", pred_set, exp_set))
+        (
+            false,
+            format!("superset: called {:?} vs expected {:?}", pred_set, exp_set),
+        )
     } else {
-        (false, format!("mismatch: called {:?} vs expected {:?}", pred_set, exp_set))
+        (
+            false,
+            format!("mismatch: called {:?} vs expected {:?}", pred_set, exp_set),
+        )
     }
 }
 
 async fn run_category(
     provider: &dyn LLMProvider,
     model: &str,
-    cat_name: &str,
+    _cat_name: &str,
     cases: &[BfclCase],
     limit: usize,
     quiet: bool,
@@ -206,7 +221,7 @@ async fn run_category(
         let query = case
             .question
             .as_ref()
-            .map(|q| extract_query(q))
+            .map(extract_query)
             .unwrap_or_default();
         let functions = case.function.as_deref().unwrap_or_default();
 
@@ -221,7 +236,7 @@ async fn run_category(
                 let params = f
                     .parameters
                     .as_ref()
-                    .map(|p| fix_params(p))
+                    .map(fix_params)
                     .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
                 ToolDefinition {
                     name: f.name.clone().unwrap_or_default(),
@@ -236,11 +251,12 @@ async fn run_category(
         let expects_no_call = functions.is_empty();
 
         // Thinking models need extra token budget for chain-of-thought
-        let max_tokens = if model.contains("qwen3") || model.contains("qwq") || model.contains("deepseek-r1") {
-            4096u32
-        } else {
-            1024u32
-        };
+        let max_tokens =
+            if model.contains("qwen3") || model.contains("qwq") || model.contains("deepseek-r1") {
+                4096u32
+            } else {
+                1024u32
+            };
 
         let request = LLMRequest {
             model: model.to_string(),
@@ -304,8 +320,16 @@ async fn run_category(
         if !quiet {
             let status = if ok { "PASS" } else { "FAIL" };
             let id = case.id.as_deref().unwrap_or("?");
-            let pt = result.as_ref().ok().and_then(|r| r.usage.as_ref().map(|u| u.prompt_tokens)).unwrap_or(0);
-            let ct = result.as_ref().ok().and_then(|r| r.usage.as_ref().map(|u| u.completion_tokens)).unwrap_or(0);
+            let pt = result
+                .as_ref()
+                .ok()
+                .and_then(|r| r.usage.as_ref().map(|u| u.prompt_tokens))
+                .unwrap_or(0);
+            let ct = result
+                .as_ref()
+                .ok()
+                .and_then(|r| r.usage.as_ref().map(|u| u.completion_tokens))
+                .unwrap_or(0);
             println!(
                 "    [{}/{}] {} | {} | tokens: {}P+{}C | {}ms | {}",
                 i + 1,
@@ -320,7 +344,13 @@ async fn run_category(
         }
     }
 
-    (passed, total as u32, total_prompt, total_completion, total_latency)
+    (
+        passed,
+        total as u32,
+        total_prompt,
+        total_completion,
+        total_latency,
+    )
 }
 
 #[tokio::main]
@@ -388,6 +418,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Provider: Groq (api.groq.com/openai/v1)");
     println!("{}", "=".repeat(90));
 
+    #[allow(clippy::type_complexity)]
     let mut all_results: Vec<(String, String, u32, u32, f64, f64, u64, u64, f64)> = Vec::new();
 
     for model in &models {
@@ -397,7 +428,8 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("\n  [skip] {}: no API key available", model);
             continue;
         }
-        let provider = OpenAIProvider::new(route.api_key, route.base_url, format!("bfcl-{}", model));
+        let provider =
+            OpenAIProvider::new(route.api_key, route.base_url, format!("bfcl-{}", model));
 
         println!("\n{}", "-".repeat(90));
         println!("  MODEL: {}", model);

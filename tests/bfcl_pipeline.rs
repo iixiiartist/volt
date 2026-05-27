@@ -248,16 +248,8 @@ async fn test_bfcl_voltr_pipeline() {
 
             let (pass, pt, ct) = match result {
                 Ok(r) => {
-                    let pt = r
-                        .usage
-                        .as_ref()
-                        .map(|u| u.prompt_tokens as u64)
-                        .unwrap_or(0);
-                    let ct = r
-                        .usage
-                        .as_ref()
-                        .map(|u| u.completion_tokens as u64)
-                        .unwrap_or(0);
+                    let pt = r.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
+                    let ct = r.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
                     let ok = if let Some(ref tcs) = r.tool_calls {
                         let pred: Vec<&str> = tcs.iter().map(|tc| tc.name.as_str()).collect();
                         let exp: Vec<&str> = functions

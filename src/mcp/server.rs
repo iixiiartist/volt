@@ -1,11 +1,7 @@
 use crate::tools::ToolRegistry;
+use axum::{extract::State, routing::post, Json, Router};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use axum::{
-    extract::State,
-    routing::post,
-    Json, Router,
-};
 
 /// Shared application state for the MCP HTTP server.
 pub struct McpAppState {
@@ -141,9 +137,7 @@ async fn handle_mcp_request(
 }
 
 /// Axum handler for tools/list.
-async fn handle_tools_list(
-    State(state): State<Arc<McpAppState>>,
-) -> Json<serde_json::Value> {
+async fn handle_tools_list(State(state): State<Arc<McpAppState>>) -> Json<serde_json::Value> {
     let defs = state.tools.get_definitions().await;
     let tools: Vec<serde_json::Value> = defs
         .into_iter()

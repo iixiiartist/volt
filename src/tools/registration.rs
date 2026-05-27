@@ -2,7 +2,9 @@ use crate::models::{PermissionLevel, ToolResult};
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 
-pub async fn setup_tools(embedder: Option<&crate::embedding::EmbeddingClient>) -> Arc<ToolRegistry> {
+pub async fn setup_tools(
+    embedder: Option<&crate::embedding::EmbeddingClient>,
+) -> Arc<ToolRegistry> {
     let registry = crate::tools::register_all_tools().await;
     if let Some(emb) = embedder {
         registry.compute_embeddings(emb).await;
@@ -35,8 +37,8 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                     })
                 }),
                 PermissionLevel::Prompt,
-        )
-        .await;
+            )
+            .await;
     }
 
     registry
@@ -394,8 +396,8 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         )
         .await;
 
-    // ── you.com research (deep research) ──────────────────────────────────
-    registry
+        // ── you.com research (deep research) ──────────────────────────────────
+        registry
         .register(
             "you_research",
             "Deep research via you.com Research API. Runs multiple searches, reads sources, and synthesizes a thorough, well-cited answer. Use for complex questions requiring multi-step research.",
@@ -418,8 +420,8 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         )
         .await;
 
-    // ── you.com contents ──────────────────────────────────────────────────
-    registry
+        // ── you.com contents ──────────────────────────────────────────────────
+        registry
         .register(
             "you_contents",
             "Fetch clean Markdown or HTML content from specific URLs using you.com Contents API. Takes a list of URLs and returns structured page content. Use when you already have URLs and need their full text content.",

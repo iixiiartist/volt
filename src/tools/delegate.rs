@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_prompt_input_removes_null() {
-        let s = format!("hello\x00world");
+        let s = "hello\x00world".to_string();
         let result = sanitize_prompt_input(&s, 100);
         assert_eq!(result, "helloworld");
     }

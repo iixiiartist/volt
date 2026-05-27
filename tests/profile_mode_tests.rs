@@ -2,12 +2,12 @@
 //! Validates the exact context kind sets, final_answer termination,
 //! and the "Agent Tax" tradeoff documented in paper §4.5.
 
+use std::sync::Arc;
+use volt::agent::loop_rs::Agent;
 use volt::commands::AgentMode;
 use volt::context::ContextKind;
 use volt::models::*;
-use volt::agent::loop_rs::Agent;
 use volt::test_utils::MockLLMProvider;
-use std::sync::Arc;
 
 // ── Context cardinality guarantees ──────────────────────────────────
 
@@ -56,11 +56,26 @@ fn test_autonomous_mode_all_twelve_kinds() {
 
 #[test]
 fn test_mode_from_str_defaults_to_balanced() {
-    assert!(matches!(AgentMode::from_str("balanced"), AgentMode::Balanced));
-    assert!(matches!(AgentMode::from_str("precision"), AgentMode::Precision));
-    assert!(matches!(AgentMode::from_str("autonomous"), AgentMode::Autonomous));
-    assert!(matches!(AgentMode::from_str("garbage"), AgentMode::Balanced));
-    assert!(matches!(AgentMode::from_str(""), AgentMode::Balanced));
+    assert!(matches!(
+        "balanced".parse::<AgentMode>().unwrap(),
+        AgentMode::Balanced
+    ));
+    assert!(matches!(
+        "precision".parse::<AgentMode>().unwrap(),
+        AgentMode::Precision
+    ));
+    assert!(matches!(
+        "autonomous".parse::<AgentMode>().unwrap(),
+        AgentMode::Autonomous
+    ));
+    assert!(matches!(
+        "garbage".parse::<AgentMode>().unwrap(),
+        AgentMode::Balanced
+    ));
+    assert!(matches!(
+        "".parse::<AgentMode>().unwrap(),
+        AgentMode::Balanced
+    ));
 }
 
 // ── Agent Tax: precision mode structural guarantees ─────────────────
@@ -134,7 +149,9 @@ async fn test_final_answer_terminates_agent_loop() {
 #[tokio::test]
 async fn test_precision_mode_agent_runs_without_context_noise() {
     // Verify that a precision-mode agent works with mock LLM
-    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result("done")]));
+    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+        "done",
+    )]));
     let registry = volt::tools::ToolRegistry::new();
     let agent = Agent::new(precision_config(), provider, registry);
     let result = agent.run("simple task").await;
@@ -143,7 +160,9 @@ async fn test_precision_mode_agent_runs_without_context_noise() {
 
 #[tokio::test]
 async fn test_balanced_mode_agent_runs_without_context_noise() {
-    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result("done")]));
+    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+        "done",
+    )]));
     let registry = volt::tools::ToolRegistry::new();
     let agent = Agent::new(balanced_config(), provider, registry);
     let result = agent.run("simple task").await;
@@ -193,9 +212,15 @@ fn test_agent_tax_cardinality() {
     // excludes all non-essential context kinds.
     let precision = AgentMode::Precision.context_kinds();
     let noise_kinds: Vec<ContextKind> = vec![
-        ContextKind::Skill, ContextKind::Memory, ContextKind::Conversation,
-        ContextKind::AgentRun, ContextKind::SystemPrompt, ContextKind::FewShot,
-        ContextKind::Policy, ContextKind::Permission, ContextKind::Security,
+        ContextKind::Skill,
+        ContextKind::Memory,
+        ContextKind::Conversation,
+        ContextKind::AgentRun,
+        ContextKind::SystemPrompt,
+        ContextKind::FewShot,
+        ContextKind::Policy,
+        ContextKind::Permission,
+        ContextKind::Security,
         ContextKind::MCPConfig,
     ];
     for noise in noise_kinds {
@@ -213,8 +238,11 @@ fn test_balanced_mode_retains_optimal_five() {
     // must be the exact balanced mode set — changing it regresses accuracy.
     let balanced = AgentMode::Balanced.context_kinds();
     let required: Vec<ContextKind> = vec![
-        ContextKind::Tool, ContextKind::Skill, ContextKind::Memory,
-        ContextKind::Conversation, ContextKind::Artifact,
+        ContextKind::Tool,
+        ContextKind::Skill,
+        ContextKind::Memory,
+        ContextKind::Conversation,
+        ContextKind::Artifact,
     ];
     for kind in required {
         assert!(

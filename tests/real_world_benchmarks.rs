@@ -20,7 +20,7 @@ use volt::models::*;
 use volt::orchestrator::DagWorkflow;
 use volt::test_utils::MockLLMProvider;
 use volt::tools::ToolRegistry;
-use volt::vector_index::{reciprocal_rank_fusion, Bm25Scorer, tokenize};
+use volt::vector_index::{reciprocal_rank_fusion, tokenize, Bm25Scorer};
 
 // ═══════════════════════════════════════════════════════════════════
 // Helper: build an AgentConfig for mock-based tests
@@ -45,7 +45,9 @@ fn mock_config(name: &str, max_iterations: u32) -> AgentConfig {
 
 macro_rules! mock_result {
     ($text:expr) => {
-        Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result($text)]))
+        Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+            $text,
+        )]))
     };
 }
 
@@ -60,7 +62,9 @@ macro_rules! mock_tool_call {
 }
 
 fn mock_tool_calls(calls: Vec<ToolCall>) -> Box<MockLLMProvider> {
-    Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_calls(calls)]))
+    Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_calls(
+        calls,
+    )]))
 }
 
 /// Register a simple mock tool that returns a canned output
@@ -192,23 +196,39 @@ async fn test_workflow1_software_dev_dag() {
 
     // Each node's mock: the last response is final_answer
     let _research_provider = mock_tool_calls(vec![
-        mock_tool_call!("web_search", serde_json::json!({"query": "Rust async patterns"})),
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "research complete"})),
+        mock_tool_call!(
+            "web_search",
+            serde_json::json!({"query": "Rust async patterns"})
+        ),
+        mock_tool_call!(
+            "final_answer",
+            serde_json::json!({"answer": "research complete"})
+        ),
     ]);
 
     let _code_provider = mock_tool_calls(vec![
-        mock_tool_call!("write_file", serde_json::json!({"path": "src/server.rs", "content": "async fn handler()"})),
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "code written"})),
+        mock_tool_call!(
+            "write_file",
+            serde_json::json!({"path": "src/server.rs", "content": "async fn handler()"})
+        ),
+        mock_tool_call!(
+            "final_answer",
+            serde_json::json!({"answer": "code written"})
+        ),
     ]);
 
     let _review_provider = mock_tool_calls(vec![
         mock_tool_call!("grep", serde_json::json!({"pattern": "unsafe"})),
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "review passed: no unsafe code"})),
+        mock_tool_call!(
+            "final_answer",
+            serde_json::json!({"answer": "review passed: no unsafe code"})
+        ),
     ]);
 
-    let _report_provider = mock_tool_calls(vec![
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "Final report: DAG completed successfully"})),
-    ]);
+    let _report_provider = mock_tool_calls(vec![mock_tool_call!(
+        "final_answer",
+        serde_json::json!({"answer": "Final report: DAG completed successfully"})
+    )]);
 
     // We can't easily inject per-node mock providers into DagScheduler since
     // it uses create_agent which builds an OpenAIProvider. Instead, we test
@@ -230,12 +250,19 @@ async fn test_workflow1_software_dev_dag() {
     let levels = workflow.execution_levels().expect("valid levels");
     assert!(!levels.is_empty(), "At least one level");
     // Level 0 should contain "research" (the only node with no predecessors)
-    assert!(levels[0].contains(&"research".to_string()), "Level 0 = research");
+    assert!(
+        levels[0].contains(&"research".to_string()),
+        "Level 0 = research"
+    );
     // Level 1 should contain "code" (depends on research)
     // Level 2 should contain "review" (depends on code)
     // Level 2 (or 1) should contain "report" (depends on research + review)
     // So we need at least 3 levels
-    assert!(levels.len() >= 3, "At least 3 execution levels, got {}", levels.len());
+    assert!(
+        levels.len() >= 3,
+        "At least 3 execution levels, got {}",
+        levels.len()
+    );
 
     // Verify DAG node count
     assert_eq!(workflow.nodes.len(), 4);
@@ -253,8 +280,16 @@ async fn test_workflow1_software_dev_dag() {
     let node_ids: std::collections::HashSet<String> =
         workflow.nodes.iter().map(|n| n.id.clone()).collect();
     for edge in &workflow.edges {
-        assert!(node_ids.contains(&edge.from), "Edge from '{}' must exist", edge.from);
-        assert!(node_ids.contains(&edge.to), "Edge to '{}' must exist", edge.to);
+        assert!(
+            node_ids.contains(&edge.from),
+            "Edge from '{}' must exist",
+            edge.from
+        );
+        assert!(
+            node_ids.contains(&edge.to),
+            "Edge to '{}' must exist",
+            edge.to
+        );
     }
 }
 
@@ -308,26 +343,57 @@ async fn test_workflow2_data_analysis_pipeline() {
 
     let provider = mock_tool_calls(vec![
         // Scrape
-        mock_tool_call!("web_scrape", serde_json::json!({"url": "https://weather.example.com"})),
+        mock_tool_call!(
+            "web_scrape",
+            serde_json::json!({"url": "https://weather.example.com"})
+        ),
         // Extract
-        mock_tool_call!("json_query", serde_json::json!({"query": "temperature, humidity, wind"})),
+        mock_tool_call!(
+            "json_query",
+            serde_json::json!({"query": "temperature, humidity, wind"})
+        ),
         // Transform + write CSV
-        mock_tool_call!("csv_write", serde_json::json!({"path": "weather_data.csv", "rows": [{"temp": 72, "humidity": 45}]})),
+        mock_tool_call!(
+            "csv_write",
+            serde_json::json!({"path": "weather_data.csv", "rows": [{"temp": 72, "humidity": 45}]})
+        ),
         // Chart
-        mock_tool_call!("create_bar_chart", serde_json::json!({"data": "weather_data.csv"})),
+        mock_tool_call!(
+            "create_bar_chart",
+            serde_json::json!({"data": "weather_data.csv"})
+        ),
         // Final answer
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "Analysis complete: weather data scraped, extracted, charted"})),
+        mock_tool_call!(
+            "final_answer",
+            serde_json::json!({"answer": "Analysis complete: weather data scraped, extracted, charted"})
+        ),
     ]);
 
     let agent = Agent::new(mock_config("data-analyst", 6), provider, registry.clone());
-    let result = agent.run("Analyze weather data from https://weather.example.com").await;
-    assert!(result.is_ok(), "Pipeline should complete: {:?}", result.err());
+    let result = agent
+        .run("Analyze weather data from https://weather.example.com")
+        .await;
+    assert!(
+        result.is_ok(),
+        "Pipeline should complete: {:?}",
+        result.err()
+    );
 
     // Verify tools were registered and the mock provider received the request
     let defs = registry.get_definitions().await;
     let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-    for required in &["web_scrape", "json_query", "csv_write", "create_bar_chart", "final_answer"] {
-        assert!(names.contains(required), "Tool '{}' must be registered in registry", required);
+    for required in &[
+        "web_scrape",
+        "json_query",
+        "csv_write",
+        "create_bar_chart",
+        "final_answer",
+    ] {
+        assert!(
+            names.contains(required),
+            "Tool '{}' must be registered in registry",
+            required
+        );
     }
 }
 
@@ -367,14 +433,22 @@ async fn test_workflow3_multi_agent_research() {
 
     let mut results_unwrapped = Vec::new();
     for r in futures::future::join_all(handles).await {
-        let output = r.expect("parallel agent should succeed").expect("agent run ok");
+        let output = r
+            .expect("parallel agent should succeed")
+            .expect("agent run ok");
         results_unwrapped.push(output);
     }
     assert_eq!(results_unwrapped.len(), 3);
 
     // Verify each finding is different
-    assert_ne!(results_unwrapped[0], results_unwrapped[1], "Different researchers should produce different findings");
-    assert_ne!(results_unwrapped[1], results_unwrapped[2], "Different researchers should produce different findings");
+    assert_ne!(
+        results_unwrapped[0], results_unwrapped[1],
+        "Different researchers should produce different findings"
+    );
+    assert_ne!(
+        results_unwrapped[1], results_unwrapped[2],
+        "Different researchers should produce different findings"
+    );
 
     // Synthesis agent
     let tasks = format!(
@@ -382,11 +456,22 @@ async fn test_workflow3_multi_agent_research() {
         results_unwrapped[0], results_unwrapped[1], results_unwrapped[2]
     );
 
-    let synth_provider = mock_result!("Synthesized report: combined insights from all 3 researchers");
+    let synth_provider =
+        mock_result!("Synthesized report: combined insights from all 3 researchers");
     let synth_agent = Agent::new(mock_config("synthesizer", 3), synth_provider, registry);
-    let final_report = synth_agent.run(&tasks).await.expect("Synthesis should succeed");
-    assert!(!final_report.is_empty(), "Synthesis should produce a report");
-    assert!(final_report.contains("Synthesized"), "Report should mention synthesis: {}", final_report);
+    let final_report = synth_agent
+        .run(&tasks)
+        .await
+        .expect("Synthesis should succeed");
+    assert!(
+        !final_report.is_empty(),
+        "Synthesis should produce a report"
+    );
+    assert!(
+        final_report.contains("Synthesized"),
+        "Report should mention synthesis: {}",
+        final_report
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -399,13 +484,22 @@ async fn test_workflow4_tool_selection_stress() {
 
     // Register 10 real-looking tools
     let real_tools = vec![
-        ("calculate", "Perform mathematical calculations and arithmetic operations"),
-        ("web_search", "Search the internet for information and web pages"),
+        (
+            "calculate",
+            "Perform mathematical calculations and arithmetic operations",
+        ),
+        (
+            "web_search",
+            "Search the internet for information and web pages",
+        ),
         ("read_file", "Read the contents of a file from disk"),
         ("write_file", "Write content to a file on disk"),
         ("create_chart", "Generate a chart from tabular data"),
         ("send_email", "Send an email via SMTP"),
-        ("parse_json", "Parse and validate JSON strings into structured data"),
+        (
+            "parse_json",
+            "Parse and validate JSON strings into structured data",
+        ),
         ("query_database", "Execute SQL queries against a database"),
         ("encode_base64", "Encode binary data to base64 string"),
         ("decode_base64", "Decode base64 string back to binary data"),
@@ -422,18 +516,24 @@ async fn test_workflow4_tool_selection_stress() {
     }
 
     // Register 50 distractor tools with similar names/descriptions
-    let distractor_prefixes = ["calc", "search", "read", "write", "chart", "mail", "json", "sql", "encode", "decode"];
+    let distractor_prefixes = [
+        "calc", "search", "read", "write", "chart", "mail", "json", "sql", "encode", "decode",
+    ];
     for (i, prefix) in distractor_prefixes.iter().enumerate() {
         for j in 0..5 {
             let name = format!("{}_{}_{}", prefix, i, j);
-            let desc = format!("{} variant {} — related to {} operations", prefix, j, prefix);
+            let desc = format!(
+                "{} variant {} — related to {} operations",
+                prefix, j, prefix
+            );
             register_mock_tool(
                 &registry,
                 &name,
                 &desc,
                 serde_json::json!({"type":"object"}),
                 "ok",
-            ).await;
+            )
+            .await;
         }
     }
 
@@ -469,7 +569,9 @@ async fn test_workflow4_tool_selection_stress() {
         }
 
         // RRF hybrid search (with query_text for BM25)
-        let rrf_results = registry.search_tools(&query_emb, 5, &[], Some(query_text)).await;
+        let rrf_results = registry
+            .search_tools(&query_emb, 5, &[], Some(query_text))
+            .await;
         let rrf_names: Vec<&str> = rrf_results.iter().map(|d| d.name.as_str()).collect();
         if rrf_names.contains(expected_tool) {
             rrf_correct += 1;
@@ -495,8 +597,14 @@ async fn test_workflow4_tool_selection_stress() {
     // Test that results include the expected tool category
     for (query_text, _) in &test_queries {
         let query_emb = deterministic_placeholder_embedding(query_text);
-        let results = registry.search_tools(&query_emb, 3, &[], Some(query_text)).await;
-        assert!(!results.is_empty(), "Should always return results for query: {}", query_text);
+        let results = registry
+            .search_tools(&query_emb, 3, &[], Some(query_text))
+            .await;
+        assert!(
+            !results.is_empty(),
+            "Should always return results for query: {}",
+            query_text
+        );
         assert!(
             results.len() <= 5,
             "Should respect limit (got {} for query: {})",
@@ -589,14 +697,16 @@ async fn test_workflow5_mcp_agent_to_agent() {
         .send()
         .await
         .expect("list request");
-    assert!(list_resp.status().is_success(), "list endpoint should respond");
+    assert!(
+        list_resp.status().is_success(),
+        "list endpoint should respond"
+    );
 
     let list_body: serde_json::Value = list_resp.json().await.expect("list JSON");
-    let tools = list_body["result"]["tools"].as_array()
+    let tools = list_body["result"]["tools"]
+        .as_array()
         .expect("tools array in response");
-    let tool_names: Vec<&str> = tools.iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(
         tool_names.contains(&"remote_calc"),
         "Should list remote_calc tool. Got: {:?}",
@@ -619,10 +729,15 @@ async fn test_workflow5_mcp_agent_to_agent() {
         .send()
         .await
         .expect("call request");
-    assert!(call_resp.status().is_success(), "call endpoint should respond");
+    assert!(
+        call_resp.status().is_success(),
+        "call endpoint should respond"
+    );
 
     let call_body: serde_json::Value = call_resp.json().await.expect("call JSON");
-    let text = call_body["result"]["content"][0]["text"].as_str().unwrap_or("");
+    let text = call_body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("");
     assert_eq!(text, "42", "Remote calc should return 42, got: {}", text);
 
     // Verify the tool was actually executed (check that it ran in the server's registry)
@@ -689,20 +804,36 @@ async fn test_workflow6_codebase_refactor() {
         mock_tool_call!("glob", serde_json::json!({"pattern": "src/**/*.rs"})),
         mock_tool_call!("read_file", serde_json::json!({"path": "src/main.rs"})),
         mock_tool_call!("grep", serde_json::json!({"pattern": "old_function"})),
-        mock_tool_call!("edit", serde_json::json!({"path": "src/main.rs", "old": "old_function", "new": "new_function"})),
+        mock_tool_call!(
+            "edit",
+            serde_json::json!({"path": "src/main.rs", "old": "old_function", "new": "new_function"})
+        ),
         mock_tool_call!("bash", serde_json::json!({"command": "git status"})),
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "Refactoring complete"})),
+        mock_tool_call!(
+            "final_answer",
+            serde_json::json!({"answer": "Refactoring complete"})
+        ),
     ]);
 
     let agent = Agent::new(mock_config("refactor-agent", 7), provider, registry.clone());
-    let result = agent.run("Refactor old_function to new_function across the codebase").await;
-    assert!(result.is_ok(), "Refactoring should complete: {:?}", result.err());
+    let result = agent
+        .run("Refactor old_function to new_function across the codebase")
+        .await;
+    assert!(
+        result.is_ok(),
+        "Refactoring should complete: {:?}",
+        result.err()
+    );
 
     // Verify the tools were correctly registered
     let defs = registry.get_definitions().await;
     let reg_names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
     for required in &["glob", "read_file", "grep", "edit", "bash", "final_answer"] {
-        assert!(reg_names.contains(required), "Tool '{}' must be registered", required);
+        assert!(
+            reg_names.contains(required),
+            "Tool '{}' must be registered",
+            required
+        );
     }
 }
 
@@ -736,22 +867,32 @@ async fn test_workflow7_long_context_stress() {
     // Build 50 responses — LIFO means LAST pushed is returned FIRST.
     // Push final_answer first so it's at the bottom, then 49 remember calls.
     let mut responses: Vec<anyhow::Result<LLMResponse>> = Vec::new();
-    responses.push(MockLLMProvider::tool_calls(vec![
-        mock_tool_call!("final_answer", serde_json::json!({"answer": "42"}))
-    ]));
+    responses.push(MockLLMProvider::tool_calls(vec![mock_tool_call!(
+        "final_answer",
+        serde_json::json!({"answer": "42"})
+    )]));
     for i in 0..49 {
-        responses.push(MockLLMProvider::tool_calls(vec![
-            mock_tool_call!("remember", serde_json::json!({"fact": format!("fact number {}", i)}))
-        ]));
+        responses.push(MockLLMProvider::tool_calls(vec![mock_tool_call!(
+            "remember",
+            serde_json::json!({"fact": format!("fact number {}", i)})
+        )]));
     }
 
     let provider = Box::new(MockLLMProvider::new(responses));
     let agent = Agent::new(mock_config("long-context-agent", 50), provider, registry);
     let result = agent.run("Start the long context test").await;
 
-    assert!(result.is_ok(), "Long context agent should complete: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Long context agent should complete: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
-    assert_eq!(output, "42", "Should return the correct answer '42', got: '{}'", output);
+    assert_eq!(
+        output, "42",
+        "Should return the correct answer '42', got: '{}'",
+        output
+    );
 
     let state = agent.state().lock().await;
 
@@ -893,11 +1034,19 @@ async fn test_workflow_all_features_integration() {
 
     // Cosine-only search
     let cosine_results = store.search(&query_emb, 5, None, 0.0, None).await;
-    assert!(!cosine_results.is_empty(), "Cosine search should return results");
+    assert!(
+        !cosine_results.is_empty(),
+        "Cosine search should return results"
+    );
 
     // Hybrid search with BM25
-    let hybrid_results = store.search(&query_emb, 5, None, 0.0, Some(query_text)).await;
-    assert!(!hybrid_results.is_empty(), "Hybrid search should return results");
+    let hybrid_results = store
+        .search(&query_emb, 5, None, 0.0, Some(query_text))
+        .await;
+    assert!(
+        !hybrid_results.is_empty(),
+        "Hybrid search should return results"
+    );
 
     // ── Feature 3: DAG Orchestration ──
     let dag_json = r#"{
@@ -926,7 +1075,11 @@ async fn test_workflow_all_features_integration() {
 
     let workflow = DagWorkflow::from_json(dag_json).expect("valid DAG");
     let levels = workflow.execution_levels().expect("execution levels");
-    assert_eq!(levels.len(), 2, "Should have 2 levels (step1 alone, step2 alone)");
+    assert_eq!(
+        levels.len(),
+        2,
+        "Should have 2 levels (step1 alone, step2 alone)"
+    );
     assert!(levels[0].contains(&"step1".to_string()), "Level 0 = step1");
     assert!(levels[1].contains(&"step2".to_string()), "Level 1 = step2");
 
@@ -945,7 +1098,7 @@ async fn test_workflow_all_features_integration() {
 #[test]
 fn test_bm25_benchmark_scoring() {
     // Build a corpus that mimics tool descriptions
-    let corpus = vec![
+    let corpus = [
         (0usize, "calculate math arithmetic operations compute"),
         (1usize, "search internet information web pages find"),
         (2usize, "read file contents disk open load"),
@@ -992,7 +1145,7 @@ fn test_bm25_benchmark_scoring() {
 fn test_rrf_fusion_benchmark() {
     // Two ranked lists: cosine rankings and BM25 rankings
     let cosine_ranking: Vec<usize> = vec![3, 0, 4, 1, 2]; // doc 3 best, doc 2 worst
-    let bm25_ranking: Vec<usize> = vec![0, 1, 2, 3, 4];  // doc 0 best, doc 4 worst
+    let bm25_ranking: Vec<usize> = vec![0, 1, 2, 3, 4]; // doc 0 best, doc 4 worst
 
     let fused = reciprocal_rank_fusion(&[cosine_ranking, bm25_ranking], 60.0, 3);
     assert_eq!(fused.len(), 3, "RRF should return top 3");
@@ -1012,12 +1165,18 @@ fn test_rrf_fusion_benchmark() {
     // Test with single ranking (no fusion needed)
     let single = reciprocal_rank_fusion(&[vec![4, 3, 2, 1, 0]], 60.0, 2);
     assert_eq!(single.len(), 2);
-    assert_eq!(single[0].0, 4, "Top of single ranking should be first element");
+    assert_eq!(
+        single[0].0, 4,
+        "Top of single ranking should be first element"
+    );
 
     // Test empty rankings
     let empty: Vec<Vec<usize>> = vec![];
     let fused_empty = reciprocal_rank_fusion(&empty, 60.0, 5);
-    assert!(fused_empty.is_empty(), "Empty rankings should produce empty result");
+    assert!(
+        fused_empty.is_empty(),
+        "Empty rankings should produce empty result"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1047,10 +1206,18 @@ fn test_tokenize_benchmark() {
     let start = std::time::Instant::now();
     let n = 1000;
     for i in 0..n {
-        let _ = tokenize(&format!("text number {} for tokenization benchmark test", i));
+        let _ = tokenize(&format!(
+            "text number {} for tokenization benchmark test",
+            i
+        ));
     }
     let elapsed = start.elapsed().as_micros();
-    tracing::info!("Tokenized {} strings in {}µs (avg {:.1}µs)", n, elapsed, elapsed as f64 / n as f64);
+    tracing::info!(
+        "Tokenized {} strings in {}µs (avg {:.1}µs)",
+        n,
+        elapsed,
+        elapsed as f64 / n as f64
+    );
     assert!(
         elapsed < 5_000_000,
         "Tokenization of {} strings should complete in <5s (took {}µs)",

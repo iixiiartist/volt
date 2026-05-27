@@ -16,8 +16,7 @@ const PROBLEMS: &[(&str, &str, &str)] = &[
 ];
 
 fn build_tools() -> Arc<ToolRegistry> {
-    let registry = ToolRegistry::new();
-    registry
+    ToolRegistry::new()
 }
 
 fn build_provider() -> Box<dyn volt::llm::LLMProvider> {

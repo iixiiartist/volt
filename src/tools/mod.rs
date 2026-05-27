@@ -29,7 +29,7 @@ pub mod sequential_thinking;
 pub mod time_tool;
 pub mod todo_tool;
 pub mod web_tool;
-pub mod you_tools;
 pub mod write_tool;
+pub mod you_tools;
 pub use registration::{register_all_tools, setup_tools};
 pub use registry::{ToolFn, ToolRegistry};

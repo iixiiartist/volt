@@ -68,11 +68,7 @@ impl MCPClient {
     /// Stream a tool call result via SSE (Server-Sent Events).
     /// Collects all SSE events from the streaming response and returns them as a Vec.
     /// Only supported for HTTP transport with streaming endpoints.
-    pub async fn call_tool_stream(
-        &self,
-        name: &str,
-        args: &Value,
-    ) -> anyhow::Result<Vec<Value>> {
+    pub async fn call_tool_stream(&self, name: &str, args: &Value) -> anyhow::Result<Vec<Value>> {
         let params = serde_json::json!({ "name": name, "arguments": args });
         let body = jsonrpc_request(
             "tools/call",

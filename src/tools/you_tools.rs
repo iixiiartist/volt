@@ -22,9 +22,9 @@ pub async fn web_search(
         };
     }
 
-    let mut url = reqwest::Url::parse_with_params("https://ydc-index.io/v1/search", &[
-        ("query", query),
-    ]).unwrap();
+    let mut url =
+        reqwest::Url::parse_with_params("https://ydc-index.io/v1/search", &[("query", query)])
+            .unwrap();
     if let Some(c) = count {
         url.query_pairs_mut().append_pair("count", &c.to_string());
     }
@@ -33,7 +33,8 @@ pub async fn web_search(
     }
     if let Some(l) = livecrawl {
         url.query_pairs_mut().append_pair("livecrawl", l);
-        url.query_pairs_mut().append_pair("livecrawl_formats", "markdown");
+        url.query_pairs_mut()
+            .append_pair("livecrawl_formats", "markdown");
     }
 
     let client = reqwest::Client::builder()
@@ -41,27 +42,28 @@ pub async fn web_search(
         .build();
     let client = match client {
         Ok(c) => c,
-        Err(e) => return ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some(format!("client build failed: {}", e)),
-            duration_ms: started.elapsed().as_millis(),
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("client build failed: {}", e)),
+                duration_ms: started.elapsed().as_millis(),
+            }
+        }
     };
 
-    match client
-        .get(url)
-        .header("X-API-Key", &key)
-        .send()
-        .await
-    {
+    match client.get(url).header("X-API-Key", &key).send().await {
         Ok(resp) => {
             let status = resp.status();
             match resp.text().await {
                 Ok(body) => ToolResult {
                     success: status.is_success(),
                     output: body,
-                    error: if status.is_success() { None } else { Some(format!("HTTP {}", status)) },
+                    error: if status.is_success() {
+                        None
+                    } else {
+                        Some(format!("HTTP {}", status))
+                    },
                     duration_ms: started.elapsed().as_millis(),
                 },
                 Err(e) => ToolResult {
@@ -81,10 +83,7 @@ pub async fn web_search(
     }
 }
 
-pub async fn you_research(
-    input: &str,
-    research_effort: Option<&str>,
-) -> ToolResult {
+pub async fn you_research(input: &str, research_effort: Option<&str>) -> ToolResult {
     let started = Instant::now();
     let key = api_key();
     if key.is_empty() {
@@ -108,12 +107,14 @@ pub async fn you_research(
         .build();
     let client = match client {
         Ok(c) => c,
-        Err(e) => return ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some(format!("client build failed: {}", e)),
-            duration_ms: started.elapsed().as_millis(),
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("client build failed: {}", e)),
+                duration_ms: started.elapsed().as_millis(),
+            }
+        }
     };
 
     match client
@@ -130,7 +131,11 @@ pub async fn you_research(
                 Ok(text) => ToolResult {
                     success: status.is_success(),
                     output: text,
-                    error: if status.is_success() { None } else { Some(format!("HTTP {}", status)) },
+                    error: if status.is_success() {
+                        None
+                    } else {
+                        Some(format!("HTTP {}", status))
+                    },
                     duration_ms: started.elapsed().as_millis(),
                 },
                 Err(e) => ToolResult {
@@ -150,10 +155,7 @@ pub async fn you_research(
     }
 }
 
-pub async fn you_contents(
-    urls: &[String],
-    content_format: Option<&str>,
-) -> ToolResult {
+pub async fn you_contents(urls: &[String], content_format: Option<&str>) -> ToolResult {
     let started = Instant::now();
     let key = api_key();
     if key.is_empty() {
@@ -181,12 +183,14 @@ pub async fn you_contents(
         .build();
     let client = match client {
         Ok(c) => c,
-        Err(e) => return ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some(format!("client build failed: {}", e)),
-            duration_ms: started.elapsed().as_millis(),
-        },
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("client build failed: {}", e)),
+                duration_ms: started.elapsed().as_millis(),
+            }
+        }
     };
 
     match client
@@ -203,7 +207,11 @@ pub async fn you_contents(
                 Ok(text) => ToolResult {
                     success: status.is_success(),
                     output: text,
-                    error: if status.is_success() { None } else { Some(format!("HTTP {}", status)) },
+                    error: if status.is_success() {
+                        None
+                    } else {
+                        Some(format!("HTTP {}", status))
+                    },
                     duration_ms: started.elapsed().as_millis(),
                 },
                 Err(e) => ToolResult {

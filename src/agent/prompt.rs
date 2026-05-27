@@ -1,12 +1,14 @@
-use crate::models::AgentConfig;
 use crate::context::ContextKind;
+use crate::models::AgentConfig;
 use std::path::Path;
 
 pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> String {
     // Precision mode: minimal prompt — function calling tasks need clean context
     if config.enabled_context_kinds.len() <= 2
         && config.enabled_context_kinds.contains(&ContextKind::Tool)
-        && config.enabled_context_kinds.contains(&ContextKind::Artifact)
+        && config
+            .enabled_context_kinds
+            .contains(&ContextKind::Artifact)
     {
         return "You are an AI agent. Use the available tools to answer questions. Call the appropriate function for each question.".into();
     }

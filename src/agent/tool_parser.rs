@@ -9,13 +9,11 @@ pub fn validate_tool_call(tool_call: &ToolCall, tool_def: &ToolDefinition) -> Re
 
     // Top-level must be an object
     if let Some(obj_type) = schema.get("type").and_then(|v| v.as_str()) {
-        if obj_type == "object" {
-            if !args.is_object() {
-                return Err(format!(
-                    "argument must be a JSON object, got {}",
-                    json_type_name(args)
-                ));
-            }
+        if obj_type == "object" && !args.is_object() {
+            return Err(format!(
+                "argument must be a JSON object, got {}",
+                json_type_name(args)
+            ));
         }
     }
 
@@ -58,7 +56,11 @@ fn validate_value(value: &Value, schema: &Value, path: &str) -> Option<String> {
     let type_ok = match expected_type {
         "string" => value.is_string(),
         "number" => value.is_number(),
-        "integer" => value.is_i64() || value.is_u64() || (value.is_f64() && value.as_f64().map_or(false, |f| f.fract() == 0.0)),
+        "integer" => {
+            value.is_i64()
+                || value.is_u64()
+                || (value.is_f64() && value.as_f64().is_some_and(|f| f.fract() == 0.0))
+        }
         "boolean" => value.is_boolean(),
         "array" => value.is_array(),
         "object" => value.is_object(),

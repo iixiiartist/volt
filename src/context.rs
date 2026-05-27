@@ -350,7 +350,9 @@ impl ContextStore {
                 .collect();
             let bm25 = crate::vector_index::Bm25Scorer::build(
                 corpus.iter().enumerate().map(|(i, t)| (i, t.as_str())),
-                1.2, 0.75, 0.5,
+                1.2,
+                0.75,
+                0.5,
             );
             let bm25_results = bm25.search(qt);
             bm25_results.iter().map(|(idx, _)| *idx).collect()
@@ -361,7 +363,8 @@ impl ContextStore {
         // Fuse rankings using RRF if both signals available
         let mut final_order: Vec<(f32, usize)> = if !bm25_order.is_empty() {
             let rankings: Vec<Vec<usize>> = vec![cosine_order, bm25_order];
-            let rrf = crate::vector_index::reciprocal_rank_fusion(&rankings, 60.0, candidates.len());
+            let rrf =
+                crate::vector_index::reciprocal_rank_fusion(&rankings, 60.0, candidates.len());
             rrf.into_iter()
                 .enumerate()
                 .map(|(rank, (idx, _))| {
@@ -374,10 +377,14 @@ impl ContextStore {
         } else {
             cosine_ranked
                 .into_iter()
-                .enumerate()
-                .map(|(_rank, (_, idx))| {
+                .map(|(_, idx)| {
                     let entry = &candidates[idx].entry;
-                    let sim_score = candidates[idx].entry.embedding.as_ref().map(|emb| cosine_similarity(emb, query_embedding)).unwrap_or(0.0);
+                    let sim_score = candidates[idx]
+                        .entry
+                        .embedding
+                        .as_ref()
+                        .map(|emb| cosine_similarity(emb, query_embedding))
+                        .unwrap_or(0.0);
                     let composite = entry.composite_score();
                     (0.6 * sim_score + 0.4 * composite, idx)
                 })

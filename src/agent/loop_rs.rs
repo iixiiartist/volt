@@ -147,7 +147,11 @@ impl Agent {
                     Ok(msgs) if !msgs.is_empty() => {
                         let mut state = self.state.lock().await;
                         state.messages.extend(msgs);
-                        tracing::info!("[session] loaded {} messages from {}", state.messages.len(), sid);
+                        tracing::info!(
+                            "[session] loaded {} messages from {}",
+                            state.messages.len(),
+                            sid
+                        );
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
@@ -165,7 +169,7 @@ impl Agent {
                             .config
                             .system_prompt
                             .as_ref()
-                            .map_or(false, |sp| m.content.contains(sp.as_str())))
+                            .is_some_and(|sp| m.content.contains(sp.as_str())))
             });
             if !has_prompt {
                 let prompt = build_system_prompt(&self.config, self.workspace.as_deref());
@@ -282,14 +286,12 @@ impl Agent {
                 // and let the loop retry instead of wasting a real tool execution.
                 {
                     let defs = self.tools.get_definitions().await;
-                    let def_map: std::collections::HashMap<&str, &crate::models::ToolDefinition> = defs
-                        .iter()
-                        .map(|d| (d.name.as_str(), d))
-                        .collect();
-                    let validation_errors = crate::agent::tool_parser::validate_tool_calls(
-                        tool_calls,
-                        |name| def_map.get(name).copied(),
-                    );
+                    let def_map: std::collections::HashMap<&str, &crate::models::ToolDefinition> =
+                        defs.iter().map(|d| (d.name.as_str(), d)).collect();
+                    let validation_errors =
+                        crate::agent::tool_parser::validate_tool_calls(tool_calls, |name| {
+                            def_map.get(name).copied()
+                        });
                     if !validation_errors.is_empty() {
                         self.push_assistant_message(&mut state, &response, Some(tool_calls))
                             .await;
@@ -496,7 +498,9 @@ impl Agent {
             let per_kind_limit = 8_usize.div_ceil(kinds.len());
             let mut all_retrieved: Vec<crate::context::ContextEntry> = Vec::new();
             for kind in kinds {
-                let mut kind_results = store.search(emb, per_kind_limit, Some(*kind), 0.25, Some(&context_query)).await;
+                let mut kind_results = store
+                    .search(emb, per_kind_limit, Some(*kind), 0.25, Some(&context_query))
+                    .await;
                 all_retrieved.append(&mut kind_results);
             }
             // Re-rank globally by composite score and take top 8
@@ -706,10 +710,7 @@ impl Agent {
         }
         conv_keep.reverse();
 
-        let total_conversation: u32 = conversation_indices
-            .iter()
-            .map(|&i| msg_tokens[i])
-            .sum();
+        let total_conversation: u32 = conversation_indices.iter().map(|&i| msg_tokens[i]).sum();
         let compressed_conv_count = conversation_indices.len().saturating_sub(conv_keep.len());
 
         let mut compressed: Vec<LLMMessage> = Vec::with_capacity(before);

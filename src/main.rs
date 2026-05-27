@@ -13,73 +13,119 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     InitDb,
-    Validate { #[arg(long)] manifest: PathBuf },
+    Validate {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
     ProvisionFile {
-        #[arg(long)] manifest: PathBuf,
-        #[arg(long, default_value_t = false)] marketplace_verified: bool,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long, default_value_t = false)]
+        marketplace_verified: bool,
     },
     Provision {
-        #[arg(long)] pkg_id: String,
-        #[arg(long)] registry_base_url: Option<String>,
-        #[arg(long)] auth_token: Option<String>,
+        #[arg(long)]
+        pkg_id: String,
+        #[arg(long)]
+        registry_base_url: Option<String>,
+        #[arg(long)]
+        auth_token: Option<String>,
     },
     ListTools,
-    History { #[arg(long, default_value_t = 20)] limit: i64 },
+    History {
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
     Execute {
-        #[arg(long)] tool: String,
-        #[arg(long)] params: Option<String>,
+        #[arg(long)]
+        tool: String,
+        #[arg(long)]
+        params: Option<String>,
     },
     Sandbox {
-        #[arg(long)] command: String,
-        #[arg(long)] timeout_ms: Option<u64>,
+        #[arg(long)]
+        command: String,
+        #[arg(long)]
+        timeout_ms: Option<u64>,
     },
     AgentRun {
-        #[arg(long)] input: String,
-        #[arg(long)] model: Option<String>,
-        #[arg(long, short = 'a', default_value_t = false)] allow: bool,
-        #[arg(long)] load_tools: Option<String>,
-        #[arg(long, value_delimiter = ',')] context_kinds: Vec<String>,
-        #[arg(long)] session_id: Option<String>,
-        #[arg(long)] max_iterations: Option<u32>,
+        #[arg(long)]
+        input: String,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, short = 'a', default_value_t = false)]
+        allow: bool,
+        #[arg(long)]
+        load_tools: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        context_kinds: Vec<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        max_iterations: Option<u32>,
         #[arg(long, default_value = "balanced")]
         mode: String,
     },
     AgentChat {
-        #[arg(long)] model: Option<String>,
-        #[arg(long, short = 'a', default_value_t = false)] allow: bool,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, short = 'a', default_value_t = false)]
+        allow: bool,
     },
     AgentTui {
-        #[arg(long)] model: Option<String>,
-        #[arg(long, short = 'a', default_value_t = false)] allow: bool,
-        #[arg(long)] max_iterations: Option<u32>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, short = 'a', default_value_t = false)]
+        allow: bool,
+        #[arg(long)]
+        max_iterations: Option<u32>,
         #[arg(long, default_value = "balanced")]
         mode: String,
     },
     McpServe,
     Workflow {
-        #[arg(long)] pattern: String,
-        #[arg(long)] agents: String,
-        #[arg(long)] tasks: String,
-        #[arg(long, short = 'a', default_value_t = false)] allow: bool,
+        #[arg(long)]
+        pattern: String,
+        #[arg(long)]
+        agents: String,
+        #[arg(long)]
+        tasks: String,
+        #[arg(long, short = 'a', default_value_t = false)]
+        allow: bool,
     },
     Eval {
-        #[arg(long)] suite: PathBuf,
-        #[arg(long)] model: Option<String>,
+        #[arg(long)]
+        suite: PathBuf,
+        #[arg(long)]
+        model: Option<String>,
     },
-    ProvisionSkill { #[arg(long)] path: PathBuf },
-    ListCatalogSkills { #[arg(long)] catalog_url: Option<String> },
+    ProvisionSkill {
+        #[arg(long)]
+        path: PathBuf,
+    },
+    ListCatalogSkills {
+        #[arg(long)]
+        catalog_url: Option<String>,
+    },
     SearchCatalogSkills {
-        #[arg(long)] query: String,
-        #[arg(long)] catalog_url: Option<String>,
+        #[arg(long)]
+        query: String,
+        #[arg(long)]
+        catalog_url: Option<String>,
     },
     InstallSkill {
-        #[arg(long)] name: String,
-        #[arg(long)] catalog_url: Option<String>,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        catalog_url: Option<String>,
     },
     ImportSkill {
-        #[arg(long)] path: PathBuf,
-        #[arg(long, default_value = "auto")] format: String,
-        #[arg(long)] name: Option<String>,
+        #[arg(long)]
+        path: PathBuf,
+        #[arg(long, default_value = "auto")]
+        format: String,
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 
@@ -94,19 +140,39 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::InitDb => commands::tools::init_db(&settings.database_url).await?,
         Commands::Validate { manifest } => commands::tools::validate_manifest(manifest).await?,
-        Commands::ProvisionFile { manifest, marketplace_verified } => {
-            commands::provision::provision_file(manifest, marketplace_verified, &settings).await?
-        }
-        Commands::Provision { pkg_id, registry_base_url, auth_token } => {
-            commands::provision::provision_remote(pkg_id, registry_base_url, auth_token, &settings).await?
+        Commands::ProvisionFile {
+            manifest,
+            marketplace_verified,
+        } => commands::provision::provision_file(manifest, marketplace_verified, &settings).await?,
+        Commands::Provision {
+            pkg_id,
+            registry_base_url,
+            auth_token,
+        } => {
+            commands::provision::provision_remote(pkg_id, registry_base_url, auth_token, &settings)
+                .await?
         }
         Commands::ListTools => commands::tools::list_tools(&settings.database_url).await?,
-        Commands::History { limit } => commands::tools::history(limit, &settings.database_url).await?,
-        Commands::Execute { tool, params } => commands::tools::execute(tool, params, &settings).await?,
-        Commands::Sandbox { command, timeout_ms } => {
-            commands::tools::sandbox_command(command, timeout_ms, &settings).await?
+        Commands::History { limit } => {
+            commands::tools::history(limit, &settings.database_url).await?
         }
-        Commands::AgentRun { input, model, allow, load_tools, context_kinds, session_id, max_iterations, mode } => {
+        Commands::Execute { tool, params } => {
+            commands::tools::execute(tool, params, &settings).await?
+        }
+        Commands::Sandbox {
+            command,
+            timeout_ms,
+        } => commands::tools::sandbox_command(command, timeout_ms, &settings).await?,
+        Commands::AgentRun {
+            input,
+            model,
+            allow,
+            load_tools,
+            context_kinds,
+            session_id,
+            max_iterations,
+            mode,
+        } => {
             commands::agent_run::run(commands::agent_run::AgentRunOptions {
                 input,
                 model: commands::agent_run::AgentRunOptions::model_or_default(model),
@@ -117,24 +183,38 @@ async fn main() -> anyhow::Result<()> {
                 session_id,
                 max_iterations,
                 settings,
-            }).await?
+            })
+            .await?
         }
-        Commands::AgentTui { model, allow, max_iterations, mode } => {
+        Commands::AgentTui {
+            model,
+            allow,
+            max_iterations,
+            mode,
+        } => {
             commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
                 model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
                 allow,
                 max_iterations,
                 mode,
                 settings,
-            }).await?
+            })
+            .await?
         }
-        Commands::Workflow { pattern, agents, tasks, allow } => {
-            commands::workflow::run(pattern, agents, tasks, allow).await?
-        }
+        Commands::Workflow {
+            pattern,
+            agents,
+            tasks,
+            allow,
+        } => commands::workflow::run(pattern, agents, tasks, allow).await?,
         Commands::Eval { suite, model } => commands::eval::run(suite, model).await?,
         Commands::McpServe => commands::mcp::serve_stdio().await?,
-        Commands::ProvisionSkill { path } => commands::skills::provision_skill(path, &settings).await?,
-        Commands::ListCatalogSkills { catalog_url } => commands::skills::list_catalog(catalog_url).await?,
+        Commands::ProvisionSkill { path } => {
+            commands::skills::provision_skill(path, &settings).await?
+        }
+        Commands::ListCatalogSkills { catalog_url } => {
+            commands::skills::list_catalog(catalog_url).await?
+        }
         Commands::SearchCatalogSkills { query, catalog_url } => {
             commands::skills::search_catalog(query, catalog_url).await?
         }

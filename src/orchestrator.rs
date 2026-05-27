@@ -465,7 +465,9 @@ pub fn parse_agent_specs(json: &str) -> anyhow::Result<Vec<AgentSpec>> {
                 max_iterations: v["max_iterations"].as_u64().unwrap_or(10) as u32,
                 temperature: v["temperature"].as_f64().unwrap_or(0.3) as f32,
                 allow_all: v["allow_all"].as_bool().unwrap_or(false),
-                mode: v["mode"].as_str().map(crate::commands::AgentMode::from_str),
+                mode: v["mode"]
+                    .as_str()
+                    .and_then(|s| s.parse::<crate::commands::AgentMode>().ok()),
             })
         })
         .collect()
@@ -544,7 +546,8 @@ impl DagWorkflow {
             .iter()
             .map(|n| {
                 let agent_val = &n["agent"];
-                let agent_specs = parse_agent_specs(&serde_json::to_string(&[agent_val.clone()])?)?;
+                let agent_specs =
+                    parse_agent_specs(&serde_json::to_string(std::slice::from_ref(agent_val))?)?;
                 let agent = agent_specs
                     .into_iter()
                     .next()
@@ -593,20 +596,30 @@ impl DagWorkflow {
 
     /// Build adjacency: for each node ID, list of successor node IDs.
     fn adjacency(&self) -> std::collections::HashMap<String, Vec<String>> {
-        let mut adj: std::collections::HashMap<String, Vec<String>> =
-            self.nodes.iter().map(|n| (n.id.clone(), Vec::new())).collect();
+        let mut adj: std::collections::HashMap<String, Vec<String>> = self
+            .nodes
+            .iter()
+            .map(|n| (n.id.clone(), Vec::new()))
+            .collect();
         for edge in &self.edges {
-            adj.entry(edge.from.clone()).or_default().push(edge.to.clone());
+            adj.entry(edge.from.clone())
+                .or_default()
+                .push(edge.to.clone());
         }
         adj
     }
 
     /// Build reverse adjacency: for each node ID, list of predecessor node IDs.
     fn reverse_adjacency(&self) -> std::collections::HashMap<String, Vec<String>> {
-        let mut radj: std::collections::HashMap<String, Vec<String>> =
-            self.nodes.iter().map(|n| (n.id.clone(), Vec::new())).collect();
+        let mut radj: std::collections::HashMap<String, Vec<String>> = self
+            .nodes
+            .iter()
+            .map(|n| (n.id.clone(), Vec::new()))
+            .collect();
         for edge in &self.edges {
-            radj.entry(edge.to.clone()).or_default().push(edge.from.clone());
+            radj.entry(edge.to.clone())
+                .or_default()
+                .push(edge.from.clone());
         }
         radj
     }
@@ -672,7 +685,11 @@ impl DagWorkflow {
                     .iter()
                     .filter_map(|p| {
                         levels.iter().enumerate().find_map(|(li, level)| {
-                            if level.contains(p) { Some(li) } else { None }
+                            if level.contains(p) {
+                                Some(li)
+                            } else {
+                                None
+                            }
                         })
                     })
                     .max()
@@ -714,7 +731,8 @@ impl<'a> DagScheduler<'a> {
         let radj = workflow.reverse_adjacency();
 
         // Accumulates outputs: node_id -> output text
-        let mut outputs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut outputs: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         outputs.insert("input".to_string(), initial_input.to_string());
 
         for level_nodes in &levels {
@@ -759,7 +777,9 @@ impl<'a> DagScheduler<'a> {
 
             // Collect results for this level
             for handle in handles {
-                let (node_id, result) = handle.await.map_err(|e| anyhow::anyhow!("task join: {}", e))?;
+                let (node_id, result) = handle
+                    .await
+                    .map_err(|e| anyhow::anyhow!("task join: {}", e))?;
                 let output = result?;
                 outputs.insert(node_id, output);
             }
@@ -800,12 +820,7 @@ impl Orchestrator {
         // Find a "final_output" marker or use the last executed node's output
         let final_output = outputs
             .get("final_output")
-            .or_else(|| {
-                workflow
-                    .nodes
-                    .last()
-                    .and_then(|n| outputs.get(&n.id))
-            })
+            .or_else(|| workflow.nodes.last().and_then(|n| outputs.get(&n.id)))
             .cloned()
             .unwrap_or_default();
 

@@ -27,14 +27,23 @@ pub async fn history(limit: i64, database_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn execute(tool: String, params: Option<String>, settings: &Settings) -> anyhow::Result<()> {
+pub async fn execute(
+    tool: String,
+    params: Option<String>,
+    settings: &Settings,
+) -> anyhow::Result<()> {
     let pool = db::connect(&settings.database_url).await?;
     let tool_params: serde_json::Value = params
         .as_deref()
-        .map(|p| serde_json::from_str(p).unwrap_or_else(|e| {
-            eprintln!("[cli] warning: invalid JSON params '{}': {}. Using empty object.", p, e);
-            serde_json::json!({})
-        }))
+        .map(|p| {
+            serde_json::from_str(p).unwrap_or_else(|e| {
+                eprintln!(
+                    "[cli] warning: invalid JSON params '{}': {}. Using empty object.",
+                    p, e
+                );
+                serde_json::json!({})
+            })
+        })
         .unwrap_or(serde_json::json!({}));
     let tool_info = db::get_tool_by_name(&pool, &tool).await?;
     let tool_id = tool_info.as_ref().map(|t| t.id);
@@ -44,12 +53,36 @@ pub async fn execute(tool: String, params: Option<String>, settings: &Settings) 
     match source {
         Some(code) => {
             let stdin_input = tool_params.to_string();
-            let result = sandbox::run_command_direct("python3", &["-c", &code], Some(&stdin_input), &settings.sandbox_policy).await;
-            let output_val: serde_json::Value = serde_json::from_str(&result.stdout).unwrap_or(serde_json::json!({ "raw": result.stdout }));
-            let status = if result.status == "ok" { "success" } else { "failed" };
-            db::record_execution(&pool, tool_id, &tool, &tool_params, &output_val, status,
-                if result.status != "ok" { Some(&result.stderr) } else { None },
-                result.duration_ms as i32, execution_id).await?;
+            let result = sandbox::run_command_direct(
+                "python3",
+                &["-c", &code],
+                Some(&stdin_input),
+                &settings.sandbox_policy,
+            )
+            .await;
+            let output_val: serde_json::Value = serde_json::from_str(&result.stdout)
+                .unwrap_or(serde_json::json!({ "raw": result.stdout }));
+            let status = if result.status == "ok" {
+                "success"
+            } else {
+                "failed"
+            };
+            db::record_execution(
+                &pool,
+                tool_id,
+                &tool,
+                &tool_params,
+                &output_val,
+                status,
+                if result.status != "ok" {
+                    Some(&result.stderr)
+                } else {
+                    None
+                },
+                result.duration_ms as i32,
+                execution_id,
+            )
+            .await?;
             let json_output = serde_json::to_string_pretty(&serde_json::json!({
                 "execution_id": execution_id.to_string(), "status": status,
                 "output": output_val, "duration_ms": result.duration_ms,
@@ -61,7 +94,11 @@ pub async fn execute(tool: String, params: Option<String>, settings: &Settings) 
     Ok(())
 }
 
-pub async fn sandbox_command(command: String, timeout_ms: Option<u64>, settings: &Settings) -> anyhow::Result<()> {
+pub async fn sandbox_command(
+    command: String,
+    timeout_ms: Option<u64>,
+    settings: &Settings,
+) -> anyhow::Result<()> {
     let policy = SandboxPolicy {
         timeout_ms: timeout_ms.unwrap_or(settings.sandbox_policy.timeout_ms),
         max_stdout_bytes: settings.sandbox_policy.max_stdout_bytes,
@@ -78,6 +115,8 @@ pub async fn validate_manifest(manifest: std::path::PathBuf) -> anyhow::Result<(
     let report = crate::validation::validate_manifest(&manifest);
     let output = serde_json::to_string_pretty(&report)?;
     println!("{}", output);
-    if !report.accepted { std::process::exit(2); }
+    if !report.accepted {
+        std::process::exit(2);
+    }
     Ok(())
 }

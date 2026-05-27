@@ -46,11 +46,7 @@ fn test_precision_excludes_all_noise_kinds() {
         ContextKind::SystemPrompt,
         ContextKind::Policy,
     ] {
-        assert!(
-            !kinds.contains(noise),
-            "Precision must exclude {:?}",
-            noise
-        );
+        assert!(!kinds.contains(noise), "Precision must exclude {:?}", noise);
     }
 }
 
@@ -64,7 +60,11 @@ fn test_balanced_includes_exactly_five_optimal_kinds() {
         ContextKind::Conversation,
         ContextKind::Artifact,
     ] {
-        assert!(kinds.contains(required), "Balanced must include {:?}", required);
+        assert!(
+            kinds.contains(required),
+            "Balanced must include {:?}",
+            required
+        );
     }
 }
 
@@ -72,10 +72,18 @@ fn test_balanced_includes_exactly_five_optimal_kinds() {
 fn test_autonomous_includes_all_twelve_kinds() {
     let kinds = AgentMode::Autonomous.context_kinds();
     for kind in &[
-        ContextKind::Tool, ContextKind::Skill, ContextKind::Memory,
-        ContextKind::Conversation, ContextKind::AgentRun, ContextKind::Artifact,
-        ContextKind::SystemPrompt, ContextKind::FewShot, ContextKind::Policy,
-        ContextKind::Permission, ContextKind::Security, ContextKind::MCPConfig,
+        ContextKind::Tool,
+        ContextKind::Skill,
+        ContextKind::Memory,
+        ContextKind::Conversation,
+        ContextKind::AgentRun,
+        ContextKind::Artifact,
+        ContextKind::SystemPrompt,
+        ContextKind::FewShot,
+        ContextKind::Policy,
+        ContextKind::Permission,
+        ContextKind::Security,
+        ContextKind::MCPConfig,
     ] {
         assert!(kinds.contains(kind), "Autonomous must include {:?}", kind);
     }
@@ -203,8 +211,14 @@ async fn test_max_iteration_fallback_returns_last_content() {
     let agent = Agent::new(balanced_config(), provider, registry);
 
     let result = agent.run("Loop forever").await;
-    assert!(result.is_ok(), "Agent should return last tool result on iteration exhaustion");
-    assert!(!result.unwrap().is_empty(), "Fallback content must not be empty");
+    assert!(
+        result.is_ok(),
+        "Agent should return last tool result on iteration exhaustion"
+    );
+    assert!(
+        !result.unwrap().is_empty(),
+        "Fallback content must not be empty"
+    );
 }
 
 #[tokio::test]
@@ -257,9 +271,9 @@ async fn test_parallel_workflow_pattern() {
             let response = format!("{} completed: {}", name, task);
             let reg = registry.clone();
             tokio::spawn(async move {
-                let provider = Box::new(MockLLMProvider::new(vec![
-                    MockLLMProvider::tool_result(&response),
-                ]));
+                let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+                    &response,
+                )]));
                 let config = AgentConfig {
                     name: name.into(),
                     model: "mock-model".into(),
@@ -295,9 +309,9 @@ async fn test_pipeline_workflow_with_output_chaining() {
 
     // Stage 1: discover files
     let stage1_output = {
-        let provider = Box::new(MockLLMProvider::new(vec![
-            MockLLMProvider::tool_result("Found files: src/main.rs, src/lib.rs, Cargo.toml"),
-        ]));
+        let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+            "Found files: src/main.rs, src/lib.rs, Cargo.toml",
+        )]));
         let config = AgentConfig {
             name: "discover".into(),
             model: "mock-model".into(),
@@ -313,7 +327,10 @@ async fn test_pipeline_workflow_with_output_chaining() {
             context_kind_quotas: Default::default(),
         };
         let agent = Agent::new(config, provider, registry.clone());
-        agent.run("Find all Rust files").await.expect("Stage 1 must succeed")
+        agent
+            .run("Find all Rust files")
+            .await
+            .expect("Stage 1 must succeed")
     };
     assert!(stage1_output.contains("src/main.rs"));
 
@@ -323,9 +340,9 @@ async fn test_pipeline_workflow_with_output_chaining() {
         stage1_output
     );
     {
-        let provider = Box::new(MockLLMProvider::new(vec![
-            MockLLMProvider::tool_result("Total files: 3"),
-        ]));
+        let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+            "Total files: 3",
+        )]));
         let config = AgentConfig {
             name: "counter".into(),
             model: "mock-model".into(),
@@ -342,7 +359,10 @@ async fn test_pipeline_workflow_with_output_chaining() {
         };
         let agent = Agent::new(config, provider, registry);
         let output = agent.run(&stage2_task).await.expect("Stage 2 must succeed");
-        assert!(output.contains("3"), "Pipeline output should chain from stage 1");
+        assert!(
+            output.contains("3"),
+            "Pipeline output should chain from stage 1"
+        );
     }
 }
 
@@ -413,7 +433,16 @@ async fn test_tool_search_by_semantic_similarity() {
             "Perform mathematical calculations and arithmetic operations",
             serde_json::json!({"type":"object"}),
             "math",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "0".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "0".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -422,7 +451,16 @@ async fn test_tool_search_by_semantic_similarity() {
             "Search the internet for information and web pages",
             serde_json::json!({"type":"object"}),
             "web",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -431,7 +469,16 @@ async fn test_tool_search_by_semantic_similarity() {
             "Read the contents of a file from disk",
             serde_json::json!({"type":"object"}),
             "fs",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
 
@@ -460,7 +507,16 @@ async fn test_graphrag_augments_related_tools() {
             "Read a file from disk",
             serde_json::json!({"type":"object"}),
             "fs",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -469,7 +525,16 @@ async fn test_graphrag_augments_related_tools() {
             "Edit a file by replacing text patterns",
             serde_json::json!({"type":"object"}),
             "fs",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -478,7 +543,16 @@ async fn test_graphrag_augments_related_tools() {
             "Search the internet",
             serde_json::json!({"type":"object"}),
             "web",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
 
@@ -516,7 +590,16 @@ async fn test_essential_tools_always_included() {
             "Custom search tool with very specific niche functionality",
             serde_json::json!({"type":"object"}),
             "custom",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -525,7 +608,16 @@ async fn test_essential_tools_always_included() {
             "Essential read tool",
             serde_json::json!({"type":"object"}),
             "builtin",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -534,7 +626,16 @@ async fn test_essential_tools_always_included() {
             "Essential glob tool for finding files",
             serde_json::json!({"type":"object"}),
             "builtin",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
 
@@ -546,7 +647,9 @@ async fn test_essential_tools_always_included() {
         .await
         .expect("embedding must succeed");
 
-    let results = registry.search_tools(&query_emb, 1, &["read", "glob"], None).await;
+    let results = registry
+        .search_tools(&query_emb, 1, &["read", "glob"], None)
+        .await;
     let names: Vec<&str> = results.iter().map(|t| t.name.as_str()).collect();
     assert!(
         names.contains(&"read"),
@@ -569,7 +672,16 @@ async fn test_tool_permission_levels() {
             "A harmless safe tool",
             serde_json::json!({"type":"object"}),
             "test",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "ok".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "ok".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
         )
         .await;
     registry
@@ -578,7 +690,16 @@ async fn test_tool_permission_levels() {
             "A tool that needs approval",
             serde_json::json!({"type":"object"}),
             "test",
-            Arc::new(|_| Box::pin(async move { ToolResult { success: true, output: "ok".into(), error: None, duration_ms: 0 } })),
+            Arc::new(|_| {
+                Box::pin(async move {
+                    ToolResult {
+                        success: true,
+                        output: "ok".into(),
+                        error: None,
+                        duration_ms: 0,
+                    }
+                })
+            }),
             PermissionLevel::Prompt,
         )
         .await;
@@ -770,7 +891,9 @@ async fn test_context_store_search_ranks_by_combined_score() {
         });
     }
     store.seed_batch(entries).await;
-    store.compute_embeddings(&EmbeddingClient::new(None, "test")).await;
+    store
+        .compute_embeddings(&EmbeddingClient::new(None, "test"))
+        .await;
 
     let results = store.search(&query_emb, 3, None, 0.0, None).await;
     assert_eq!(results.len(), 3, "Should find all 3 entries");
@@ -838,9 +961,9 @@ async fn test_parallel_agents_with_mixed_modes() {
             let response = format!("{} completed in {:?} mode", name, mode);
             let reg = registry.clone();
             tokio::spawn(async move {
-                let provider = Box::new(MockLLMProvider::new(vec![
-                    MockLLMProvider::tool_result(&response),
-                ]));
+                let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+                    &response,
+                )]));
                 let config = AgentConfig {
                     name: name.into(),
                     model: "mock-model".into(),
@@ -878,7 +1001,11 @@ async fn test_parallel_agents_with_mixed_modes() {
         .collect();
 
     let results: Vec<_> = futures::future::join_all(handles).await;
-    assert_eq!(results.len(), 3, "All three mode-specific agents should complete");
+    assert_eq!(
+        results.len(),
+        3,
+        "All three mode-specific agents should complete"
+    );
     for r in &results {
         assert!(r.is_ok(), "Each parallel agent should succeed");
     }

@@ -61,7 +61,13 @@ impl Bm25Scorer {
             // Update global term stats
             for (term, tf) in tf_map {
                 let entry = term_stats.entry(term).or_insert_with(|| (0, Vec::new()));
-                if entry.1.is_empty() || entry.1.last().map(|(idx, _)| *idx != doc_idx).unwrap_or(true) {
+                if entry.1.is_empty()
+                    || entry
+                        .1
+                        .last()
+                        .map(|(idx, _)| *idx != doc_idx)
+                        .unwrap_or(true)
+                {
                     entry.0 += 1; // increment document frequency
                 }
                 entry.1.push((doc_idx, tf));
@@ -99,13 +105,17 @@ impl Bm25Scorer {
         let mut score = 0.0f32;
         for qt in &query_tokens {
             if let Some((df, postings)) = self.term_stats.get(qt) {
-                let idf = ((self.doc_count as f32 - *df as f32 + 0.5) / (*df as f32 + 0.5) + 1.0).ln();
+                let idf =
+                    ((self.doc_count as f32 - *df as f32 + 0.5) / (*df as f32 + 0.5) + 1.0).ln();
                 let tf = postings
                     .iter()
                     .find(|(idx, _)| *idx == doc_idx)
                     .map(|(_, tf)| *tf as f32)
                     .unwrap_or(0.0);
-                let tf_norm = (tf + self.delta) / (self.k1 * (1.0 - self.b + self.b * doc_len / self.avg_doc_len) + tf + self.delta);
+                let tf_norm = (tf + self.delta)
+                    / (self.k1 * (1.0 - self.b + self.b * doc_len / self.avg_doc_len)
+                        + tf
+                        + self.delta);
                 score += idf * tf_norm;
             }
         }
@@ -123,7 +133,8 @@ impl Bm25Scorer {
 
         for qt in &query_tokens {
             if let Some((df, postings)) = self.term_stats.get(qt) {
-                let idf = ((self.doc_count as f32 - *df as f32 + 0.5) / (*df as f32 + 0.5) + 1.0).ln();
+                let idf =
+                    ((self.doc_count as f32 - *df as f32 + 0.5) / (*df as f32 + 0.5) + 1.0).ln();
                 for &(doc_idx, tf) in postings {
                     let doc_len = self.doc_lengths[doc_idx] as f32;
                     let tf_norm = (tf as f32 + self.delta)
@@ -147,11 +158,7 @@ impl Bm25Scorer {
 
 /// Reciprocal Rank Fusion (RRF) combines multiple ranked lists into a single ranking.
 /// k is a constant (typically 60) that prevents vanishing scores for items ranked low.
-pub fn reciprocal_rank_fusion(
-    rankings: &[Vec<usize>],
-    k: f32,
-    limit: usize,
-) -> Vec<(usize, f32)> {
+pub fn reciprocal_rank_fusion(rankings: &[Vec<usize>], k: f32, limit: usize) -> Vec<(usize, f32)> {
     let mut rrf_scores: HashMap<usize, f32> = HashMap::new();
 
     for ranked_list in rankings {

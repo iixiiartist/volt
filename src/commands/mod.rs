@@ -13,16 +13,20 @@ pub enum AgentMode {
     Autonomous,
 }
 
-impl AgentMode {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for AgentMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "precision" => AgentMode::Precision,
             "balanced" => AgentMode::Balanced,
             "autonomous" => AgentMode::Autonomous,
             _ => AgentMode::Balanced,
-        }
+        })
     }
+}
 
+impl AgentMode {
     pub fn context_kinds(&self) -> Vec<ContextKind> {
         match self {
             AgentMode::Precision => vec![ContextKind::Tool, ContextKind::Artifact],
