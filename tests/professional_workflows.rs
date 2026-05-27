@@ -16,6 +16,7 @@ use volt::commands::AgentMode;
 use volt::context::{ContextEntry, ContextKind, ContextStore};
 use volt::embedding::{deterministic_placeholder_embedding, EmbeddingClient};
 use volt::models::*;
+use volt::attenuation::TrustLevel;
 use volt::test_utils::MockLLMProvider;
 use volt::tools::ToolRegistry;
 
@@ -701,6 +702,7 @@ async fn test_tool_permission_levels() {
                 })
             }),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
 

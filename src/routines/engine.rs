@@ -1,6 +1,5 @@
 use crate::jobs::JobManager;
-use crate::routines::{Routine, RoutineTrigger};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use cron_parser::parse;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -57,15 +56,16 @@ impl RoutineEngine {
         for row in rows {
             let id = row.id;
             let action = row.action_prompt;
-            let _ = self.job_manager.create_job(&action,
-                serde_json::json!({"routine_id": id, "guardrails": {}})
-            ).await;
+            let guardrails = serde_json::json!({"max_tokens": row.guardrails_max_tokens,"max_tool_calls": row.guardrails_max_tool_calls,"allowed_tools": row.guardrails_allowed_tools,"timeout_secs": row.guardrails_timeout_secs});
+            let context = serde_json::json!({"routine_id": id,"routine_name": &row.name,"trigger_type": &row.trigger_type,"trigger_config": &row.trigger_config,"last_run": row.last_run,"next_run": row.next_run,"guardrails": guardrails});
+            let _ = self.job_manager.create_job(&action, context).await;
+            tracing::info!("[routines] fired routine '{}' ({})", row.name, id);
             sqlx::query("UPDATE routines SET last_run = NOW(), next_run = NULL WHERE id = $1")
                 .bind(id)
                 .execute(pool)
                 .await?;
             if let Some(ref cron) = row.cron {
-                if let Ok(next) = parse(cron, &Utc::now()) {
+                if let Ok(next) = parse(cron, Utc::now()) {
                     sqlx::query("UPDATE routines SET next_run = $1 WHERE id = $2")
                         .bind(next)
                         .bind(id)

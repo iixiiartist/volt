@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use volt::models::PermissionLevel;
+use volt::attenuation::TrustLevel;
 use volt::orchestrator::{parse_agent_specs, Orchestrator};
 use volt::tools::ToolRegistry;
 
@@ -43,6 +44,7 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
                 volt::tools::bash::execute_bash(cmd).await
             })),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
     registry
@@ -56,6 +58,7 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
                 volt::tools::read_tool::read_file(path).await
             })),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
     registry
@@ -70,6 +73,7 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
                 volt::tools::write_tool::write_file(path, content).await
             })),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
     registry
@@ -85,17 +89,18 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
                 volt::tools::edit::edit_file(path, old, new_).await
             })),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
     registry.register("glob","Find files matching a glob pattern",serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"base":{"type":"string"}},"required":["pattern"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["pattern"].as_str().unwrap_or("*"); let b=args["base"].as_str().unwrap_or("."); volt::tools::glob_tool::glob_files(p,b).await }))).await;
     registry.register("grep","Search file contents with regex",serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["pattern"].as_str().unwrap_or(""); let path=args["path"].as_str().unwrap_or("."); volt::tools::grep_tool::grep_files(p,path).await }))).await;
-    registry.register_with_permission("web_fetch","Fetch a URL and return its content",serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); volt::tools::web_tool::web_fetch(u).await })),PermissionLevel::Prompt).await;
+    registry.register_with_permission("web_fetch","Fetch a URL and return its content",serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); volt::tools::web_tool::web_fetch(u).await })),PermissionLevel::Prompt, TrustLevel::Builtin).await;
     registry.register("memory_append","Append to persistent memory file",serde_json::json!({"type":"object","properties":{"kind":{"type":"string"},"content":{"type":"string"}},"required":["kind","content"]}),"builtin",Arc::new(|args| Box::pin(async move { let k=args["kind"].as_str().unwrap_or("note"); let c=args["content"].as_str().unwrap_or(""); volt::tools::memory_tool::memory_append(k,c).await }))).await;
     registry.register("todo_add","Add a task to the todo list",serde_json::json!({"type":"object","properties":{"task":{"type":"string"}},"required":["task"]}),"builtin",Arc::new(|args| Box::pin(async move { let t=args["task"].as_str().unwrap_or(""); volt::tools::todo_tool::todo_add(t).await }))).await;
     let dt = registry.clone();
-    registry.register_with_permission("delegate","Delegate a sub-task to a sub-agent",serde_json::json!({"type":"object","properties":{"task":{"type":"string"},"context":{"type":"string"}},"required":["task"]}),"builtin",Arc::new(move |args| { let dt=dt.clone(); Box::pin(async move { let t=args["task"].as_str().unwrap_or(""); let c=args["context"].as_str().unwrap_or(""); volt::tools::delegate::delegate_task(t,c,dt).await }) }),PermissionLevel::Prompt).await;
-    registry.register_with_permission("web_scrape","Extract structured content from a URL using a CSS selector",serde_json::json!({"type":"object","properties":{"url":{"type":"string"},"selector":{"type":"string"}},"required":["url","selector"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); let s=args["selector"].as_str().unwrap_or(""); volt::tools::scrape_tool::web_scrape(u,s).await })),PermissionLevel::Prompt).await;
-    registry.register_with_permission("web_scrape_all","Fetch a URL and extract all human-readable content",serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); volt::tools::scrape_tool::web_scrape_all(u).await })),PermissionLevel::Prompt).await;
+    registry.register_with_permission("delegate","Delegate a sub-task to a sub-agent",serde_json::json!({"type":"object","properties":{"task":{"type":"string"},"context":{"type":"string"}},"required":["task"]}),"builtin",Arc::new(move |args| { let dt=dt.clone(); Box::pin(async move { let t=args["task"].as_str().unwrap_or(""); let c=args["context"].as_str().unwrap_or(""); volt::tools::delegate::delegate_task(t,c,dt).await }) }),PermissionLevel::Prompt, TrustLevel::Builtin).await;
+    registry.register_with_permission("web_scrape","Extract structured content from a URL using a CSS selector",serde_json::json!({"type":"object","properties":{"url":{"type":"string"},"selector":{"type":"string"}},"required":["url","selector"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); let s=args["selector"].as_str().unwrap_or(""); volt::tools::scrape_tool::web_scrape(u,s).await })),PermissionLevel::Prompt, TrustLevel::Builtin).await;
+    registry.register_with_permission("web_scrape_all","Fetch a URL and extract all human-readable content",serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); volt::tools::scrape_tool::web_scrape_all(u).await })),PermissionLevel::Prompt, TrustLevel::Builtin).await;
     registry.register("json_validate","Validate JSON string and return its type",serde_json::json!({"type":"object","properties":{"data":{"type":"string"}},"required":["data"]}),"builtin",Arc::new(|args| Box::pin(async move { let d=args["data"].as_str().unwrap_or(""); volt::tools::json_tool::json_validate(d).await }))).await;
     registry.register("json_prettify","Format JSON with custom indentation",serde_json::json!({"type":"object","properties":{"data":{"type":"string"},"indent":{"type":"integer"}},"required":["data"]}),"builtin",Arc::new(|args| Box::pin(async move { let d=args["data"].as_str().unwrap_or(""); let i=args["indent"].as_u64().unwrap_or(2)as u8; volt::tools::json_tool::json_prettify(d,i).await }))).await;
     registry.register("json_query","Extract a value from JSON using dot-separated path",serde_json::json!({"type":"object","properties":{"data":{"type":"string"},"path":{"type":"string"}},"required":["data","path"]}),"builtin",Arc::new(|args| Box::pin(async move { let d=args["data"].as_str().unwrap_or(""); let p=args["path"].as_str().unwrap_or(""); volt::tools::json_tool::json_query(d,p).await }))).await;

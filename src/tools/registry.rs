@@ -1,5 +1,6 @@
 use crate::cosine_similarity;
 use crate::embedding::EmbeddingClient;
+use crate::attenuation::{TrustLevel, effective_permission};
 use crate::models::{PermissionLevel, ToolDefinition, ToolResult};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -17,6 +18,7 @@ struct RegisteredTool {
     def: ToolDefinition,
     exec: ToolFn,
     permission: PermissionLevel,
+    trust: TrustLevel,
     embedding: Option<Vec<f32>>,
 }
 
@@ -45,6 +47,7 @@ impl ToolRegistry {
             category,
             exec,
             PermissionLevel::Allow,
+            TrustLevel::Builtin,
         )
         .await;
     }
@@ -57,6 +60,7 @@ impl ToolRegistry {
         category: &str,
         exec: ToolFn,
         permission: PermissionLevel,
+        trust: TrustLevel,
     ) {
         self.tools.insert(
             name.to_string(),
@@ -69,6 +73,7 @@ impl ToolRegistry {
                 },
                 exec,
                 permission,
+                trust,
                 embedding: None,
             },
         );
@@ -86,7 +91,7 @@ impl ToolRegistry {
     pub async fn get_permission(&self, name: &str) -> PermissionLevel {
         self.tools
             .get(name)
-            .map(|r| r.permission)
+            .map(|r| effective_permission(r.trust, r.permission, name))
             .unwrap_or(PermissionLevel::Allow)
     }
 

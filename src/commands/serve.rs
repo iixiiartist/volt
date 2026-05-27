@@ -199,6 +199,17 @@ async fn run_agent(
 
     // Wire Phase 3 infrastructure into agent
     let event_bus = crate::events::EventBus::new();
+    let mut event_rx = event_bus.subscribe();
+    tokio::spawn(async move {
+        while let Ok(event) = event_rx.recv().await {
+            match event {
+                crate::events::Event::ToolExecuted { tool_name, success } => {
+                    tracing::info!("[serve] tool={} success={}", tool_name, success);
+                }
+                _ => {}
+            }
+        }
+    });
     agent = agent.with_event_bus(event_bus);
 
     if let Ok(pool) = db::connect(&settings.database_url).await {

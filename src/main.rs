@@ -140,6 +140,28 @@ enum Commands {
         #[arg(long)]
         name: Option<String>,
     },
+    Heartbeat,
+    Migrate,
+    Jobs {
+        #[command(subcommand)]
+        subcommand: JobsSubcommand,
+    },
+    Routines {
+        #[command(subcommand)]
+        subcommand: RoutinesSubcommand,
+    },
+    JobsMonitor,
+    RoutinesEngine,
+}
+
+#[derive(Subcommand, Debug)]
+enum JobsSubcommand {
+    List,
+}
+
+#[derive(Subcommand, Debug)]
+enum RoutinesSubcommand {
+    List,
 }
 
 #[tokio::main]
@@ -254,6 +276,25 @@ async fn main() -> anyhow::Result<()> {
         Commands::ImportSkill { path, format, name } => {
             commands::skills::import_skill(path, format, name, &settings).await?
         }
+        Commands::Heartbeat => commands::daemon::run_heartbeat(&settings).await?,
+        Commands::JobsMonitor => commands::daemon::run_jobs_monitor(&settings).await?,
+        Commands::RoutinesEngine => commands::daemon::run_routines_engine(&settings).await?,
+        Commands::Migrate => {
+            let pool = volt::db::connect(&settings.database_url).await?;
+            volt::db::init_schema(&pool).await?;
+            println!("schema migrated");
+        },
+        Commands::Jobs { subcommand: JobsSubcommand::List } => {
+            let pool = volt::db::connect(&settings.database_url).await?;
+            let manager = volt::jobs::JobManager::new(Some(pool));
+            let jobs = manager.list_jobs(None).await?;
+            println!("{}", serde_json::to_string_pretty(&jobs)?);
+        },
+        Commands::Routines { subcommand: RoutinesSubcommand::List } => {
+            let pool = volt::db::connect(&settings.database_url).await?;
+            let routines = volt::db::list_routines(&pool).await?;
+            println!("{}", serde_json::to_string_pretty(&routines)?);
+        },
         Commands::AgentChat { .. } => {
             eprintln!("AgentChat is deprecated — use AgentRun or AgentTui");
         }

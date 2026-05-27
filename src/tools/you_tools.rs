@@ -157,6 +157,16 @@ pub async fn you_research(input: &str, research_effort: Option<&str>) -> ToolRes
 
 pub async fn you_contents(urls: &[String], content_format: Option<&str>) -> ToolResult {
     let started = Instant::now();
+    for url in urls {
+        if let Err(e) = crate::tools::web_tool::validate_url(url) {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("URL validation failed: {}", e)),
+                duration_ms: started.elapsed().as_millis(),
+            };
+        }
+    }
     let key = api_key();
     if key.is_empty() {
         return ToolResult {

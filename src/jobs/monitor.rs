@@ -1,4 +1,4 @@
-use crate::jobs::{JobManager, JobState};
+use crate::jobs::JobManager;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
@@ -7,7 +7,6 @@ pub struct SelfRepairMonitor {
     manager: Arc<JobManager>,
     check_interval: Duration,
     timeout: Duration,
-    max_retries: i32,
 }
 
 impl SelfRepairMonitor {
@@ -15,14 +14,12 @@ impl SelfRepairMonitor {
         manager: Arc<JobManager>,
         check_interval: Duration,
         timeout: Duration,
-        max_retries: i32,
-    ) -> Self {
+        ) -> Self {
         Self {
             manager,
             check_interval,
             timeout,
-            max_retries,
-        }
+            }
     }
 
     pub async fn run(&self,

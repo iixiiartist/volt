@@ -1,11 +1,58 @@
 use crate::models::{PermissionLevel, ToolResult};
+use crate::attenuation::TrustLevel;
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 
 pub async fn setup_tools(
     embedder: Option<&crate::embedding::EmbeddingClient>,
+    database_url: Option<&str>,
 ) -> Arc<ToolRegistry> {
     let registry = crate::tools::register_all_tools().await;
+    if let Some(url) = database_url {
+        if let Ok(pool) = crate::db::connect(url).await {
+            if let Ok(rows) = crate::db::list_tools_with_schema(&pool).await {
+                for row in rows {
+                    let name = row.tool_name.clone();
+                    let desc = row.description.clone();
+                    let schema = row.parameter_schema.clone();
+                    let code = row.source_code.clone();
+                    registry.register_with_permission(
+                        &name,
+                        &desc,
+                        schema,
+                        "installed",
+                        Arc::new(move |args| {
+                            let code = code.clone();
+                            Box::pin(async move {
+                                let stdin = args.to_string();
+                                let policy = crate::models::SandboxPolicy {
+                                    timeout_ms: 300_000,
+                                    max_stdout_bytes: 10_485_760,
+                                    working_dir: None,
+                                };
+                                let result = crate::sandbox::run_command_direct(
+                                    "python3",
+                                    &["-c", &code],
+                                    Some(&stdin),
+                                    &policy,
+                                ).await;
+                                let output_val = serde_json::from_str(&result.stdout)
+                                    .unwrap_or_else(|_| serde_json::json!({"raw": result.stdout}));
+                                ToolResult {
+                                    success: result.status == "ok",
+                                    output: output_val.to_string(),
+                                    error: if result.status == "ok" { None } else { Some(result.stderr.clone()) },
+                                    duration_ms: result.duration_ms,
+                                }
+                            })
+                        }),
+                        PermissionLevel::Allow,
+                        TrustLevel::Installed,
+                    ).await;
+                }
+            }
+        }
+    }
     if let Some(emb) = embedder {
         registry.compute_embeddings(emb).await;
     }
@@ -37,6 +84,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                     })
                 }),
                 PermissionLevel::Prompt,
+            TrustLevel::Builtin,
             )
             .await;
     }
@@ -60,6 +108,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                 })
             }),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
 
@@ -128,6 +177,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                 })
             }),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
 
@@ -195,7 +245,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
             "context": { "type": "string", "description": "context and constraints from the parent agent" }
         },
         "required": ["task"]
-    }), "builtin", delegate_fn, PermissionLevel::Prompt).await;
+    }), "builtin", delegate_fn, PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     let workflow_fn = {
         let wt = registry.clone();
@@ -252,7 +302,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
             "tasks": { "type": "string", "description": "JSON array of task strings (one per agent for parallel, one per stage for pipeline)" }
         },
         "required": ["pattern", "agents", "tasks"]
-    }), "builtin", workflow_fn, PermissionLevel::Prompt).await;
+    }), "builtin", workflow_fn, PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     registry
         .register_with_permission(
@@ -275,6 +325,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                 })
             }),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
 
@@ -297,6 +348,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                 })
             }),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
 
@@ -497,6 +549,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                 })
             }),
             PermissionLevel::Prompt,
+            TrustLevel::Builtin,
         )
         .await;
 
@@ -525,7 +578,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let c = args["content"].as_str().unwrap_or(""); let o = args["output_path"].as_str().unwrap_or("output.pdf");
             crate::tools::pdf_tool::create_pdf(c, o).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     #[cfg(feature = "tools-desktop")]
     registry.register_with_permission("desktop_click","Click at screen coordinates.",
@@ -533,7 +586,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let x = args["x"].as_i64().unwrap_or(0) as i32; let y = args["y"].as_i64().unwrap_or(0) as i32;
             crate::tools::desktop_tool::desktop_click(x, y).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     #[cfg(feature = "tools-desktop")]
     registry.register_with_permission("desktop_type","Type text at cursor position.",
@@ -541,7 +594,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let t = args["text"].as_str().unwrap_or("");
             crate::tools::desktop_tool::desktop_type(t).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     #[cfg(feature = "tools-desktop")]
     registry.register_with_permission("desktop_key","Press a key (enter, tab, escape, up, down, etc.).",
@@ -549,7 +602,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let k = args["key"].as_str().unwrap_or("");
             crate::tools::desktop_tool::desktop_key(k).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     #[cfg(feature = "tools-desktop")]
     registry.register("desktop_find_window","Find a window by title using Windows API.",
@@ -565,7 +618,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let u = args["url"].as_str().unwrap_or("");
             crate::tools::browser_tool::browser_navigate(u).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     #[cfg(feature = "tools-browser")]
     registry.register_with_permission("browser_extract","Open a URL and extract text via CSS selector.",
@@ -573,7 +626,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let u = args["url"].as_str().unwrap_or(""); let s = args["selector"].as_str().unwrap_or("");
             crate::tools::browser_tool::browser_extract(u, s).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     #[cfg(feature = "tools-browser")]
     registry.register_with_permission("browser_screenshot","Open a URL and save a page screenshot.",
@@ -581,7 +634,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         Arc::new(|args| Box::pin(async move {
             let u = args["url"].as_str().unwrap_or(""); let o = args["output_path"].as_str().unwrap_or("screenshot.png");
             crate::tools::browser_tool::browser_screenshot(u, o).await
-        })), PermissionLevel::Prompt).await;
+        })), PermissionLevel::Prompt, TrustLevel::Builtin).await;
 
     registry
         .register(

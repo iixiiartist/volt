@@ -21,6 +21,13 @@ pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
             sqlx::query(statement).execute(pool).await?;
         }
     }
+    let sql2 = include_str!("../migrations/0002_jobs_and_routines.sql");
+    for statement in split_sql_statements(sql2) {
+        let statement = statement.trim();
+        if !statement.is_empty() {
+            sqlx::query(statement).execute(pool).await?;
+        }
+    }
     Ok(())
 }
 
@@ -182,6 +189,36 @@ pub async fn get_tool_source(pool: &PgPool, tool_name: &str) -> anyhow::Result<O
         .await?;
 
     Ok(row.and_then(|r| r.try_get("source_code").ok()))
+}
+
+#[derive(sqlx::FromRow)]
+
+pub struct DbTool {
+
+    pub tool_name: String,
+    
+    pub description: String,
+    
+    pub parameter_schema: serde_json::Value,
+    
+    pub source_code: String,
+    
+}
+
+pub async fn list_tools_with_schema(pool: &PgPool) -> anyhow::Result<Vec<DbTool>> {
+
+    let rows = sqlx::query_as::<_, DbTool>(
+    
+        "SELECT tool_name, description, parameter_schema, source_code FROM agent_tools"
+        
+    )
+    
+    .fetch_all(pool)
+    
+    .await?;
+    
+    Ok(rows)
+    
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -511,6 +548,13 @@ pub async fn insert_context_entry(pool: &PgPool, entry: &ContextEntry) -> anyhow
         .execute(pool)
         .await?;
     }
+    let sql2 = include_str!("../migrations/0002_jobs_and_routines.sql");
+    for statement in split_sql_statements(sql2) {
+        let statement = statement.trim();
+        if !statement.is_empty() {
+            sqlx::query(statement).execute(pool).await?;
+        }
+    }
     Ok(())
 }
 
@@ -647,6 +691,33 @@ pub async fn load_context_entries(pool: &PgPool, limit: i64) -> anyhow::Result<V
             last_used_at: row.try_get("last_used_at")?,
             created_at: row.try_get("created_at")?,
         });
+    }
+    Ok(out)
+}
+
+pub async fn list_routines(pool: &PgPool) -> anyhow::Result<Vec<serde_json::Value>> {
+    let rows = sqlx::query(
+        r#"SELECT id, name, cron, action_prompt, enabled, last_run, next_run, trigger_type, trigger_config, guardrails_max_tokens, guardrails_max_tool_calls, guardrails_allowed_tools, guardrails_timeout_secs FROM routines ORDER BY name"#
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(serde_json::json!({
+            "id": row.try_get::<uuid::Uuid, _>("id")?,
+            "name": row.try_get::<String, _>("name")?,
+            "cron": row.try_get::<Option<String>, _>("cron")?,
+            "action_prompt": row.try_get::<String, _>("action_prompt")?,
+            "enabled": row.try_get::<bool, _>("enabled")?,
+            "last_run": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_run")?,
+            "next_run": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("next_run")?,
+            "trigger_type": row.try_get::<String, _>("trigger_type")?,
+            "trigger_config": row.try_get::<Option<serde_json::Value>, _>("trigger_config")?,
+            "guardrails_max_tokens": row.try_get::<Option<i64>, _>("guardrails_max_tokens")?,
+            "guardrails_max_tool_calls": row.try_get::<Option<i32>, _>("guardrails_max_tool_calls")?,
+            "guardrails_allowed_tools": row.try_get::<Option<Vec<String>>, _>("guardrails_allowed_tools")?,
+            "guardrails_timeout_secs": row.try_get::<Option<i64>, _>("guardrails_timeout_secs")?,
+        }));
     }
     Ok(out)
 }

@@ -30,7 +30,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
     });
 
     let embedder = EmbeddingClient::new_smart().await;
-    let tools = crate::tools::setup_tools(Some(&embedder)).await;
+    let tools = crate::tools::setup_tools(Some(&embedder), Some(&settings.database_url)).await;
 
     if let Some(ref path) = load_tools {
         load_tool_stubs(path, &tools, &embedder).await;
@@ -71,6 +71,9 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         .with_stream(Arc::new(|token| {
             print!("{}", token);
         }));
+
+    let event_bus = crate::events::EventBus::new();
+    agent = agent.with_event_bus(event_bus);
 
     let sessions_pool = {
         let session_db_path = PathBuf::from("volt_sessions.db");
@@ -121,6 +124,11 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         agent = agent.with_memory(p.clone(), embedder.clone());
     } else {
         agent = agent.with_memory_embedder_only(embedder.clone());
+    }
+
+    if let Some(ref p) = pool {
+        let failure_tracker = crate::tool_failure_tracker::ToolFailureTracker::new(Some(p.clone()));
+        agent = agent.with_failure_tracker(failure_tracker);
     }
 
     let skills = crate::skills::setup_skills(pool.clone(), Some(embedder_for_skills)).await;

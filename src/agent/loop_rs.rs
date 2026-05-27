@@ -842,8 +842,21 @@ impl Agent {
             return Vec::new();
         }
 
+        // Failure tracker advisory (blocking)
+        let mut skipped = Vec::new();
+        let mut allowed = Vec::new();
+        for tc in tool_calls {
+            if let Some(ref tracker) = self.failure_tracker {
+                if let Some(warning) = tracker.should_avoid(&tc.name).await {
+                    skipped.push((tc.name.clone(), tc.id.clone(), warning));
+                    continue;
+                }
+            }
+            allowed.push(tc.clone());
+        }
+
         // Execute approved tools concurrently
-        let futures: Vec<_> = tool_calls
+        let futures: Vec<_> = allowed
             .iter()
             .map(|tc| {
                 let tools = self.tools.clone();
@@ -899,7 +912,27 @@ impl Agent {
             })
             .collect();
 
-        let results = futures::future::join_all(futures).await;
+        let mut results: Vec<(String, String, String, ToolResult)> = futures::future::join_all(futures).await;
+
+        // Append skipped tools with failure results
+        for (name, id, warning) in skipped {
+            results.push((name, id, warning.clone(), ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(warning),
+                duration_ms: 0,
+            }));
+        }
+
+        // Publish tool execution events
+        for (name, _, _, ref result) in &results {
+            if let Some(ref bus) = self.event_bus {
+                bus.publish(crate::events::Event::ToolExecuted {
+                    tool_name: name.clone(),
+                    success: result.success,
+                });
+            }
+        }
 
         // Update allow_session before returning
         if allow_session {

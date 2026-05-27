@@ -20,7 +20,7 @@ volt-bfcl/*.txt
 # Competitive intelligence (external analysis docs)
 VOLT_IRONCLAW_PLAN.md
 
-# Test artifacts
+# Temp scripts and artifacts
 script*.py
 search*.py
 test*.json
@@ -29,7 +29,36 @@ test*.rs
 test*.png
 temp_*
 groq_test.json
+audit*.py
+b64.txt
+check*.py
+count.py
+echo_test.txt
+extract.py
+find.py
+inspect*.py
+orig_*.rs
+patch*.py
+read*.py
+run.ps1
+chk.py
 node_modules/
 package-lock.json
 package.json
 volt-*.log
+audit*.py
+b64.txt
+check*.py
+chk.py
+count.py
+echo_test.txt
+extract.py
+file
+find.py
+inspect*.py
+orig_*.rs
+patch*.py
+read*.py
+run.ps1
+paper/*.py
+paper/volt_arxiv_v3.html

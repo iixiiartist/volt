@@ -29,7 +29,7 @@ impl NetworkPolicy {
         for pattern in allowed {
             let p = pattern.to_lowercase();
             if p == host_lc
-                || (p.starts_with("*.") && host_lc.ends_with(&p[2..]))
+                || (p.starts_with("*.") && host_lc.ends_with(&p[2..]) && host_lc != p[2..])
                 || (p.starts_with(" *. ") && host_lc.ends_with(&p[3..]))
             {
                 return Ok(());

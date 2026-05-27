@@ -63,4 +63,5 @@ pub mod provision;
 pub mod serve;
 pub mod skills;
 pub mod tools;
+pub mod daemon;
 pub mod workflow;
