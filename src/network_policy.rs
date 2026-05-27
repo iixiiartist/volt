@@ -1,5 +1,3 @@
-use regex::Regex;
-
 pub struct NetworkPolicy;
 
 pub enum PolicyError {
