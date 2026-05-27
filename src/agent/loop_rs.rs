@@ -33,6 +33,8 @@ pub struct Agent {
     session_id: Option<uuid::Uuid>,
     sqlite_pool: Option<sqlx::SqlitePool>,
     workspace: Option<PathBuf>,
+    event_bus: Option<crate::events::EventBus>,
+    failure_tracker: Option<crate::tool_failure_tracker::ToolFailureTracker>,
 }
 
 impl Agent {
@@ -78,6 +80,8 @@ impl Agent {
             session_id: None,
             sqlite_pool: None,
             workspace: None,
+            event_bus: None,
+            failure_tracker: None,
         }
     }
 
@@ -125,6 +129,16 @@ impl Agent {
     pub fn with_session(mut self, session_id: uuid::Uuid, sqlite_pool: sqlx::SqlitePool) -> Self {
         self.session_id = Some(session_id);
         self.sqlite_pool = Some(sqlite_pool);
+        self
+    }
+
+    pub fn with_event_bus(mut self, bus: crate::events::EventBus) -> Self {
+        self.event_bus = Some(bus);
+        self
+    }
+
+    pub fn with_failure_tracker(mut self, tracker: crate::tool_failure_tracker::ToolFailureTracker) -> Self {
+        self.failure_tracker = Some(tracker);
         self
     }
 

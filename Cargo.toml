@@ -89,7 +89,7 @@ tokenizers = { version = "0.21", optional = true }
 ndarray = { version = "0.16", optional = true }
 
 
-[dev-dependencies]
+cron-parser = "0.5"
 tempfile = "3"
 mockall = "0.13"
 wiremock = "0.6"

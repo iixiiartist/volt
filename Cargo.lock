@@ -738,6 +738,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cron-parser"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15cfab9b4fbe2e8328e652a461a4b8d0225d1d44fa08bbc2fe9f585a73824727"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5538,6 +5547,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "cron-parser",
  "crossterm",
  "csv",
  "dashmap",

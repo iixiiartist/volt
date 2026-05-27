@@ -197,6 +197,15 @@ async fn run_agent(
     let mut agent = Agent::new(config, provider, tools.clone())
         .with_workspace(std::env::current_dir().unwrap_or_default());
 
+    // Wire Phase 3 infrastructure into agent
+    let event_bus = crate::events::EventBus::new();
+    agent = agent.with_event_bus(event_bus);
+
+    if let Ok(pool) = db::connect(&settings.database_url).await {
+        let failure_tracker = crate::tool_failure_tracker::ToolFailureTracker::new(Some(pool.clone()));
+        agent = agent.with_failure_tracker(failure_tracker);
+    }
+
     let context_store = ContextStore::new();
     let (seed_channel, seed_rx) = worker::create_seed_channel();
     agent = agent
