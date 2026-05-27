@@ -235,6 +235,13 @@ async fn run_category(
         // For irrelevance tests, the model should not call any function
         let expects_no_call = functions.is_empty();
 
+        // Thinking models need extra token budget for chain-of-thought
+        let max_tokens = if model.contains("qwen3") || model.contains("qwq") || model.contains("deepseek-r1") {
+            4096u32
+        } else {
+            1024u32
+        };
+
         let request = LLMRequest {
             model: model.to_string(),
             messages: vec![LLMMessage {
@@ -247,7 +254,7 @@ async fn run_category(
                 tool_call_id: None,
             }],
             temperature: Some(0.0),
-            max_tokens: Some(1024),
+            max_tokens: Some(max_tokens),
             stop: None,
             tools: Some(tool_defs.clone()),
             stream: false,
