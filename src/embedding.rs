@@ -452,10 +452,12 @@ async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> {
     // 1. Ollama (local, no key needed) — ping health endpoint
     if is_ollama_running(http).await {
         let model = std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "mxbai-embed-large".into());
+        let endpoint = std::env::var("EMBEDDING_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:11434/api/embeddings".into());
         providers.push(ProviderConfig {
             provider: EmbeddingProvider::Ollama,
             model: model.clone(),
-            endpoint: "http://localhost:11434/api/embed".to_string(),
+            endpoint,
             api_key: None,
         });
     }

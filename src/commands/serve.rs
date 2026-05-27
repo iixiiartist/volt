@@ -47,9 +47,7 @@ struct AppState {
     default_max_iterations: u32,
 }
 
-struct ConversationState {
-    model: String,
-}
+struct ConversationState;
 
 #[derive(Serialize)]
 struct SessionResponse {
@@ -93,9 +91,7 @@ async fn index_handler(State(state): State<AppState>) -> impl IntoResponse {
     let sid = uuid::Uuid::new_v4().to_string();
     state.conversations.insert(
         sid.clone(),
-        Arc::new(Mutex::new(ConversationState {
-            model: state.default_model.clone(),
-        })),
+        Arc::new(Mutex::new(ConversationState)),
     );
     let tpl = IndexTemplate {
         session_id: sid.clone(),
@@ -106,13 +102,11 @@ async fn index_handler(State(state): State<AppState>) -> impl IntoResponse {
     Html(tpl.render().unwrap_or_else(|e| format!("template error: {}", e)))
 }
 
-async fn new_session_handler(State(state): State<AppState>) -> Json<SessionResponse> {
+async fn new_session_handler(State(_state): State<AppState>) -> Json<SessionResponse> {
     let sid = uuid::Uuid::new_v4().to_string();
-    state.conversations.insert(
+    _state.conversations.insert(
         sid.clone(),
-        Arc::new(Mutex::new(ConversationState {
-            model: state.default_model.clone(),
-        })),
+        Arc::new(Mutex::new(ConversationState)),
     );
     Json(SessionResponse { session_id: sid })
 }

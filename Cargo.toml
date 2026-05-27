@@ -13,7 +13,7 @@ tools-desktop = ["enigo"]
 tools-browser = ["headless_chrome"]
 tools-ast = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "tree-sitter-typescript"]
 tools-local-embeddings = ["tract-onnx", "hf-hub", "tokenizers", "ndarray"]
-default = []
+default = ["tools-local-embeddings"]
 
 [lib]
 name = "volt"

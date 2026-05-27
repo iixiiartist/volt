@@ -168,16 +168,6 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         settings.sandbox_policy.clone(),
     ));
 
-    if let Ok(pool) = crate::db::connect(&settings.database_url).await {
-        context_store.set_db(pool.clone());
-        agent = agent.with_memory(pool.clone(), embedder.clone());
-        let skill_store = context_store.clone();
-        let skill_emb = embedder;
-        tokio::spawn(async move {
-            worker::seed_skills_from_db(&skill_store, &pool, &skill_emb).await;
-        });
-    }
-
     eprintln!(
         "[mode] {} — {} context kinds",
         mode,

@@ -3,15 +3,16 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
-DROP TABLE IF EXISTS skill_tools CASCADE;
-DROP TABLE IF EXISTS asset_relationships CASCADE;
-DROP TABLE IF EXISTS tool_executions CASCADE;
-DROP TABLE IF EXISTS registry_events CASCADE;
-DROP TABLE IF EXISTS agent_tools CASCADE;
-DROP TABLE IF EXISTS skills CASCADE;
-DROP TABLE IF EXISTS memories CASCADE;
+-- Schema version tracking (idempotent init-db)
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INT PRIMARY KEY,
+    applied_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-CREATE TABLE agent_tools (
+-- Only run CREATE TABLE IF NOT EXISTS — never DROP to avoid data loss.
+-- To reset, use `volt init-db --force` or drop the database manually.
+
+CREATE TABLE IF NOT EXISTS agent_tools (
   id SERIAL PRIMARY KEY,
   tool_name VARCHAR(255) UNIQUE NOT NULL,
   description TEXT NOT NULL,
@@ -27,7 +28,7 @@ CREATE TABLE agent_tools (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE asset_relationships (
+CREATE TABLE IF NOT EXISTS asset_relationships (
   parent_id INT REFERENCES agent_tools(id) ON DELETE CASCADE,
   child_id INT REFERENCES agent_tools(id) ON DELETE CASCADE,
   relationship_type VARCHAR(100) NOT NULL,
@@ -35,7 +36,7 @@ CREATE TABLE asset_relationships (
   PRIMARY KEY (parent_id, child_id, relationship_type)
 );
 
-CREATE TABLE tool_executions (
+CREATE TABLE IF NOT EXISTS tool_executions (
   id BIGSERIAL PRIMARY KEY,
   tool_id INT REFERENCES agent_tools(id) ON DELETE SET NULL,
   tool_name VARCHAR(255) NOT NULL,
@@ -48,7 +49,7 @@ CREATE TABLE tool_executions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE registry_events (
+CREATE TABLE IF NOT EXISTS registry_events (
   id BIGSERIAL PRIMARY KEY,
   pkg_id VARCHAR(255) NOT NULL,
   tool_name VARCHAR(255),
@@ -66,7 +67,7 @@ CREATE INDEX IF NOT EXISTS tool_executions_tool_name_idx ON tool_executions(tool
 CREATE INDEX IF NOT EXISTS tool_executions_created_at_idx ON tool_executions(created_at DESC);
 CREATE INDEX IF NOT EXISTS registry_events_pkg_id_idx ON registry_events(pkg_id);
 
-CREATE TABLE memories (
+CREATE TABLE IF NOT EXISTS memories (
   id BIGSERIAL PRIMARY KEY,
   kind VARCHAR(100) NOT NULL DEFAULT 'general',
   content TEXT NOT NULL,
@@ -79,7 +80,7 @@ CREATE INDEX IF NOT EXISTS memories_kind_idx ON memories(kind);
 CREATE INDEX IF NOT EXISTS memories_embedding_idx
   ON memories USING hnsw (embedding vector_cosine_ops);
 
-CREATE TABLE skills (
+CREATE TABLE IF NOT EXISTS skills (
   id UUID PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '',
@@ -96,7 +97,7 @@ CREATE INDEX IF NOT EXISTS skills_name_idx ON skills(name);
 CREATE INDEX IF NOT EXISTS skills_embedding_idx
   ON skills USING hnsw (embedding vector_cosine_ops);
 
-CREATE TABLE skill_tools (
+CREATE TABLE IF NOT EXISTS skill_tools (
   id UUID PRIMARY KEY,
   skill_id UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -110,7 +111,7 @@ CREATE TABLE skill_tools (
 CREATE INDEX IF NOT EXISTS skill_tools_skill_id_idx ON skill_tools(skill_id);
 
 -- Unified context store persistence (everything-as-RAG)
-CREATE TABLE context_entries (
+CREATE TABLE IF NOT EXISTS context_entries (
   id UUID PRIMARY KEY,
   kind VARCHAR(32) NOT NULL,
   content TEXT NOT NULL,

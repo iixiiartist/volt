@@ -66,6 +66,7 @@ enum Commands {
         #[arg(long, default_value = "balanced")]
         mode: String,
     },
+    #[command(hide = true)]
     AgentChat {
         #[arg(long)]
         model: Option<String>,

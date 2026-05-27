@@ -162,28 +162,29 @@ impl Agent {
         // Inject system prompt at the start of the conversation
         {
             let mut state = self.state.lock().await;
-            let has_prompt = state.messages.iter().any(|m| {
-                m.role == "system"
-                    && (m.content.contains("You are Volt")
-                        || self
-                            .config
-                            .system_prompt
-                            .as_ref()
-                            .is_some_and(|sp| m.content.contains(sp.as_str())))
-            });
-            if !has_prompt {
-                let prompt = build_system_prompt(&self.config, self.workspace.as_deref());
-                state.messages.insert(
-                    0,
-                    Message {
-                        role: "system".into(),
-                        content: Arc::new(prompt),
-                        tool_calls: None,
-                        tool_result: None,
-                        tool_name: None,
-                        created_at: chrono::Utc::now(),
-                    },
-                );
+            let current_prompt = build_system_prompt(&self.config, self.workspace.as_deref());
+            let existing_idx = state.messages.iter().position(|m| m.role == "system");
+            match existing_idx {
+                Some(idx) => {
+                    // Replace stale system prompt if SOUL.md or config changed
+                    if !state.messages[idx].content.contains(&current_prompt) {
+                        state.messages[idx].content = Arc::new(current_prompt);
+                        tracing::info!("[system] replaced stale system prompt on session resume");
+                    }
+                }
+                None => {
+                    state.messages.insert(
+                        0,
+                        Message {
+                            role: "system".into(),
+                            content: Arc::new(current_prompt),
+                            tool_calls: None,
+                            tool_result: None,
+                            tool_name: None,
+                            created_at: chrono::Utc::now(),
+                        },
+                    );
+                }
             }
         }
 
