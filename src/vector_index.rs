@@ -1,13 +1,183 @@
-//! Locality-Sensitive Hashing (LSH) vector index for approximate nearest neighbor search.
+//! BM25+ sparse retrieval scorer for hybrid search (BM25 + dense embedding fusion).
 //!
-//! Uses random projection SimHash: k random planes partition the space into 2^k buckets.
-//! Query time is O(n/B) where B is the expected bucket size, vs O(n) brute force.
-//! With k=16 planes and 1024d embeddings, achieves ~90% recall at ~20x speedup.
+//! BM25+ extends BM25 with an additional delta parameter to prevent excessive
+//! penalization of very long documents. Uses Reciprocal Rank Fusion (RRF) to
+//! combine BM25 and dense cosine similarity scores.
 //!
-//! Reference: Charikar (2002), "Similarity Estimation Techniques from Rounding Algorithms"
-//! Used by Spotify's Annoy, Google's ScaNN, and Hippocampus (arXiv:2602.13594).
+//! Reference: Robertson & Zaragoza (2009), "The Probabilistic Relevance Framework: BM25 and Beyond"
+//! RRF: Cormack et al. (2009), "Reciprocal Rank Fusion outperforms Condorcet and individual rank learning methods"
 
 use std::collections::HashMap;
+
+/// A simple tokenizer: lowercase, split on whitespace and basic punctuation.
+pub fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+        .filter(|s| !s.is_empty() && s.len() >= 2)
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// BM25+ scorer for a corpus of documents.
+pub struct Bm25Scorer {
+    /// Number of documents in the corpus
+    doc_count: usize,
+    /// Document length for each document (in tokens)
+    doc_lengths: Vec<usize>,
+    /// Average document length
+    avg_doc_len: f32,
+    /// Term -> (document frequency, list of (doc_idx, term_freq))
+    term_stats: HashMap<String, (usize, Vec<(usize, usize)>)>,
+    /// BM25+ parameters
+    k1: f32,
+    b: f32,
+    delta: f32,
+}
+
+impl Bm25Scorer {
+    /// Create a new BM25+ scorer from a corpus of documents.
+    /// Each document is a tuple of (id, text).
+    pub fn build<I, S>(documents: I, k1: f32, b: f32, delta: f32) -> Self
+    where
+        I: IntoIterator<Item = (usize, S)>,
+        S: AsRef<str>,
+    {
+        let mut doc_lengths = Vec::new();
+        let mut term_stats: HashMap<String, (usize, Vec<(usize, usize)>)> = HashMap::new();
+        let mut total_tokens = 0usize;
+
+        for (doc_idx, text) in documents {
+            let tokens = tokenize(text.as_ref());
+            let len = tokens.len();
+            doc_lengths.push(len);
+            total_tokens += len;
+
+            // Count term frequencies for this document
+            let mut tf_map: HashMap<String, usize> = HashMap::new();
+            for token in tokens {
+                *tf_map.entry(token).or_insert(0) += 1;
+            }
+
+            // Update global term stats
+            for (term, tf) in tf_map {
+                let entry = term_stats.entry(term).or_insert_with(|| (0, Vec::new()));
+                if entry.1.is_empty() || entry.1.last().map(|(idx, _)| *idx != doc_idx).unwrap_or(true) {
+                    entry.0 += 1; // increment document frequency
+                }
+                entry.1.push((doc_idx, tf));
+            }
+        }
+
+        let doc_count = doc_lengths.len();
+        let avg_doc_len = if doc_count > 0 {
+            total_tokens as f32 / doc_count as f32
+        } else {
+            1.0
+        };
+
+        Self {
+            doc_count,
+            doc_lengths,
+            avg_doc_len,
+            term_stats,
+            k1,
+            b,
+            delta,
+        }
+    }
+
+    /// Score a single document against a query.
+    pub fn score(&self, query: &str, doc_idx: usize) -> f32 {
+        if doc_idx >= self.doc_lengths.len() {
+            return 0.0;
+        }
+
+        let query_tokens = tokenize(query);
+        let doc_len = self.doc_lengths[doc_idx] as f32;
+
+        // BM25+ formula
+        let mut score = 0.0f32;
+        for qt in &query_tokens {
+            if let Some((df, postings)) = self.term_stats.get(qt) {
+                let idf = ((self.doc_count as f32 - *df as f32 + 0.5) / (*df as f32 + 0.5) + 1.0).ln();
+                let tf = postings
+                    .iter()
+                    .find(|(idx, _)| *idx == doc_idx)
+                    .map(|(_, tf)| *tf as f32)
+                    .unwrap_or(0.0);
+                let tf_norm = (tf + self.delta) / (self.k1 * (1.0 - self.b + self.b * doc_len / self.avg_doc_len) + tf + self.delta);
+                score += idf * tf_norm;
+            }
+        }
+        score
+    }
+
+    /// Score all documents against a query, returning (doc_idx, score) pairs sorted descending.
+    pub fn search(&self, query: &str) -> Vec<(usize, f32)> {
+        let query_tokens = tokenize(query);
+        if query_tokens.is_empty() || self.doc_count == 0 {
+            return Vec::new();
+        }
+
+        let mut scores: Vec<f32> = vec![0.0f32; self.doc_count];
+
+        for qt in &query_tokens {
+            if let Some((df, postings)) = self.term_stats.get(qt) {
+                let idf = ((self.doc_count as f32 - *df as f32 + 0.5) / (*df as f32 + 0.5) + 1.0).ln();
+                for &(doc_idx, tf) in postings {
+                    let doc_len = self.doc_lengths[doc_idx] as f32;
+                    let tf_norm = (tf as f32 + self.delta)
+                        / (self.k1 * (1.0 - self.b + self.b * doc_len / self.avg_doc_len)
+                            + tf as f32
+                            + self.delta);
+                    scores[doc_idx] += idf * tf_norm;
+                }
+            }
+        }
+
+        let mut scored: Vec<(usize, f32)> = scores
+            .into_iter()
+            .enumerate()
+            .filter(|(_, s)| *s > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored
+    }
+}
+
+/// Reciprocal Rank Fusion (RRF) combines multiple ranked lists into a single ranking.
+/// k is a constant (typically 60) that prevents vanishing scores for items ranked low.
+pub fn reciprocal_rank_fusion(
+    rankings: &[Vec<usize>],
+    k: f32,
+    limit: usize,
+) -> Vec<(usize, f32)> {
+    let mut rrf_scores: HashMap<usize, f32> = HashMap::new();
+
+    for ranked_list in rankings {
+        for (rank, &item) in ranked_list.iter().enumerate() {
+            let score = 1.0 / (k + rank as f32 + 1.0);
+            *rrf_scores.entry(item).or_insert(0.0) += score;
+        }
+    }
+
+    let mut result: Vec<(usize, f32)> = rrf_scores.into_iter().collect();
+    result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    result.truncate(limit);
+    result
+}
+
+// ── LSH index follows ─────────────────────────────────────────
+
+// Locality-Sensitive Hashing (LSH) vector index for approximate nearest neighbor search.
+//
+// Uses random projection SimHash: k random planes partition the space into 2^k buckets.
+// Query time is O(n/B) where B is the expected bucket size, vs O(n) brute force.
+// With k=16 planes and 1024d embeddings, achieves ~90% recall at ~20x speedup.
+//
+// Reference: Charikar (2002), "Similarity Estimation Techniques from Rounding Algorithms"
+// Used by Spotify's Annoy, Google's ScaNN, and Hippocampus (arXiv:2602.13594).
+
 use std::sync::RwLock;
 use uuid::Uuid;
 

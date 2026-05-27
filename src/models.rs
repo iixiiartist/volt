@@ -249,7 +249,7 @@ impl std::fmt::Debug for MCPServerConfig {
     }
 }
 
-/// Transport mechanism for an MCP server — HTTP with URL and optional headers, or Stdio.
+/// Transport mechanism for an MCP server — HTTP with URL and optional headers, Stdio, or WebSocket.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum MCPTransport {
@@ -257,6 +257,11 @@ pub enum MCPTransport {
     Stdio { command: String, args: Vec<String> },
     #[serde(rename = "http")]
     Http {
+        url: String,
+        headers: Option<HashMap<String, String>>,
+    },
+    #[serde(rename = "websocket")]
+    WebSocket {
         url: String,
         headers: Option<HashMap<String, String>>,
     },
@@ -277,6 +282,17 @@ impl std::fmt::Debug for MCPTransport {
                         .collect::<HashMap<_, _>>()
                 });
                 f.debug_struct("Http")
+                    .field("url", url)
+                    .field("headers", &redacted)
+                    .finish()
+            }
+            MCPTransport::WebSocket { url, headers } => {
+                let redacted = headers.as_ref().map(|h| {
+                    h.keys()
+                        .map(|k| (k.clone(), "***".to_string()))
+                        .collect::<HashMap<_, _>>()
+                });
+                f.debug_struct("WebSocket")
                     .field("url", url)
                     .field("headers", &redacted)
                     .finish()

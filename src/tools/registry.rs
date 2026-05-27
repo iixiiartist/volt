@@ -146,23 +146,59 @@ impl ToolRegistry {
         query_embedding: &[f32],
         limit: usize,
         essential: &[&str],
+        query_text: Option<&str>,
     ) -> Vec<ToolDefinition> {
-        // 1. Vector search (current primary signal)
-        let mut scored: Vec<(f32, ToolDefinition)> = self
+        // 1. Compute both dense (cosine) and sparse (BM25) rankings, then fuse with RRF
+        let all_tools: Vec<(String, ToolDefinition)> = self
             .tools
             .iter()
-            .filter_map(|r| {
-                let t = r.value();
-                t.embedding.as_ref().map(|e| {
-                    let sim = cosine_similarity(e, query_embedding);
-                    (sim, t.def.clone())
-                })
+            .map(|r| (r.key().clone(), r.value().def.clone()))
+            .collect();
+
+        // Dense: cosine similarity ranking
+        let mut dense_scored: Vec<(f32, usize)> = all_tools
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (name, _))| {
+                let t = self.tools.get(name)?;
+                let emb = t.embedding.as_ref()?;
+                let sim = cosine_similarity(emb, query_embedding);
+                Some((sim, i))
             })
             .collect();
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        dense_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let dense_order: Vec<usize> = dense_scored.iter().map(|(_, i)| *i).collect();
 
-        let mut result: Vec<ToolDefinition> =
-            scored.into_iter().take(limit).map(|(_, d)| d).collect();
+        // Sparse: BM25 ranking (if query text provided)
+        let bm25_order: Vec<usize> = if let Some(qt) = query_text {
+            let corpus: Vec<String> = all_tools
+                .iter()
+                .map(|(name, def)| format!("{}: {}", name, def.description))
+                .collect();
+            let bm25 = crate::vector_index::Bm25Scorer::build(
+                corpus.iter().enumerate().map(|(i, t)| (i, t.as_str())),
+                1.2, 0.75, 0.5,
+            );
+            let results = bm25.search(qt);
+            results.iter().map(|(idx, _)| *idx).collect()
+        } else {
+            Vec::new()
+        };
+
+        // RRF fusion
+        let fused_order: Vec<usize> = if !bm25_order.is_empty() {
+            let rankings = vec![dense_order, bm25_order];
+            let rrf = crate::vector_index::reciprocal_rank_fusion(&rankings, 60.0, limit);
+            rrf.into_iter().map(|(idx, _)| idx).collect()
+        } else {
+            dense_order.into_iter().take(limit).collect()
+        };
+
+        let mut result: Vec<ToolDefinition> = fused_order
+            .into_iter()
+            .filter_map(|i| all_tools.get(i))
+            .map(|(_, def)| def.clone())
+            .collect();
 
         // 2. GraphRAG augmentation: append related tools up to 2 hops away
         let mut names_in_result: std::collections::HashSet<String> =

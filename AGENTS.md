@@ -105,3 +105,65 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - Full 400-case run pending; full BFCL v4 across 17 categories pending
 - BFCL v3 leaderboard reference: qwen3-32b at 75.7% (#2 globally), average 55.9%
 - Known issue: `web_search` and `bash` built-in tools interfere with BFCL-provided function stubs (model picks them over the stubs). VOLT_MINIMAL_TOOLS for BFCL runs would eliminate this.
+
+### 5 Architecture Improvements (May 2026)
+
+#### Structured Output Parsing (`src/agent/tool_parser.rs`)
+- `validate_tool_call()` — validates tool call arguments against JSON Schema (required fields, type checking, nested objects, enum validation)
+- `validate_tool_calls()` — batch validation with error reporting
+- Integrated into agent loop: validation runs BEFORE tool execution, returns error feedback to LLM for retry
+- 5 unit tests covering required fields, wrong types, valid calls, nested objects, enum constraints
+
+#### Hybrid Retrieval (BM25 + Dense RRF Fusion)
+- `Bm25Scorer` — BM25+ with tunable k1=1.2, b=0.75, delta=0.5; built from corpus on each query
+- `reciprocal_rank_fusion()` — combines ranked lists with k=60 constant
+- Integrated into `ContextStore::search()` (5th param `query_text: Option<&str>`) and `ToolRegistry::search_tools()` (4th param)
+- RRF fusion: hybrid ranking when both BM25 and cosine signals available; pure cosine fallback when no query text
+- `search()` and `search_tools()` changed signature — `None` preserves backward-compatible behavior
+
+#### Prompt Compression (`loop_rs.rs`)
+- `compress_if_needed()` — selective compression preserves ALL system messages, compresses only conversation history
+- Two strategies: selective (keep system, truncate conversation) and fallback (rolling truncation when system exceeds budget)
+- Uses `ModelContext::estimate_tokens()` for accurate tiktoken-based token counting
+- Budget = model max context - 2048; injects `[Conversation summary]` markers when truncation occurs
+
+#### MCP Streaming + Agent-to-Agent
+- `MCPTransport::WebSocket { url, headers }` variant in `models.rs`
+- `MCPClient::call_tool_stream()` — SSE-based streaming for long-running tool calls
+- `MCPServer::serve_http()` — axum-based HTTP server (routes: /mcp, /mcp/tools/list, /mcp/tools/call)
+- Agent-to-agent tool sharing: Agent A serves tools via HTTP, Agent B discovers and calls them remotely
+
+#### DAG Multi-Agent Orchestration (`src/orchestrator.rs`)
+- `DagWorkflow` — JSON-parsed DAG definitions with `from_json()`, `topological_sort()` (Kahn's algorithm), `execution_levels()`
+- `DagScheduler` — parallel level-by-level execution; `{input}`/`{node_id}` template substitution from predecessor outputs
+- `Orchestrator::run_dag()` — entry point for DAG workflow execution
+- `DagNode`, `DagEdge` — data structures for agent task nodes and dependency edges
+
+### Real-World Workflow Benchmarks (`tests/real_world_benchmarks.rs`)
+
+11 tests across 7 workflows + 3 bonus + 1 integration, all passing with `--features testutils`:
+
+| # | Workflow | New Feature Tested |
+|---|---|---|
+| 1 | **Software Dev DAG** (4-node: research→code→review→report) | DAG orchestration, topological sort, execution levels |
+| 2 | **Data Analysis Pipeline** (scrape→extract→transform→chart) | Pipeline tool composition |
+| 3 | **Multi-Agent Research** (3× parallel agents → synthesize) | Parallel execution |
+| 4 | **Tool Selection Stress** (60 tools, 50 distractors, RRF vs cosine) | Hybrid RRF retrieval (BM25 + dense) |
+| 5 | **MCP Agent-to-Agent** (HTTP server + remote tool call) | HTTP MCP server, remote tool invocation |
+| 6 | **Codebase Refactor** (glob→read→grep→edit→bash→final) | Multi-step tool chaining |
+| 7 | **Long Context Stress** (50-turn conversation) | Prompt compression |
+| **All** | Full integration (validation + RRF + DAG + compression) | All 5 features simultaneously |
+| **Bonus** | BM25+ scoring benchmark | Sparse retrieval correctness |
+| **Bonus** | RRF fusion benchmark | Rank fusion correctness |
+| **Bonus** | Tokenizer benchmark (1000 strings) | Tokenization performance |
+
+### Full Test Suite: 99 Tests Passing
+- 63 unit tests (`cargo test --lib --features testutils`)
+- 24 professional workflow tests (`tests/professional_workflows.rs`)
+- 11 real-world benchmark tests (`tests/real_world_benchmarks.rs`) — NEW
+- 1 program benchmark (`tests/program_bench.rs`)
+- 1 BFCL pipeline test (requires `GROQ_API_KEY`, times out in CI without network)
+
+### Source Changes for Test Support
+- `src/orchestrator.rs`: `topological_sort()` and `execution_levels()` made `pub` (were `fn`)
+- `src/mcp/server.rs`: `McpAppState` struct + fields made `pub`

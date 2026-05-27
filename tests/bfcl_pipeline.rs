@@ -219,7 +219,7 @@ async fn test_bfcl_voltr_pipeline() {
             // Select tools
             let tool_defs = if *mode == "rag" {
                 if let Ok(qe) = embedder.embed_description(&query).await {
-                    registry.search_tools(&qe, TOP_K, &[]).await
+                    registry.search_tools(&qe, TOP_K, &[], None).await
                 } else {
                     registry.get_definitions().await
                 }

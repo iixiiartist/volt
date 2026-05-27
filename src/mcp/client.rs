@@ -65,6 +65,59 @@ impl MCPClient {
         self.send(&body).await
     }
 
+    /// Stream a tool call result via SSE (Server-Sent Events).
+    /// Collects all SSE events from the streaming response and returns them as a Vec.
+    /// Only supported for HTTP transport with streaming endpoints.
+    pub async fn call_tool_stream(
+        &self,
+        name: &str,
+        args: &Value,
+    ) -> anyhow::Result<Vec<Value>> {
+        let params = serde_json::json!({ "name": name, "arguments": args });
+        let body = jsonrpc_request(
+            "tools/call",
+            Some(&params),
+            self.request_id.fetch_add(1, Ordering::Relaxed) + 1,
+        );
+
+        match &self.transport {
+            MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } => {
+                let client = reqwest::Client::new();
+                let mut req = client.post(url).json(&body);
+                if let Some(hdrs) = headers {
+                    for (k, v) in hdrs {
+                        req = req.header(k, v);
+                    }
+                }
+                if let Some(token) = self.access_token.lock().unwrap().as_ref() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+                let resp = req.send().await?;
+                if !resp.status().is_success() {
+                    anyhow::bail!("HTTP {} - {}", resp.status(), resp.text().await?);
+                }
+                // Collect the full response body and parse SSE events
+                let body_bytes = resp.bytes().await?;
+                let text = String::from_utf8_lossy(&body_bytes);
+                let mut results = Vec::new();
+                for line in text.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        match serde_json::from_str::<Value>(data) {
+                            Ok(val) => results.push(val),
+                            Err(e) => anyhow::bail!("SSE parse error: {}", e),
+                        }
+                    }
+                }
+                if results.is_empty() {
+                    // Try parsing the whole body as a single JSON response
+                    results.push(serde_json::from_str(&text)?);
+                }
+                Ok(results)
+            }
+            _ => anyhow::bail!("streaming is only supported for HTTP/WebSocket transports"),
+        }
+    }
+
     async fn send(&self, body: &Value) -> anyhow::Result<Value> {
         match &self.transport {
             MCPTransport::Stdio { command, args } => {
@@ -82,7 +135,7 @@ impl MCPClient {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 Ok(serde_json::from_str(&stdout)?)
             }
-            MCPTransport::Http { url, headers } => {
+            MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } => {
                 let client = reqwest::Client::new();
                 let mut req = client.post(url).json(body);
                 if let Some(hdrs) = headers {

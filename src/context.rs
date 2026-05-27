@@ -267,6 +267,7 @@ impl ContextStore {
         limit: usize,
         kind_filter: Option<ContextKind>,
         min_score: f32,
+        query_text: Option<&str>,
     ) -> Vec<ContextEntry> {
         // 1. Prefer pgvector HNSW when a DB pool is available
         if let Some(pool) = self.db() {
@@ -312,32 +313,85 @@ impl ContextStore {
             }
         }
 
-        // 2. Fallback: in-memory brute-force scan
+        // 2. Fallback: in-memory brute-force scan with hybrid BM25 + dense fusion
         let entries = self.entries.read().await;
-        let mut scored: Vec<(f32, &StoredEntry)> = entries
+
+        // Filter candidates by kind and embedding existence
+        let candidates: Vec<&StoredEntry> = entries
             .iter()
-            .filter_map(|s| {
-                if s.entry.embedding.is_some()
+            .filter(|s| {
+                s.entry.embedding.is_some()
                     && kind_filter.as_ref().is_none_or(|k| s.entry.kind == *k)
-                {
-                    let emb = s.entry.embedding.as_ref()?;
-                    let sim = cosine_similarity(emb, query_embedding);
-                    let score = 0.6 * sim + 0.4 * s.entry.composite_score();
-                    Some((score, s))
-                } else {
-                    None
-                }
             })
             .collect();
 
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        if candidates.is_empty() {
+            return Vec::new();
+        }
 
-        scored
+        // Compute cosine similarity scores
+        let mut cosine_ranked: Vec<(f32, usize)> = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                let emb = s.entry.embedding.as_ref()?;
+                let sim = cosine_similarity(emb, query_embedding);
+                Some((sim, i))
+            })
+            .collect();
+        cosine_ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let cosine_order: Vec<usize> = cosine_ranked.iter().map(|(_, i)| *i).collect();
+
+        // Compute BM25 scores if query text is provided
+        let bm25_order: Vec<usize> = if let Some(qt) = query_text {
+            let corpus: Vec<String> = candidates
+                .iter()
+                .map(|s| format!("{}: {}", s.entry.kind.as_str(), s.entry.content))
+                .collect();
+            let bm25 = crate::vector_index::Bm25Scorer::build(
+                corpus.iter().enumerate().map(|(i, t)| (i, t.as_str())),
+                1.2, 0.75, 0.5,
+            );
+            let bm25_results = bm25.search(qt);
+            bm25_results.iter().map(|(idx, _)| *idx).collect()
+        } else {
+            Vec::new()
+        };
+
+        // Fuse rankings using RRF if both signals available
+        let mut final_order: Vec<(f32, usize)> = if !bm25_order.is_empty() {
+            let rankings: Vec<Vec<usize>> = vec![cosine_order, bm25_order];
+            let rrf = crate::vector_index::reciprocal_rank_fusion(&rankings, 60.0, candidates.len());
+            rrf.into_iter()
+                .enumerate()
+                .map(|(rank, (idx, _))| {
+                    let entry = &candidates[idx].entry;
+                    let rrf_score = 1.0 / (60.0 + rank as f32 + 1.0);
+                    let composite = entry.composite_score();
+                    (0.6 * rrf_score + 0.4 * composite, idx)
+                })
+                .collect()
+        } else {
+            cosine_ranked
+                .into_iter()
+                .enumerate()
+                .map(|(_rank, (_, idx))| {
+                    let entry = &candidates[idx].entry;
+                    let sim_score = candidates[idx].entry.embedding.as_ref().map(|emb| cosine_similarity(emb, query_embedding)).unwrap_or(0.0);
+                    let composite = entry.composite_score();
+                    (0.6 * sim_score + 0.4 * composite, idx)
+                })
+                .collect()
+        };
+
+        final_order.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        final_order
             .into_iter()
             .filter(|(score, _)| *score >= min_score)
             .take(limit)
-            .map(|(_, s)| {
-                let mut entry = s.entry.clone();
+            .map(|(_, idx)| {
+                let mut entry = candidates[idx].entry.clone();
                 entry.frequency += 1;
                 entry.last_used_at = chrono::Utc::now();
                 entry
@@ -666,7 +720,7 @@ mod tests {
 
         // Search for tool-kind only — should return exactly the tool entry
         let tool_results = store
-            .search(&tool_emb, 8, Some(ContextKind::Tool), 0.0)
+            .search(&tool_emb, 8, Some(ContextKind::Tool), 0.0, None)
             .await;
         assert_eq!(tool_results.len(), 1);
         assert_eq!(tool_results[0].id, tool_id);
@@ -674,20 +728,20 @@ mod tests {
 
         // Search for skill-kind only
         let skill_results = store
-            .search(&skill_emb, 8, Some(ContextKind::Skill), 0.0)
+            .search(&skill_emb, 8, Some(ContextKind::Skill), 0.0, None)
             .await;
         assert_eq!(skill_results.len(), 1);
         assert_eq!(skill_results[0].id, skill_id);
 
         // Search for memory-kind only
         let memory_results = store
-            .search(&memory_emb, 8, Some(ContextKind::Memory), 0.0)
+            .search(&memory_emb, 8, Some(ContextKind::Memory), 0.0, None)
             .await;
         assert_eq!(memory_results.len(), 1);
         assert_eq!(memory_results[0].id, memory_id);
 
         // Search with no filter — all 3 should appear
-        let all_results = store.search(&tool_emb, 8, None, 0.0).await;
+        let all_results = store.search(&tool_emb, 8, None, 0.0, None).await;
         assert_eq!(all_results.len(), 3);
     }
 
@@ -720,7 +774,7 @@ mod tests {
         // (similarity is low but composite score keeps it above min_score=0.0).
         // The key ablation invariant: kind filter never lets excluded kinds through.
         let filtered = store
-            .search(&skill_emb, 8, Some(ContextKind::Tool), 0.0)
+            .search(&skill_emb, 8, Some(ContextKind::Tool), 0.0, None)
             .await;
         assert!(!filtered.is_empty());
         for entry in &filtered {

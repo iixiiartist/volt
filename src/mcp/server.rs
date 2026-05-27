@@ -1,6 +1,17 @@
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use axum::{
+    extract::State,
+    routing::post,
+    Json, Router,
+};
+
+/// Shared application state for the MCP HTTP server.
+pub struct McpAppState {
+    pub tools: Arc<ToolRegistry>,
+    pub agent_name: String,
+}
 
 pub struct MCPServer {
     tools: Arc<ToolRegistry>,
@@ -11,6 +22,7 @@ impl MCPServer {
         Self { tools }
     }
 
+    /// Serve MCP over stdio (stdin/stdout JSON-RPC).
     pub async fn serve_stdio(&self) -> anyhow::Result<()> {
         let stdin = tokio::io::stdin();
         let reader = BufReader::new(stdin);
@@ -31,7 +43,33 @@ impl MCPServer {
         Ok(())
     }
 
-    async fn handle_request(&self, request: &serde_json::Value) -> serde_json::Value {
+    /// Serve MCP over HTTP on the given address.
+    /// Enables agent-to-agent tool sharing — other agents can connect
+    /// to this server and use the registered tools remotely.
+    pub async fn serve_http(
+        tools: Arc<ToolRegistry>,
+        addr: &str,
+        agent_name: &str,
+    ) -> anyhow::Result<()> {
+        let state = Arc::new(McpAppState {
+            tools,
+            agent_name: agent_name.to_string(),
+        });
+
+        let app = Router::new()
+            .route("/mcp", post(handle_mcp_request))
+            .route("/mcp/tools/list", post(handle_tools_list))
+            .route("/mcp/tools/call", post(handle_tools_call))
+            .with_state(state);
+
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!("MCP server '{}' listening on http://{}", agent_name, addr);
+        axum::serve(listener, app).await?;
+        Ok(())
+    }
+
+    /// Handle a JSON-RPC MCP request.
+    pub async fn handle_request(&self, request: &serde_json::Value) -> serde_json::Value {
         let method = request["method"].as_str().unwrap_or("");
         let id = request["id"].clone();
 
@@ -90,4 +128,54 @@ impl MCPServer {
             }),
         }
     }
+}
+
+/// Axum handler for generic JSON-RPC MCP requests.
+async fn handle_mcp_request(
+    State(state): State<Arc<McpAppState>>,
+    Json(request): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let server = MCPServer::new(state.tools.clone());
+    let response = server.handle_request(&request).await;
+    Json(response)
+}
+
+/// Axum handler for tools/list.
+async fn handle_tools_list(
+    State(state): State<Arc<McpAppState>>,
+) -> Json<serde_json::Value> {
+    let defs = state.tools.get_definitions().await;
+    let tools: Vec<serde_json::Value> = defs
+        .into_iter()
+        .map(|d| {
+            serde_json::json!({
+                "name": d.name,
+                "description": d.description,
+                "inputSchema": d.input_schema
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": { "tools": tools },
+        "id": 1
+    }))
+}
+
+/// Axum handler for tools/call.
+async fn handle_tools_call(
+    State(state): State<Arc<McpAppState>>,
+    Json(request): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = request["params"]["name"].as_str().unwrap_or("");
+    let args = &request["params"]["arguments"];
+    let server = MCPServer::new(state.tools.clone());
+    let fake_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": { "name": name, "arguments": args },
+        "id": request.get("id").cloned().unwrap_or(serde_json::json!(1))
+    });
+    let response = server.handle_request(&fake_req).await;
+    Json(response)
 }

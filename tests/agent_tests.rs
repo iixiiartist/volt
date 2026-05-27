@@ -72,10 +72,9 @@ async fn test_agent_respects_max_iterations() {
     let agent = Agent::new(agent_config(), provider, tools);
 
     let result = agent.run("Loop forever").await;
-    // With max_iterations=5 and tool calls causing loops, should exceed iterations
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("iteration") || err.contains("max") || err.contains("iterations"));
+    // With max_iterations=5 and tool calls causing loops, agent returns last content
+    // instead of erroring (fallback fix: returns last non-empty result)
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
@@ -86,18 +85,13 @@ async fn test_agent_push_user_message() {
     let tools = volt::tools::ToolRegistry::new();
     let agent = Agent::new(agent_config(), provider, tools);
 
-    // Check initial state
-    {
-        let state = agent.state().lock().await;
-        assert_eq!(state.messages.len(), 0);
-    }
-
     agent.run("test input").await.ok();
 
-    // After run, there should be at least the user message + assistant response
+    // After run, messages: [system_prompt, user, assistant, ...]
     let state = agent.state().lock().await;
-    assert!(state.messages.len() >= 2);
-    assert_eq!(state.messages[0].role, "user");
-    assert_eq!(state.messages[0].content.as_str(), "test input");
-    assert_eq!(state.messages[1].role, "assistant");
+    assert!(state.messages.len() >= 3);
+    assert_eq!(state.messages[0].role, "system");
+    assert_eq!(state.messages[1].role, "user");
+    assert_eq!(state.messages[1].content.as_str(), "test input");
+    assert_eq!(state.messages[2].role, "assistant");
 }

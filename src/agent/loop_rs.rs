@@ -190,9 +190,14 @@ impl Agent {
                 return Err(anyhow::anyhow!("cancelled by user"));
             }
 
-            let context_embedding = self.build_context(input).await;
+            let context_result = self.build_context(input).await;
             let llm_messages = self.build_llm_messages().await;
             let llm_messages = self.compress_if_needed(llm_messages).await;
+
+            let (context_embedding, query_text) = match context_result {
+                Some((e, q)) => (Some(e), Some(q)),
+                None => (None, None),
+            };
 
             let tool_defs = if let Some(ref emb) = context_embedding {
                 let essential: Vec<&str> = self
@@ -201,7 +206,9 @@ impl Agent {
                     .iter()
                     .map(|s| s.as_str())
                     .collect();
-                self.tools.search_tools(emb, 8, &essential).await
+                self.tools
+                    .search_tools(emb, 8, &essential, query_text.as_deref())
+                    .await
             } else {
                 self.tools.get_definitions().await
             };
@@ -270,6 +277,42 @@ impl Agent {
             self.audit_turn(&request, &response, &state).await;
 
             if let Some(tool_calls) = &response.tool_calls {
+                // Validate all tool calls against their schemas before executing.
+                // If any call has invalid arguments, push assistant + error messages
+                // and let the loop retry instead of wasting a real tool execution.
+                {
+                    let defs = self.tools.get_definitions().await;
+                    let def_map: std::collections::HashMap<&str, &crate::models::ToolDefinition> = defs
+                        .iter()
+                        .map(|d| (d.name.as_str(), d))
+                        .collect();
+                    let validation_errors = crate::agent::tool_parser::validate_tool_calls(
+                        tool_calls,
+                        |name| def_map.get(name).copied(),
+                    );
+                    if !validation_errors.is_empty() {
+                        self.push_assistant_message(&mut state, &response, Some(tool_calls))
+                            .await;
+                        for (idx, err) in &validation_errors {
+                            let tool_name = &tool_calls[*idx].name;
+                            state.messages.push(Message {
+                                role: "tool".into(),
+                                content: Arc::new(
+                                    crate::agent::tool_parser::build_validation_error_message(
+                                        tool_name, err,
+                                    ),
+                                ),
+                                tool_calls: None,
+                                tool_result: Some(err.clone()),
+                                tool_name: Some("validation_error".into()),
+                                created_at: chrono::Utc::now(),
+                            });
+                        }
+                        drop(state);
+                        continue;
+                    }
+                }
+
                 // Check if any tool call is final_answer — extract answer and exit
                 if let Some(final_call) = tool_calls.iter().find(|tc| tc.name == "final_answer") {
                     let answer = final_call.arguments["answer"]
@@ -426,7 +469,7 @@ impl Agent {
         });
     }
 
-    async fn build_context(&self, input: &str) -> Option<Vec<f32>> {
+    async fn build_context(&self, input: &str) -> Option<(Vec<f32>, String)> {
         let context_query = {
             let s = self.state.lock().await;
             let recent: Vec<&str> = s
@@ -453,7 +496,7 @@ impl Agent {
             let per_kind_limit = 8_usize.div_ceil(kinds.len());
             let mut all_retrieved: Vec<crate::context::ContextEntry> = Vec::new();
             for kind in kinds {
-                let mut kind_results = store.search(emb, per_kind_limit, Some(*kind), 0.25).await;
+                let mut kind_results = store.search(emb, per_kind_limit, Some(*kind), 0.25, Some(&context_query)).await;
                 all_retrieved.append(&mut kind_results);
             }
             // Re-rank globally by composite score and take top 8
@@ -544,7 +587,7 @@ impl Agent {
             }
         }
 
-        context_embedding
+        context_embedding.map(|e| (e, context_query))
     }
 
     async fn build_llm_messages(&self) -> Vec<LLMMessage> {
@@ -574,7 +617,7 @@ impl Agent {
         let budget = model_ctx.max_context_tokens.saturating_sub(2048);
         let before = llm_messages.len();
 
-        // Compute per-message token counts (already using tiktoken via ModelContext)
+        // Compute per-message token counts
         let msg_tokens: Vec<u32> = llm_messages
             .iter()
             .map(|m| ModelContext::estimate_tokens(m.content.as_str()))
@@ -585,54 +628,122 @@ impl Agent {
             return llm_messages;
         }
 
-        // Token-accurate rolling truncation: keep messages from the most recent
-        // backward until the budget is exhausted. This replaces the old /10 heuristic
-        // with real token counting, matching LightThinker++ (Apr 2026) and PRISM (May 2026).
-        let mut running: u32 = 0;
-        let mut keep_start = before;
-        for (i, tok) in msg_tokens.iter().rev().enumerate() {
-            if running + tok > budget {
-                keep_start = before.saturating_sub(i);
-                break;
+        // Categorize messages: system (preserve all), conversation (compressible)
+        // System messages containing tool definitions or retrieved context must be kept.
+        let mut system_total: u32 = 0;
+        let mut conversation_indices: Vec<usize> = Vec::new();
+        for (i, msg) in llm_messages.iter().enumerate() {
+            if msg.role == "system" {
+                system_total += msg_tokens[i];
+            } else {
+                conversation_indices.push(i);
             }
-            running += tok;
         }
 
-        let snapshot = self.state.lock().await;
-        let recent = if keep_start < snapshot.messages.len() {
-            snapshot.messages[keep_start..].to_vec()
-        } else {
-            snapshot.messages.clone()
-        };
+        // If just the system messages already exceed budget, fall back to
+        // rolling truncation that preserves the newest messages regardless of role.
+        if system_total >= budget.saturating_sub(512) {
+            let mut running: u32 = 0;
+            let mut keep_start = before;
+            for (i, tok) in msg_tokens.iter().rev().enumerate() {
+                if running + tok > budget {
+                    keep_start = before.saturating_sub(i);
+                    break;
+                }
+                running += tok;
+            }
+            let snapshot = self.state.lock().await;
+            let recent = if keep_start < snapshot.messages.len() {
+                snapshot.messages[keep_start..].to_vec()
+            } else {
+                snapshot.messages.clone()
+            };
+            let mut compressed: Vec<LLMMessage> = Vec::with_capacity(recent.len() + 1);
+            if keep_start > 0 {
+                compressed.push(LLMMessage {
+                    role: "system".into(),
+                    content: std::sync::Arc::new(format!(
+                        "[Earlier conversation compressed: {} messages, ~{} tokens truncated. Key context follows.]",
+                        keep_start,
+                        msg_tokens[..keep_start].iter().sum::<u32>()
+                    )),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+            }
+            for m in recent {
+                compressed.push(LLMMessage {
+                    role: m.role,
+                    content: m.content,
+                    tool_calls: m.tool_calls,
+                    tool_call_id: m.tool_name,
+                });
+            }
+            info!(
+                "context compressed (fallback): {} messages -> {} (budget: {} tokens, keeping {} tokens)",
+                before, compressed.len(), budget, running
+            );
+            return compressed;
+        }
 
-        let mut compressed: Vec<LLMMessage> = Vec::with_capacity(recent.len() + 1);
-        if keep_start > 0 {
+        // Selective compression: keep all system messages, compress conversation history.
+        // The conversation budget is what remains after system messages.
+        let conv_budget = budget.saturating_sub(system_total);
+
+        // Build the compressed message list by keeping all system messages
+        // plus as many recent conversation messages as fit in the conv budget.
+        let mut conv_running: u32 = 0;
+        let mut conv_keep: Vec<(usize, u32)> = Vec::new();
+
+        // Walk conversation indices in reverse (most recent first) to fill budget
+        for &idx in conversation_indices.iter().rev() {
+            let tok = msg_tokens[idx];
+            if conv_running + tok > conv_budget {
+                break;
+            }
+            conv_running += tok;
+            conv_keep.push((idx, tok));
+        }
+        conv_keep.reverse();
+
+        let total_conversation: u32 = conversation_indices
+            .iter()
+            .map(|&i| msg_tokens[i])
+            .sum();
+        let compressed_conv_count = conversation_indices.len().saturating_sub(conv_keep.len());
+
+        let mut compressed: Vec<LLMMessage> = Vec::with_capacity(before);
+        // Add all system messages first
+        for msg in &llm_messages {
+            if msg.role == "system" {
+                compressed.push(msg.clone());
+            }
+        }
+        // If we dropped conversation messages, add a summary marker
+        if compressed_conv_count > 0 {
             compressed.push(LLMMessage {
                 role: "system".into(),
                 content: std::sync::Arc::new(format!(
-                    "[Earlier conversation compressed: {} messages, ~{} tokens truncated. Key context follows.]",
-                    keep_start,
-                    msg_tokens[..keep_start].iter().sum::<u32>()
+                    "[Conversation summary: {} conversation turns compressed (~{} tokens). Keeping the {} most recent turns ({}/{} tokens).]",
+                    compressed_conv_count,
+                    total_conversation.saturating_sub(conv_running),
+                    conv_keep.len(),
+                    conv_running,
+                    conv_budget,
                 )),
                 tool_calls: None,
                 tool_call_id: None,
             });
         }
-        for m in recent {
-            compressed.push(LLMMessage {
-                role: m.role,
-                content: m.content,
-                tool_calls: m.tool_calls,
-                tool_call_id: m.tool_name,
-            });
+        // Add the kept conversation messages
+        for (idx, _) in &conv_keep {
+            let msg = &llm_messages[*idx];
+            compressed.push(msg.clone());
         }
 
         info!(
-            "context compressed: {} messages -> {} (budget: {} tokens, keeping {} tokens)",
-            before,
-            compressed.len(),
-            budget,
-            running
+            "context compressed (selective): {} messages -> {} (budget: {} tokens, system: {}, conv kept: {} tokens)",
+            before, compressed.len(), budget, system_total, conv_running
         );
         compressed
     }

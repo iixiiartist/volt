@@ -1,9 +1,9 @@
-use crate::models::{MCPServerConfig, ToolResult};
+use crate::models::{MCPServerConfig, MCPTransport, ToolResult};
 use serde_json::Value;
 
 pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -> ToolResult {
     match &server.transport {
-        crate::models::MCPTransport::Stdio {
+        MCPTransport::Stdio {
             command,
             args: cmd_args,
         } => {
@@ -75,8 +75,7 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
                 duration_ms: 0,
             }
         }
-        crate::models::MCPTransport::Http { url, headers: _ } => {
-            let client = reqwest::Client::new();
+        crate::models::MCPTransport::Http { url, headers } => {
             let request = serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "tools/call",
@@ -87,31 +86,58 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
                 "id": 1
             });
 
-            match client.post(url).json(&request).send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    match resp.text().await {
-                        Ok(body) => ToolResult {
-                            success: status.is_success(),
-                            output: body,
-                            error: None,
-                            duration_ms: 0,
-                        },
-                        Err(e) => ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(format!("MCP HTTP body: {}", e)),
-                            duration_ms: 0,
-                        },
-                    }
-                }
+            http_send(url, headers, request).await
+        }
+        MCPTransport::WebSocket { url, headers } => {
+            let request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": tool,
+                    "arguments": args
+                },
+                "id": 1
+            });
+            http_send(url, headers, request).await
+        }
+    }
+}
+
+async fn http_send(
+    url: &str,
+    headers: &Option<std::collections::HashMap<String, String>>,
+    request: serde_json::Value,
+) -> ToolResult {
+    let client = reqwest::Client::new();
+    let mut req_builder = client.post(url).json(&request);
+    if let Some(hdrs) = headers {
+        for (k, v) in hdrs {
+            req_builder = req_builder.header(k, v);
+        }
+    }
+    match req_builder.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            match resp.text().await {
+                Ok(body) => ToolResult {
+                    success: status.is_success(),
+                    output: body,
+                    error: None,
+                    duration_ms: 0,
+                },
                 Err(e) => ToolResult {
                     success: false,
                     output: String::new(),
-                    error: Some(format!("MCP HTTP failed: {}", e)),
+                    error: Some(format!("MCP HTTP body: {}", e)),
                     duration_ms: 0,
                 },
             }
         }
+        Err(e) => ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some(format!("MCP HTTP failed: {}", e)),
+            duration_ms: 0,
+        },
     }
 }

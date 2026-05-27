@@ -42,6 +42,8 @@ pub struct AgentSpec {
     pub max_iterations: u32,
     pub temperature: f32,
     pub allow_all: bool,
+    /// Context profile mode. None = default (all 12 kinds).
+    pub mode: Option<crate::commands::AgentMode>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +87,12 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
         ProviderKind::Anthropic => "anthropic",
         ProviderKind::OpenAI => "openai",
     };
+
+    let enabled_context_kinds = match spec.mode {
+        Some(ref mode) => mode.context_kinds(),
+        None => crate::models::default_context_kinds(),
+    };
+
     Agent::new(
         AgentConfig {
             name: spec.name,
@@ -96,7 +104,7 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
             toolsets: vec!["builtin".into()],
             hidden: true,
             allow_all: spec.allow_all,
-            enabled_context_kinds: crate::models::default_context_kinds(),
+            enabled_context_kinds,
             essential_tools: crate::models::default_essential_tools(),
             context_kind_quotas: Default::default(),
         },
@@ -418,6 +426,7 @@ impl Orchestrator {
             max_iterations: 15,
             temperature: 0.3,
             allow_all: false,
+            mode: None,
         };
 
         let supervisor = create_agent(supervisor_spec, self.tools.clone());
@@ -456,6 +465,7 @@ pub fn parse_agent_specs(json: &str) -> anyhow::Result<Vec<AgentSpec>> {
                 max_iterations: v["max_iterations"].as_u64().unwrap_or(10) as u32,
                 temperature: v["temperature"].as_f64().unwrap_or(0.3) as f32,
                 allow_all: v["allow_all"].as_bool().unwrap_or(false),
+                mode: v["mode"].as_str().map(crate::commands::AgentMode::from_str),
             })
         })
         .collect()
@@ -481,4 +491,328 @@ pub fn build_provider(model: &str, agent_name: &str) -> (Box<dyn LLMProvider>, S
         )),
     };
     (provider, kind_str.to_string())
+}
+
+// ── DAG Multi-Agent Orchestration ──────────────────────────────
+
+/// A node in the DAG — represents a single agent task with input/output bindings.
+#[derive(Debug, Clone)]
+pub struct DagNode {
+    /// Unique identifier for this node (used in edge references).
+    pub id: String,
+    /// Agent specification (name, model, prompt, etc.).
+    pub agent: AgentSpec,
+    /// Task template with {input} / {node_id} placeholders for substitution.
+    pub task_template: String,
+}
+
+/// A directed edge between two DAG nodes — represents data flow.
+#[derive(Debug, Clone)]
+pub struct DagEdge {
+    /// Source node ID.
+    pub from: String,
+    /// Target node ID.
+    pub to: String,
+}
+
+/// A complete DAG workflow definition.
+#[derive(Debug, Clone)]
+pub struct DagWorkflow {
+    pub nodes: Vec<DagNode>,
+    pub edges: Vec<DagEdge>,
+}
+
+impl DagWorkflow {
+    /// Parse a DAG workflow from JSON.
+    /// Expected format:
+    /// ```json
+    /// {
+    ///   "nodes": [
+    ///     {"id": "a", "task": "do {input}", "agent": {"name": "agent-a", ...}},
+    ///     {"id": "b", "task": "process {a}", "agent": {"name": "agent-b", ...}}
+    ///   ],
+    ///   "edges": [{"from": "a", "to": "b"}]
+    /// }
+    /// ```
+    pub fn from_json(json: &str) -> anyhow::Result<Self> {
+        let v: serde_json::Value = serde_json::from_str(json)?;
+        let nodes_arr = v["nodes"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("DAG must have a 'nodes' array"))?;
+
+        let nodes: Vec<DagNode> = nodes_arr
+            .iter()
+            .map(|n| {
+                let agent_val = &n["agent"];
+                let agent_specs = parse_agent_specs(&serde_json::to_string(&[agent_val.clone()])?)?;
+                let agent = agent_specs
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("each DAG node must have an 'agent' object"))?;
+                Ok(DagNode {
+                    id: n["id"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("each DAG node must have an 'id' string"))?
+                        .to_string(),
+                    agent,
+                    task_template: n["task"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("each DAG node must have a 'task' string"))?
+                        .to_string(),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let edges: Vec<DagEdge> = if let Some(edges_arr) = v["edges"].as_array() {
+            edges_arr
+                .iter()
+                .map(|e| {
+                    Ok(DagEdge {
+                        from: e["from"]
+                            .as_str()
+                            .ok_or_else(|| anyhow::anyhow!("each edge must have a 'from' string"))?
+                            .to_string(),
+                        to: e["to"]
+                            .as_str()
+                            .ok_or_else(|| anyhow::anyhow!("each edge must have a 'to' string"))?
+                            .to_string(),
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self { nodes, edges })
+    }
+
+    /// Build a lookup of node ID -> node.
+    fn node_map(&self) -> std::collections::HashMap<String, &DagNode> {
+        self.nodes.iter().map(|n| (n.id.clone(), n)).collect()
+    }
+
+    /// Build adjacency: for each node ID, list of successor node IDs.
+    fn adjacency(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut adj: std::collections::HashMap<String, Vec<String>> =
+            self.nodes.iter().map(|n| (n.id.clone(), Vec::new())).collect();
+        for edge in &self.edges {
+            adj.entry(edge.from.clone()).or_default().push(edge.to.clone());
+        }
+        adj
+    }
+
+    /// Build reverse adjacency: for each node ID, list of predecessor node IDs.
+    fn reverse_adjacency(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut radj: std::collections::HashMap<String, Vec<String>> =
+            self.nodes.iter().map(|n| (n.id.clone(), Vec::new())).collect();
+        for edge in &self.edges {
+            radj.entry(edge.to.clone()).or_default().push(edge.from.clone());
+        }
+        radj
+    }
+
+    /// Topological sort using Kahn's algorithm.
+    /// Returns node IDs in execution order (all predecessors before successors).
+    pub fn topological_sort(&self) -> anyhow::Result<Vec<String>> {
+        let adj = self.adjacency();
+        let mut in_degree: std::collections::HashMap<String, usize> =
+            self.nodes.iter().map(|n| (n.id.clone(), 0usize)).collect();
+        for edge in &self.edges {
+            *in_degree.entry(edge.to.clone()).or_insert(0) += 1;
+        }
+
+        let mut queue: Vec<String> = in_degree
+            .iter()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        let mut sorted = Vec::new();
+        while let Some(node_id) = queue.pop() {
+            sorted.push(node_id.clone());
+            if let Some(successors) = adj.get(&node_id) {
+                for succ in successors {
+                    if let Some(deg) = in_degree.get_mut(succ) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push(succ.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        if sorted.len() != self.nodes.len() {
+            anyhow::bail!(
+                "DAG contains a cycle: sorted {} of {} nodes",
+                sorted.len(),
+                self.nodes.len()
+            );
+        }
+
+        Ok(sorted)
+    }
+
+    /// Group topologically sorted nodes into parallel execution levels.
+    /// Nodes within a level have no path between them and can run concurrently.
+    pub fn execution_levels(&self) -> anyhow::Result<Vec<Vec<String>>> {
+        let sorted = self.topological_sort()?;
+        let radj = self.reverse_adjacency();
+
+        // Level 0: nodes with no predecessors
+        let mut levels: Vec<Vec<String>> = Vec::new();
+        let mut assigned: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for node_id in &sorted {
+            let preds = radj.get(node_id).map(|v| v.as_slice()).unwrap_or(&[]);
+            let all_preds_assigned = preds.iter().all(|p| assigned.contains(p));
+            if preds.is_empty() || all_preds_assigned {
+                // Find the level to assign: max level of predecessors + 1
+                let pred_level = preds
+                    .iter()
+                    .filter_map(|p| {
+                        levels.iter().enumerate().find_map(|(li, level)| {
+                            if level.contains(p) { Some(li) } else { None }
+                        })
+                    })
+                    .max()
+                    .map(|l| l + 1)
+                    .unwrap_or(0);
+
+                // Ensure levels vector has room
+                while levels.len() <= pred_level {
+                    levels.push(Vec::new());
+                }
+                levels[pred_level].push(node_id.clone());
+                assigned.insert(node_id.clone());
+            }
+        }
+
+        Ok(levels)
+    }
+}
+
+/// A DAG scheduler that executes multi-agent workflows as directed acyclic graphs.
+pub struct DagScheduler<'a> {
+    tools: &'a Arc<ToolRegistry>,
+}
+
+impl<'a> DagScheduler<'a> {
+    pub fn new(tools: &'a Arc<ToolRegistry>) -> Self {
+        Self { tools }
+    }
+
+    /// Execute a DAG workflow with the given initial input.
+    /// Returns a map of node ID -> agent output for all executed nodes.
+    pub async fn execute(
+        &self,
+        workflow: &DagWorkflow,
+        initial_input: &str,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let levels = workflow.execution_levels()?;
+        let node_map = workflow.node_map();
+        let radj = workflow.reverse_adjacency();
+
+        // Accumulates outputs: node_id -> output text
+        let mut outputs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        outputs.insert("input".to_string(), initial_input.to_string());
+
+        for level_nodes in &levels {
+            // Build all task payloads before spawning (avoids lifetime issues)
+            let mut payloads: Vec<(String, AgentSpec, String)> = Vec::new();
+
+            for node_id in level_nodes {
+                let node = node_map
+                    .get(node_id)
+                    .ok_or_else(|| anyhow::anyhow!("node '{}' not found", node_id))?;
+
+                let predecesors = radj.get(node_id).cloned().unwrap_or_default();
+                let mut task = node.task_template.clone();
+
+                if predecesors.is_empty() {
+                    task = task.replace("{input}", initial_input);
+                }
+
+                for pred_id in &predecesors {
+                    if let Some(pred_output) = outputs.get(pred_id) {
+                        task = task.replace(&format!("{{{}}}", pred_id), pred_output);
+                    }
+                }
+
+                for (oid, ooutput) in &outputs {
+                    task = task.replace(&format!("{{{}}}", oid), ooutput);
+                }
+
+                payloads.push((node_id.clone(), node.agent.clone(), task));
+            }
+
+            // Execute all payloads in this level concurrently
+            let mut handles = Vec::new();
+            for (node_id, agent_spec, task) in payloads {
+                let tools = self.tools.clone();
+                handles.push(tokio::spawn(async move {
+                    let agent = create_agent(agent_spec, tools);
+                    let result = agent.run(&task).await;
+                    (node_id, result)
+                }));
+            }
+
+            // Collect results for this level
+            for handle in handles {
+                let (node_id, result) = handle.await.map_err(|e| anyhow::anyhow!("task join: {}", e))?;
+                let output = result?;
+                outputs.insert(node_id, output);
+            }
+        }
+
+        Ok(outputs)
+    }
+}
+
+impl Orchestrator {
+    /// Execute a DAG workflow. The JSON should contain the workflow definition
+    /// plus a "task" field for the initial input.
+    pub async fn run_dag(
+        &self,
+        dag_json: &str,
+        initial_input: &str,
+    ) -> anyhow::Result<WorkflowResult> {
+        let started = std::time::Instant::now();
+        let workflow = DagWorkflow::from_json(dag_json)?;
+        let scheduler = DagScheduler::new(&self.tools);
+        let outputs = scheduler.execute(&workflow, initial_input).await?;
+
+        // Build the workflow result
+        let mut steps = Vec::new();
+        for node in &workflow.nodes {
+            if let Some(output) = outputs.get(&node.id) {
+                steps.push(StepResult {
+                    agent_name: node.agent.name.clone(),
+                    output: output.clone(),
+                    duration_ms: 0,
+                    success: true,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                });
+            }
+        }
+
+        // Find a "final_output" marker or use the last executed node's output
+        let final_output = outputs
+            .get("final_output")
+            .or_else(|| {
+                workflow
+                    .nodes
+                    .last()
+                    .and_then(|n| outputs.get(&n.id))
+            })
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(WorkflowResult {
+            steps,
+            final_output,
+            total_duration_ms: started.elapsed().as_millis(),
+        })
+    }
 }
