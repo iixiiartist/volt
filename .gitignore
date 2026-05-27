@@ -16,3 +16,20 @@ volt-bfcl/__pycache__/
 volt-bfcl/results/*.json
 volt-bfcl/results/*.jsonl
 volt-bfcl/*.txt
+
+# Competitive intelligence (external analysis docs)
+VOLT_IRONCLAW_PLAN.md
+
+# Test artifacts
+script*.py
+search*.py
+test*.json
+test*.js
+test*.rs
+test*.png
+temp_*
+groq_test.json
+node_modules/
+package-lock.json
+package.json
+volt-*.log

@@ -413,7 +413,7 @@ impl Orchestrator {
             .collect();
         let worker_block = worker_descriptions.join("\n");
 
-        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into());
+        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "qwen/qwen3-32b".into());
         let supervisor_spec = AgentSpec {
             name: "supervisor".into(),
             model,

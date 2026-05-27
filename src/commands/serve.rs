@@ -8,21 +8,14 @@ use askama::Template;
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{
-        sse::{Event, Sse},
-        Html, IntoResponse, Json,
-    },
+    response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
 use dashmap::DashMap;
-use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct ServeOptions {
@@ -44,7 +37,7 @@ impl ServeOptions {
 
 #[derive(Clone)]
 struct AppState {
-    conversations: Arc<DashMap<String, ConversationState>>,
+    conversations: Arc<DashMap<String, Arc<Mutex<ConversationState>>>>,
     tools: Arc<crate::tools::ToolRegistry>,
     embedder: EmbeddingClient,
     settings: crate::config::Settings,
@@ -54,15 +47,8 @@ struct AppState {
     default_max_iterations: u32,
 }
 
-#[allow(dead_code)]
 struct ConversationState {
-    agent: Option<Agent>,
-    token_tx: broadcast::Sender<String>,
-    busy: Arc<std::sync::atomic::AtomicBool>,
     model: String,
-    mode: String,
-    allow_all: bool,
-    max_iterations: u32,
 }
 
 #[derive(Serialize)]
@@ -74,15 +60,24 @@ struct SessionResponse {
 struct ChatRequest {
     message: String,
     session_id: String,
-    model: Option<String>,
-    mode: Option<String>,
-    max_iterations: Option<u32>,
-    allow_all: Option<bool>,
 }
 
 #[derive(Serialize)]
 struct ChatResponse {
-    session_id: String,
+    reply: String,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SearchRequest {
+    query: String,
+    count: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct SearchResponse {
+    result: String,
+    error: Option<String>,
 }
 
 #[derive(Template)]
@@ -92,59 +87,32 @@ struct IndexTemplate {
     session_id_short: String,
     model: String,
     mode: String,
-    allow_all: bool,
-    max_iterations: u32,
-    messages: Vec<MessageView>,
-}
-
-struct MessageView {
-    role: String,
-    content: String,
-    created_at: String,
 }
 
 async fn index_handler(State(state): State<AppState>) -> impl IntoResponse {
     let sid = uuid::Uuid::new_v4().to_string();
     state.conversations.insert(
         sid.clone(),
-        ConversationState {
-            agent: None,
-            token_tx: broadcast::channel(1024).0,
-            busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Arc::new(Mutex::new(ConversationState {
             model: state.default_model.clone(),
-            mode: state.default_mode.clone(),
-            allow_all: state.default_allow,
-            max_iterations: state.default_max_iterations,
-        },
+        })),
     );
     let tpl = IndexTemplate {
         session_id: sid.clone(),
         session_id_short: sid[..8].to_string(),
         model: state.default_model.clone(),
         mode: state.default_mode.clone(),
-        allow_all: state.default_allow,
-        max_iterations: state.default_max_iterations,
-        messages: Vec::new(),
     };
-    Html(
-        tpl.render()
-            .unwrap_or_else(|e| format!("template error: {}", e)),
-    )
+    Html(tpl.render().unwrap_or_else(|e| format!("template error: {}", e)))
 }
 
 async fn new_session_handler(State(state): State<AppState>) -> Json<SessionResponse> {
     let sid = uuid::Uuid::new_v4().to_string();
     state.conversations.insert(
         sid.clone(),
-        ConversationState {
-            agent: None,
-            token_tx: broadcast::channel(1024).0,
-            busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Arc::new(Mutex::new(ConversationState {
             model: state.default_model.clone(),
-            mode: state.default_mode.clone(),
-            allow_all: state.default_allow,
-            max_iterations: state.default_max_iterations,
-        },
+        })),
     );
     Json(SessionResponse { session_id: sid })
 }
@@ -153,81 +121,57 @@ async fn chat_handler(
     State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, String)> {
-    let mut conv_entry = state
-        .conversations
-        .get_mut(&req.session_id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "session not found".into()))?;
+    let model = state.default_model.clone();
+    let mode = state.default_mode.clone();
+    let allow_all = state.default_allow;
+    let max_iterations = state.default_max_iterations;
 
-    if conv_entry.busy.load(std::sync::atomic::Ordering::Acquire) {
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            "already processing a request".into(),
-        ));
-    }
-
-    let model = req
-        .model
-        .as_deref()
-        .unwrap_or(&conv_entry.model)
-        .to_string();
-    let mode = req.mode.as_deref().unwrap_or(&conv_entry.mode).to_string();
-    let allow_all = req.allow_all.unwrap_or(conv_entry.allow_all);
-    let max_iterations = req.max_iterations.unwrap_or(conv_entry.max_iterations);
-
-    conv_entry.model = model.clone();
-    conv_entry.mode = mode.clone();
-    conv_entry.allow_all = allow_all;
-    conv_entry.max_iterations = max_iterations;
-
-    let sid_for_spawn = req.session_id.clone();
-    let resp_sid = req.session_id.clone();
-    let message = req.message.clone();
+    eprintln!(
+        "[web chat] session={} msg='{}' model={} mode={}",
+        &req.session_id[..8],
+        &req.message[..40.min(req.message.len())],
+        model,
+        mode
+    );
 
     let tools = state.tools.clone();
     let embedder = state.embedder.clone();
     let settings = state.settings.clone();
-    let conversations = state.conversations.clone();
 
-    conv_entry
-        .busy
-        .store(true, std::sync::atomic::Ordering::Release);
-    let token_tx = conv_entry.token_tx.clone();
-
-    tokio::spawn(async move {
-        let result = run_agent_for_session(
-            &sid_for_spawn,
-            &conversations,
-            &tools,
-            &embedder,
-            &settings,
-            &model,
-            &mode,
-            allow_all,
-            max_iterations,
-            &message,
-            &token_tx,
-        )
-        .await;
-        if let Err(e) = result {
-            let _ = token_tx.send(format!("[error: {}]", e));
+    match run_agent(
+        &tools,
+        &embedder,
+        &settings,
+        &model,
+        &mode,
+        allow_all,
+        max_iterations,
+        &req.message,
+    )
+    .await
+    {
+        Ok(reply) => {
+            eprintln!(
+                "[web chat] ok session={} reply_len={}",
+                &req.session_id[..8],
+                reply.len()
+            );
+            Ok(Json(ChatResponse {
+                reply,
+                error: None,
+            }))
         }
-        let _ = token_tx.send("__done__".to_string());
-        if let Some(entry) = conversations.get(&sid_for_spawn) {
-            entry
-                .busy
-                .store(false, std::sync::atomic::Ordering::Release);
+        Err(e) => {
+            eprintln!("[web chat] error session={}: {}", &req.session_id[..8], e);
+            Ok(Json(ChatResponse {
+                reply: String::new(),
+                error: Some(format!("{}", e)),
+            }))
         }
-    });
-
-    Ok(Json(ChatResponse {
-        session_id: resp_sid,
-    }))
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_agent_for_session(
-    sid: &str,
-    _conversations: &DashMap<String, ConversationState>,
+async fn run_agent(
     tools: &Arc<crate::tools::ToolRegistry>,
     embedder: &EmbeddingClient,
     settings: &crate::config::Settings,
@@ -236,8 +180,7 @@ async fn run_agent_for_session(
     allow_all: bool,
     max_iterations: u32,
     message: &str,
-    token_tx: &broadcast::Sender<String>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let (provider, provider_kind) = orchestrator::build_provider(model, "volt-web");
 
     let mode_profile = mode.parse::<AgentMode>().unwrap_or(AgentMode::Balanced);
@@ -257,12 +200,8 @@ async fn run_agent_for_session(
         context_kind_quotas: Default::default(),
     };
 
-    let token_tx_for_stream = token_tx.clone();
     let mut agent = Agent::new(config, provider, tools.clone())
-        .with_workspace(std::env::current_dir().unwrap_or_default())
-        .with_stream(Arc::new(move |token| {
-            let _ = token_tx_for_stream.send(token.to_string());
-        }));
+        .with_workspace(std::env::current_dir().unwrap_or_default());
 
     let context_store = ContextStore::new();
     let (seed_channel, seed_rx) = worker::create_seed_channel();
@@ -301,74 +240,81 @@ async fn run_agent_for_session(
         agent = agent.with_memory_embedder_only(embedder.clone());
     }
 
-    if let Ok(ref _sp) = crate::session::open_sessions(&PathBuf::from("volt_sessions.db")).await {
-        let sid_uuid = uuid::Uuid::parse_str(sid).unwrap_or_else(|_| uuid::Uuid::new_v4());
-        agent = agent.with_session(sid_uuid, _sp.clone());
-    }
-
     match agent.run(message).await {
         Ok(result) => {
-            if !result.is_empty() {
-                let _ = token_tx.send(result);
-            }
+            eprintln!("[web agent] OK, result_len={}", result.len());
+            Ok(result)
         }
         Err(e) => {
+            eprintln!("[web agent] error: {:?}", e);
             let state = agent.state().lock().await;
             let last_text = state.messages.iter().rev().find_map(|m| {
                 let c = m.content.trim();
                 if !c.is_empty() {
-                    Some(c.to_string())
+                    Some(format!("[fallback] {}", c.to_string()))
                 } else {
-                    m.tool_result.as_ref().and_then(|r| {
-                        if !r.trim().is_empty() {
-                            Some(r.trim().to_string())
-                        } else {
-                            None
-                        }
-                    })
+                    m.tool_result
+                        .as_ref()
+                        .and_then(|r| if !r.trim().is_empty() { Some(r.to_string()) } else { None })
                 }
             });
             match last_text {
-                Some(text) => {
-                    let _ = token_tx.send(text);
-                }
-                None => {
-                    let _ = token_tx.send(format!("error: {}", e));
-                }
+                Some(text) => Ok(text),
+                None => Err(e),
             }
         }
     }
-
-    Ok(())
 }
 
-async fn events_handler(
-    State(state): State<AppState>,
-    axum::extract::Path(session_id): axum::extract::Path<String>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    use futures::stream::StreamExt;
-
-    let rx = if let Some(entry) = state.conversations.get(&session_id) {
-        entry.token_tx.subscribe()
-    } else {
-        let (tx, _) = broadcast::channel(1);
-        tx.subscribe()
-    };
-
-    let stream = BroadcastStream::new(rx).filter_map(|result| {
-        let event = match result {
-            Ok(msg) if msg == "__done__" => Ok(Event::default().data("").event("done")),
-            Ok(msg) => Ok(Event::default().data(msg).event("token")),
-            Err(_) => Ok(Event::default().data("").event("done")),
-        };
-        async move { Some(event) }
-    });
-
-    Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new()
-            .interval(std::time::Duration::from_secs(15))
-            .text("keep-alive"),
+async fn research_handler(
+    Json(req): Json<SearchRequest>,
+) -> Result<Json<SearchResponse>, (StatusCode, String)> {
+    eprintln!("[web research] query='{}'", req.query);
+    match crate::tools::you_tools::web_search(
+        &req.query,
+        req.count,
+        None,
+        None,
     )
+    .await
+    {
+        ToolResult {
+            success: true,
+            output,
+            error: _,
+            duration_ms,
+        } => {
+            eprintln!("[web research] ok duration_ms={}", duration_ms);
+            Ok(Json(SearchResponse {
+                result: output,
+                error: None,
+            }))
+        }
+        ToolResult {
+            success: false,
+            output: _,
+            error: Some(err),
+            duration_ms,
+        } => {
+            eprintln!("[web research] error duration_ms={}: {}", duration_ms, err);
+            Ok(Json(SearchResponse {
+                result: String::new(),
+                error: Some(err),
+            }))
+        }
+        ToolResult {
+            success: false,
+            output: _,
+            error: _,
+            duration_ms,
+        } => {
+            eprintln!("[web research] error duration_ms={}", duration_ms);
+            Ok(Json(SearchResponse {
+                result: String::new(),
+                error: Some("search failed".into()),
+            }))
+        }
+    }
 }
 
 pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
@@ -390,8 +336,8 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/chat", post(chat_handler))
-        .route("/events/{session_id}", get(events_handler))
         .route("/session/new", post(new_session_handler))
+        .route("/research", post(research_handler))
         .with_state(state.clone());
 
     let addr = format!("127.0.0.1:{}", opts.port);
@@ -399,9 +345,17 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
         "[web] Volt UI at http://{}  (model={}, mode={})",
         addr, state.default_model, state.default_mode
     );
+    eprintln!(
+        "[web] GROQ_API_KEY length: {}",
+        std::env::var("GROQ_API_KEY").unwrap_or_default().len()
+    );
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    eprintln!("[web] listening on {}", addr);
+    match axum::serve(listener, app).await {
+        Ok(()) => eprintln!("[web] server shut down"),
+        Err(e) => eprintln!("[web] server error: {}", e),
+    }
 
     Ok(())
 }

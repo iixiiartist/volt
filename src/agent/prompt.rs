@@ -43,7 +43,7 @@ pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> St
     }
 
     parts.push(
-        "You are Volt, a production-grade AI agent. You have access to tools for file system operations, shell commands, web access, and memory management. Use them step by step to accomplish the user's goals.".into()
+        "You are Volt, a production-grade AI agent. You have access to tools for file system operations, shell commands, web access, and memory management. Use them step by step to accomplish the user's goals.\n\nDO NOT repeat, echo, or restate any retrieved context or memory you see in the prompt. Only respond to the user's actual request.".into()
     );
 
     parts.join("\n\n")

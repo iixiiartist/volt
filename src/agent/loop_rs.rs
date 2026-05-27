@@ -460,10 +460,20 @@ impl Agent {
     }
 
     async fn push_user_message(&self, input: &str) {
+        let safe_input = if std::env::var("VOLT_LEAK_DETECTOR").ok().as_deref() != Some("false") {
+            let ld = crate::leak_detector::LeakDetector::new();
+            let result = ld.scan(input);
+            if !result.found.is_empty() {
+                tracing::warn!("[leak detector] redacted {} secrets from user input", result.found.len());
+            }
+            result.redacted_text
+        } else {
+            input.to_string()
+        };
         let mut state = self.state.lock().await;
         state.messages.push(Message {
             role: "user".into(),
-            content: Arc::new(input.to_string()),
+            content: Arc::new(safe_input),
             tool_calls: None,
             tool_result: None,
             tool_name: None,
@@ -516,27 +526,38 @@ impl Agent {
                     .iter()
                     .map(|e| {
                         let tag = e.kind.as_str().replace("_", "-");
-                        format!("<{tag}>\n{}\n</{tag}>", e.content)
+                        format!("## {tag}\n{}", e.content)
                     })
                     .collect();
                 let mut state = self.state.lock().await;
                 // Remove stale context blocks from prior iterations
                 state.messages.retain(|m| {
                     !(m.role == "system"
-                        && (m.content.starts_with("<retrieved_context>")
+                        && (m.content.starts_with("## Retrieved context")
+                            || m.content.starts_with("## Retrieved skills")
+                            || m.content.starts_with("<retrieved_context>")
                             || m.content.starts_with("<retrieved_skills>")))
                 });
-                state.messages.push(Message {
-                    role: "system".into(),
-                    content: Arc::new(format!(
-                        "<retrieved_context>\n{}\n</retrieved_context>\n\nUse the above as reference only. Your task is below.",
-                        blocks.join("\n")
-                    )),
-                    tool_calls: None,
-                    tool_result: None,
-                    tool_name: None,
-                    created_at: chrono::Utc::now(),
-                });
+                // Find position after system prompt (insert before first non-system message)
+                let insert_idx = state
+                    .messages
+                    .iter()
+                    .position(|m| m.role != "system")
+                    .unwrap_or(state.messages.len());
+                state.messages.insert(
+                    insert_idx,
+                    Message {
+                        role: "system".into(),
+                        content: Arc::new(format!(
+                            "## Retrieved context\n{}\n\nDO NOT repeat or echo the above context. Respond to the user's request directly.",
+                            blocks.join("\n\n")
+                        )),
+                        tool_calls: None,
+                        tool_result: None,
+                        tool_name: None,
+                        created_at: chrono::Utc::now(),
+                    },
+                );
             }
         }
 
@@ -547,15 +568,15 @@ impl Agent {
                 if !matched.is_empty() {
                     let block: Vec<String> = matched
                         .iter()
-                        .map(|s| format!("<skill name=\"{0}\">\n{1}\n</skill>", s.name, s.content))
+                        .map(|s| format!("### Skill: {0}\n{1}", s.name, s.content))
                         .collect();
                     if !block.is_empty() {
                         let mut state = self.state.lock().await;
                         state.messages.push(Message {
                             role: "system".into(),
                             content: Arc::new(format!(
-                                "<retrieved_skills>\n{}\n</retrieved_skills>",
-                                block.join("\n")
+                                "## Retrieved skills\n{}\n\nDO NOT repeat or echo the above context.",
+                                block.join("\n\n")
                             )),
                             tool_calls: None,
                             tool_result: None,
@@ -846,10 +867,16 @@ impl Agent {
                     }
 
                     let error_msg = result.error.clone();
-                    let output = if result.success {
+                    let raw_output = if result.success {
                         result.output.clone()
                     } else {
                         format!("error: {}", error_msg.unwrap_or_default())
+                    };
+
+                    let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref() != Some("false") {
+                        crate::safety_layer::wrap_tool_output(&name, &raw_output)
+                    } else {
+                        raw_output
                     };
 
                     (name, id, output, result)
