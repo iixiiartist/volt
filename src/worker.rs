@@ -422,6 +422,8 @@ pub async fn seed_tool_intents(
         let perm_label = match perm {
             PermissionLevel::Allow => "allow",
             PermissionLevel::Prompt => "prompt",
+            PermissionLevel::ReadOnly => "readonly",
+            PermissionLevel::Blocked => "blocked",
         };
         entries.push(ContextEntry {
             id: uuid::Uuid::new_v4(),
@@ -467,6 +469,8 @@ pub async fn seed_permissions(
             match perm {
                 PermissionLevel::Allow => "Allow (auto-execute)",
                 PermissionLevel::Prompt => "Prompt (requires human approval)",
+                PermissionLevel::ReadOnly => "Read-only (no execution)",
+                PermissionLevel::Blocked => "Blocked (denied)",
             },
             def.name,
             def.description,
@@ -482,6 +486,8 @@ pub async fn seed_permissions(
                 "permission": match perm {
                     PermissionLevel::Allow => "allow",
                     PermissionLevel::Prompt => "prompt",
+                    PermissionLevel::ReadOnly => "readonly",
+                    PermissionLevel::Blocked => "blocked",
                 },
             }),
             frequency: 0,

@@ -406,6 +406,8 @@ fn default_parameter_schema() -> Value {
 pub enum PermissionLevel {
     Allow,
     Prompt,
+    ReadOnly,
+    Blocked,
 }
 
 /// A cancellable token for cooperative task shutdown. Clone to share across tasks.
