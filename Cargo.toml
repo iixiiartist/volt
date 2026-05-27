@@ -13,6 +13,7 @@ tools-desktop = ["enigo"]
 tools-browser = ["headless_chrome"]
 tools-ast = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "tree-sitter-typescript"]
 tools-local-embeddings = ["tract-onnx", "hf-hub", "tokenizers", "ndarray"]
+tools-telegram = ["teloxide"]
 default = ["tools-local-embeddings"]
 
 [lib]
@@ -88,8 +89,11 @@ hf-hub = { version = "0.4", optional = true }
 tokenizers = { version = "0.21", optional = true }
 ndarray = { version = "0.16", optional = true }
 
+# Phase 3: Jobs, routines, channels
+cron-parser = "0.5"  
+teloxide = { version = "0.17", features = ["macros"], optional = true }
 
-cron-parser = "0.5"
+[dev-dependencies]
 tempfile = "3"
 mockall = "0.13"
 wiremock = "0.6"

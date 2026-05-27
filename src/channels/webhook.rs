@@ -11,8 +11,8 @@ use tokio::net::TcpListener;
 
 #[derive(Clone)]
 pub struct WebhookChannel {
-    port: u16,
-    secret: String,
+    pub port: u16,
+    pub secret: String,
 }
 
 #[derive(Deserialize)]
@@ -33,7 +33,7 @@ impl WebhookChannel {
     }
 
     pub async fn serve(&self,
-        shutdown: tokio::sync::watch::Receiver<bool>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         let state = Arc::new(self.clone());
         let app = Router::new()
@@ -55,7 +55,7 @@ impl WebhookChannel {
 }
 
 async fn chat_handler(
-    State(state): State<Arc<WebhookChannel>>,
+    State(_state): State<Arc<WebhookChannel>>,
     req: Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, String)> {
     // For now, return a placeholder. Agent wiring requires full initialization.

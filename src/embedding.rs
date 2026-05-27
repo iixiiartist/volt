@@ -629,6 +629,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_providers_fallback() {
+        #[cfg(feature = "tools-local-embeddings")]
+        let client = EmbeddingClient {
+            http: crate::http_client(5),
+            providers: vec![],
+            verbose: false,
+            local: None,
+        };
+        #[cfg(not(feature = "tools-local-embeddings"))]
         let client = EmbeddingClient {
             http: crate::http_client(5),
             providers: vec![],
