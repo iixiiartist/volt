@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod code_parser;
+pub mod commands;
 pub mod config;
 pub mod context;
 pub mod db;
