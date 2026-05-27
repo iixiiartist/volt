@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod attenuation;
+pub mod channels;
 pub mod code_parser;
 pub mod command_guard;
 pub mod commands;
@@ -8,6 +9,7 @@ pub mod context;
 pub mod db;
 pub mod embedding;
 pub mod eval;
+pub mod events;
 pub mod graph_rag;
 pub mod heartbeat;
 pub mod jobs;
