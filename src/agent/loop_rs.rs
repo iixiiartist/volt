@@ -128,21 +128,30 @@ impl Agent {
         self
     }
 
+    /// Precision mode: only Tool + Artifact context kinds active.
+    /// Used for BFCL-style function calling, code tasks, structured output.
+    fn is_precision_mode(&self) -> bool {
+        let kinds = &self.config.enabled_context_kinds;
+        kinds.len() <= 2
+            && kinds.contains(&crate::context::ContextKind::Tool)
+            && kinds.contains(&crate::context::ContextKind::Artifact)
+    }
+
     pub async fn run(&self, input: &str) -> anyhow::Result<String> {
-        // Load previous session messages for episodic memory
-        if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
-            match crate::session::load_messages(pool, sid).await {
-                Ok(msgs) if !msgs.is_empty() => {
-                    let mut state = self.state.lock().await;
-                    state.messages.extend(msgs);
-                    tracing::info!(
-                        "[session] loaded {} messages from {}",
-                        state.messages.len(),
-                        sid
-                    );
+        // Load previous session messages for episodic memory — skip in precision mode
+        // where conversation history adds noise to single-turn function calling
+        let is_precision = self.is_precision_mode();
+        if !is_precision {
+            if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
+                match crate::session::load_messages(pool, sid).await {
+                    Ok(msgs) if !msgs.is_empty() => {
+                        let mut state = self.state.lock().await;
+                        state.messages.extend(msgs);
+                        tracing::info!("[session] loaded {} messages from {}", state.messages.len(), sid);
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
                 }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
             }
         }
 
@@ -484,49 +493,53 @@ impl Agent {
             }
         }
 
-        // Also retrieve skills from the dedicated registry for backward compat
-        if let (Some(ref emb), Some(ref skills)) = (&context_embedding, &self.skills) {
-            let matched = skills.search(emb, 3).await;
-            if !matched.is_empty() {
-                let block: Vec<String> = matched
-                    .iter()
-                    .map(|s| format!("<skill name=\"{0}\">\n{1}\n</skill>", s.name, s.content))
-                    .collect();
-                if !block.is_empty() {
-                    let mut state = self.state.lock().await;
-                    state.messages.push(Message {
-                        role: "system".into(),
-                        content: Arc::new(format!(
-                            "<retrieved_skills>\n{}\n</retrieved_skills>",
-                            block.join("\n")
-                        )),
-                        tool_calls: None,
-                        tool_result: None,
-                        tool_name: None,
-                        created_at: chrono::Utc::now(),
-                    });
+        // Also retrieve skills from the dedicated registry — skip in precision mode
+        if !self.is_precision_mode() {
+            if let (Some(ref emb), Some(ref skills)) = (&context_embedding, &self.skills) {
+                let matched = skills.search(emb, 3).await;
+                if !matched.is_empty() {
+                    let block: Vec<String> = matched
+                        .iter()
+                        .map(|s| format!("<skill name=\"{0}\">\n{1}\n</skill>", s.name, s.content))
+                        .collect();
+                    if !block.is_empty() {
+                        let mut state = self.state.lock().await;
+                        state.messages.push(Message {
+                            role: "system".into(),
+                            content: Arc::new(format!(
+                                "<retrieved_skills>\n{}\n</retrieved_skills>",
+                                block.join("\n")
+                            )),
+                            tool_calls: None,
+                            tool_result: None,
+                            tool_name: None,
+                            created_at: chrono::Utc::now(),
+                        });
+                    }
                 }
             }
         }
 
-        // DB memories — still here for backward compat with pgvector store
-        if let (Some(ref emb), Some(ref db)) = (&context_embedding, &self.db) {
-            if let Ok(memories) = crate::db::search_memories(db, emb, 5, None).await {
-                if !memories.is_empty() {
-                    let block: Vec<String> = memories
-                        .iter()
-                        .map(|m| format!("[{}] {}", m.kind, m.content))
-                        .collect();
-                    let ctx = format!("## Relevant memories\n{}", block.join("\n"));
-                    let mut state = self.state.lock().await;
-                    state.messages.push(Message {
-                        role: "system".into(),
-                        content: Arc::new(ctx),
-                        tool_calls: None,
-                        tool_result: None,
-                        tool_name: None,
-                        created_at: chrono::Utc::now(),
-                    });
+        // DB memories — skip in precision mode (redundant with context store)
+        if !self.is_precision_mode() {
+            if let (Some(ref emb), Some(ref db)) = (&context_embedding, &self.db) {
+                if let Ok(memories) = crate::db::search_memories(db, emb, 5, None).await {
+                    if !memories.is_empty() {
+                        let block: Vec<String> = memories
+                            .iter()
+                            .map(|m| format!("[{}] {}", m.kind, m.content))
+                            .collect();
+                        let ctx = format!("## Relevant memories\n{}", block.join("\n"));
+                        let mut state = self.state.lock().await;
+                        state.messages.push(Message {
+                            role: "system".into(),
+                            content: Arc::new(ctx),
+                            tool_calls: None,
+                            tool_result: None,
+                            tool_name: None,
+                            created_at: chrono::Utc::now(),
+                        });
+                    }
                 }
             }
         }
