@@ -12,7 +12,7 @@ tools-pdf = []
 tools-desktop = ["enigo"]
 tools-browser = ["headless_chrome"]
 tools-ast = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "tree-sitter-typescript"]
-tools-local-embeddings = ["candle-core", "candle-transformers", "candle-nn", "hf-hub", "tokenizers"]
+tools-local-embeddings = ["tract-onnx", "hf-hub", "tokenizers", "ndarray"]
 default = []
 
 [lib]
@@ -82,11 +82,10 @@ tree-sitter = { version = "0.24", optional = true }
 tree-sitter-rust = { version = "0.23", optional = true }
 tree-sitter-python = { version = "0.23", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
-candle-core = { version = "0.10", optional = true }
-candle-transformers = { version = "0.10", optional = true }
-candle-nn = { version = "0.10", optional = true }
+tract-onnx = { version = "0.22", optional = true }
 hf-hub = { version = "0.4", optional = true }
 tokenizers = { version = "0.21", optional = true }
+ndarray = { version = "0.16", optional = true }
 
 
 [dev-dependencies]

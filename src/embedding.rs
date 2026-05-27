@@ -222,7 +222,7 @@ impl EmbeddingClient {
         #[cfg(feature = "tools-local-embeddings")]
         let local = match crate::local_embed::LocalEmbedder::load() {
             Ok(e) => {
-                tracing::info!("local embedder (BGE-small-en-v1.5) loaded successfully");
+                tracing::info!("local ONNX embedder loaded successfully");
                 Some(std::sync::Arc::new(e))
             }
             Err(e) => {
