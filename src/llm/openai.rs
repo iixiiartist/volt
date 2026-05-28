@@ -100,7 +100,8 @@ impl LLMProvider for OpenAIProvider {
         let resp_val = req
             .json(&body)
             .timeout(std::time::Duration::from_secs(300))
-            .send().await?;
+            .send()
+            .await?;
 
         let status = resp_val.status();
         if !status.is_success() {
@@ -132,7 +133,8 @@ impl LLMProvider for OpenAIProvider {
         let response = req
             .json(&body)
             .timeout(std::time::Duration::from_secs(300))
-            .send().await?;
+            .send()
+            .await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -187,7 +189,9 @@ impl LLMProvider for OpenAIProvider {
                                     if !id.is_empty() {
                                         if let Some(mut prev) = current_tool_call.take() {
                                             prev.arguments =
-                                                crate::agent::tool_parser::parse_lossy_json(&current_args_string);
+                                                crate::agent::tool_parser::parse_lossy_json(
+                                                    &current_args_string,
+                                                );
                                             tool_calls_acc.push(prev);
                                         }
                                         current_args_string = args;

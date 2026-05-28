@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
-use volt::models::PermissionLevel;
 use volt::attenuation::TrustLevel;
+use volt::models::PermissionLevel;
 use volt::orchestrator::{parse_agent_specs, Orchestrator};
 use volt::tools::ToolRegistry;
 

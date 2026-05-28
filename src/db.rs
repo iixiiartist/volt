@@ -37,9 +37,7 @@ pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
 ///
 /// Retries up to 3 times with delays: ~50ms, ~100ms, ~150ms (+ random jitter).
 /// After 3 failures the error is propagated to the caller.
-pub async fn execute_with_serialization_retry<F, Fut, T>(
-    mut f: F,
-) -> anyhow::Result<T>
+pub async fn execute_with_serialization_retry<F, Fut, T>(mut f: F) -> anyhow::Result<T>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
@@ -247,31 +245,23 @@ pub async fn get_tool_source(pool: &PgPool, tool_name: &str) -> anyhow::Result<O
 #[derive(sqlx::FromRow)]
 
 pub struct DbTool {
-
     pub tool_name: String,
-    
+
     pub description: String,
-    
+
     pub parameter_schema: serde_json::Value,
-    
+
     pub source_code: String,
-    
 }
 
 pub async fn list_tools_with_schema(pool: &PgPool) -> anyhow::Result<Vec<DbTool>> {
-
     let rows = sqlx::query_as::<_, DbTool>(
-    
-        "SELECT tool_name, description, parameter_schema, source_code FROM agent_tools"
-        
+        "SELECT tool_name, description, parameter_schema, source_code FROM agent_tools",
     )
-    
     .fetch_all(pool)
-    
     .await?;
-    
+
     Ok(rows)
-    
 }
 
 #[allow(clippy::too_many_arguments)]

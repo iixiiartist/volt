@@ -14,9 +14,17 @@ pub struct EnvSecretStore {
     _cache: HashMap<String, String>,
 }
 
+impl Default for EnvSecretStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnvSecretStore {
     pub fn new() -> Self {
-        Self { _cache: HashMap::new() }
+        Self {
+            _cache: HashMap::new(),
+        }
     }
 }
 

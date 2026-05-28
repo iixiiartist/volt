@@ -26,11 +26,7 @@ fn sanitize_prompt_input(s: &str, max: usize) -> String {
     }
 }
 
-pub async fn delegate_task(
-    task: &str,
-    context: &str,
-    tools: Arc<ToolRegistry>,
-) -> ToolResult {
+pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) -> ToolResult {
     delegate_task_with_cap_mgr(task, context, tools, None).await
 }
 

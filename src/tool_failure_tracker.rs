@@ -19,15 +19,10 @@ impl ToolFailureTracker {
         Self { pool }
     }
 
-    pub async fn record_failure(
-        &self,
-        job_id: Uuid,
-        tool_name: &str,
-        error: &str,
-    ) {
+    pub async fn record_failure(&self, job_id: Uuid, tool_name: &str, error: &str) {
         if let Some(ref pool) = self.pool {
             let _ = sqlx::query(
-                "INSERT INTO tool_failures (job_id, tool_name, error) VALUES ($1, $2, $3)"
+                "INSERT INTO tool_failures (job_id, tool_name, error) VALUES ($1, $2, $3)",
             )
             .bind(job_id)
             .bind(tool_name)
@@ -37,11 +32,7 @@ impl ToolFailureTracker {
         }
     }
 
-    pub async fn recent_failures(
-        &self,
-        tool_name: &str,
-        window_secs: i64,
-    ) -> i64 {
+    pub async fn recent_failures(&self, tool_name: &str, window_secs: i64) -> i64 {
         if let Some(ref pool) = self.pool {
             let row: (i64,) = sqlx::query_as(
                 "SELECT COUNT(*) FROM tool_failures WHERE tool_name = $1 AND occurred_at > NOW() - INTERVAL '1 second' * $2"

@@ -33,10 +33,7 @@ impl CheckpointJournal {
         }
     }
 
-    async fn writer_loop(
-        pool: SqlitePool,
-        mut rx: mpsc::UnboundedReceiver<CheckpointData>,
-    ) {
+    async fn writer_loop(pool: SqlitePool, mut rx: mpsc::UnboundedReceiver<CheckpointData>) {
         let mut buffer: Vec<CheckpointData> = Vec::new();
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(FLUSH_INTERVAL_MS));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

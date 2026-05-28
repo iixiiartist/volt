@@ -1,5 +1,5 @@
-use crate::models::{PermissionLevel, ToolResult};
 use crate::attenuation::TrustLevel;
+use crate::models::{PermissionLevel, ToolResult};
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
 
@@ -16,39 +16,48 @@ pub async fn setup_tools(
                     let desc = row.description.clone();
                     let schema = row.parameter_schema.clone();
                     let code = row.source_code.clone();
-                    registry.register_with_permission(
-                        &name,
-                        &desc,
-                        schema,
-                        "installed",
-                        Arc::new(move |args| {
-                            let code = code.clone();
-                            Box::pin(async move {
-                                let stdin = args.to_string();
-                                let policy = crate::models::SandboxPolicy {
-                                    timeout_ms: 300_000,
-                                    max_stdout_bytes: 10_485_760,
-                                    working_dir: None,
-                                };
-                                let result = crate::sandbox::run_command_direct(
-                                    "python3",
-                                    &["-c", &code],
-                                    Some(&stdin),
-                                    &policy,
-                                ).await;
-                                let output_val = serde_json::from_str(&result.stdout)
-                                    .unwrap_or_else(|_| serde_json::json!({"raw": result.stdout}));
-                                ToolResult {
-                                    success: result.status == "ok",
-                                    output: output_val.to_string(),
-                                    error: if result.status == "ok" { None } else { Some(result.stderr.clone()) },
-                                    duration_ms: result.duration_ms,
-                                }
-                            })
-                        }),
-                        PermissionLevel::Allow,
-                        TrustLevel::Installed,
-                    ).await;
+                    registry
+                        .register_with_permission(
+                            &name,
+                            &desc,
+                            schema,
+                            "installed",
+                            Arc::new(move |args| {
+                                let code = code.clone();
+                                Box::pin(async move {
+                                    let stdin = args.to_string();
+                                    let policy = crate::models::SandboxPolicy {
+                                        timeout_ms: 300_000,
+                                        max_stdout_bytes: 10_485_760,
+                                        working_dir: None,
+                                    };
+                                    let result = crate::sandbox::run_command_direct(
+                                        "python3",
+                                        &["-c", &code],
+                                        Some(&stdin),
+                                        &policy,
+                                    )
+                                    .await;
+                                    let output_val = serde_json::from_str(&result.stdout)
+                                        .unwrap_or_else(
+                                            |_| serde_json::json!({"raw": result.stdout}),
+                                        );
+                                    ToolResult {
+                                        success: result.status == "ok",
+                                        output: output_val.to_string(),
+                                        error: if result.status == "ok" {
+                                            None
+                                        } else {
+                                            Some(result.stderr.clone())
+                                        },
+                                        duration_ms: result.duration_ms,
+                                    }
+                                })
+                            }),
+                            PermissionLevel::Allow,
+                            TrustLevel::Installed,
+                        )
+                        .await;
                 }
             }
         }
@@ -84,7 +93,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                     })
                 }),
                 PermissionLevel::Prompt,
-            TrustLevel::Builtin,
+                TrustLevel::Builtin,
             )
             .await;
     }

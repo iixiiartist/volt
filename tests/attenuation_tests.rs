@@ -68,7 +68,11 @@ fn test_installed_edit_blocked() {
 #[test]
 fn test_installed_browser_navigate_allowed() {
     assert_eq!(
-        effective_permission(TrustLevel::Installed, PermissionLevel::Allow, "browser_navigate"),
+        effective_permission(
+            TrustLevel::Installed,
+            PermissionLevel::Allow,
+            "browser_navigate"
+        ),
         PermissionLevel::Allow
     );
 }
@@ -86,7 +90,7 @@ fn test_installed_with_prompt_becomes_blocked() {
 fn test_installed_readonly_declared() {
     assert_eq!(
         effective_permission(TrustLevel::Installed, PermissionLevel::ReadOnly, "read"),
-        PermissionLevel::Allow  // ReadOnly tools still pass
+        PermissionLevel::Allow // ReadOnly tools still pass
     );
     assert_eq!(
         effective_permission(TrustLevel::Installed, PermissionLevel::ReadOnly, "bash"),

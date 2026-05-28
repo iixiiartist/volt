@@ -1,4 +1,4 @@
-use crate::secrets::{SecretStore};
+use crate::secrets::SecretStore;
 use std::collections::HashMap;
 
 /// Encrypted secret store placeholder.

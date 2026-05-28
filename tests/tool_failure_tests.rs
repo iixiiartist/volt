@@ -1,4 +1,4 @@
-use volt::tool_failure_tracker::{ToolFailureTracker};
+use volt::tool_failure_tracker::ToolFailureTracker;
 
 #[test]
 fn test_disabled_returns_none() {

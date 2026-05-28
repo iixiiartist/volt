@@ -11,13 +11,17 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let agents_json = match (agents, agents_file) {
         (Some(j), None) => j,
-        (None, Some(f)) => std::fs::read_to_string(&f).map_err(|e| anyhow::anyhow!("read agents file: {}", e))?,
+        (None, Some(f)) => {
+            std::fs::read_to_string(&f).map_err(|e| anyhow::anyhow!("read agents file: {}", e))?
+        }
         (Some(_), Some(_)) => anyhow::bail!("provide --agents OR --agents-file, not both"),
         (None, None) => anyhow::bail!("provide either --agents or --agents-file"),
     };
     let tasks_json = match (tasks, tasks_file) {
         (Some(j), None) => j,
-        (None, Some(f)) => std::fs::read_to_string(&f).map_err(|e| anyhow::anyhow!("read tasks file: {}", e))?,
+        (None, Some(f)) => {
+            std::fs::read_to_string(&f).map_err(|e| anyhow::anyhow!("read tasks file: {}", e))?
+        }
         (Some(_), Some(_)) => anyhow::bail!("provide --tasks OR --tasks-file, not both"),
         (None, None) => anyhow::bail!("provide either --tasks or --tasks-file"),
     };

@@ -57,10 +57,10 @@ impl AgentMode {
 
 pub mod agent_run;
 pub mod agent_tui;
+pub mod daemon;
 pub mod eval;
 pub mod mcp;
 pub mod provision;
 pub mod skills;
 pub mod tools;
-pub mod daemon;
 pub mod workflow;

@@ -76,32 +76,38 @@ impl Orchestrator {
                 crate::capability::CapabilityScope::FsRead,
                 100,
                 chrono::Duration::hours(24),
-            ).await;
+            )
+            .await;
             mgr.issue(
                 crate::capability::CapabilityScope::FsWrite,
                 50,
                 chrono::Duration::hours(24),
-            ).await;
+            )
+            .await;
             mgr.issue(
                 crate::capability::CapabilityScope::System,
                 20,
                 chrono::Duration::hours(24),
-            ).await;
+            )
+            .await;
             mgr.issue(
                 crate::capability::CapabilityScope::Network,
                 200,
                 chrono::Duration::hours(24),
-            ).await;
+            )
+            .await;
             mgr.issue(
                 crate::capability::CapabilityScope::Database,
                 30,
                 chrono::Duration::hours(24),
-            ).await;
+            )
+            .await;
             mgr.issue(
                 crate::capability::CapabilityScope::Memory,
                 50,
                 chrono::Duration::hours(24),
-            ).await;
+            )
+            .await;
             mgr
         };
         Self { tools, cap_mgr }
@@ -155,7 +161,8 @@ async fn create_agent(
         },
         llm_provider,
         tools,
-    ).await;
+    )
+    .await;
     if let Some(mgr) = cap_mgr {
         agent = agent.with_capability_manager(mgr);
     }
@@ -475,7 +482,12 @@ impl Orchestrator {
             mode: None,
         };
 
-        let supervisor = create_agent(supervisor_spec, self.tools.clone(), Some(self.cap_mgr.clone())).await;
+        let supervisor = create_agent(
+            supervisor_spec,
+            self.tools.clone(),
+            Some(self.cap_mgr.clone()),
+        )
+        .await;
         let output = supervisor.run(task).await?;
         let state = supervisor.state().lock().await;
 
@@ -763,10 +775,16 @@ pub struct DagScheduler<'a> {
 
 impl<'a> DagScheduler<'a> {
     pub fn new(tools: &'a Arc<ToolRegistry>) -> Self {
-        Self { tools, cap_mgr: None }
+        Self {
+            tools,
+            cap_mgr: None,
+        }
     }
 
-    pub fn with_capability_manager(mut self, cap_mgr: &'a Arc<crate::capability::CapabilityManager>) -> Self {
+    pub fn with_capability_manager(
+        mut self,
+        cap_mgr: &'a Arc<crate::capability::CapabilityManager>,
+    ) -> Self {
         self.cap_mgr = Some(cap_mgr);
         self
     }

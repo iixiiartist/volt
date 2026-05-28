@@ -195,9 +195,13 @@ fn try_repair_json(input: &str) -> String {
     let no_trailing_commas = {
         let mut s = trimmed.to_string();
         // Remove comma before }
-        while s.contains(",}") { s = s.replace(",}", "}"); }
+        while s.contains(",}") {
+            s = s.replace(",}", "}");
+        }
         // Remove comma before ]
-        while s.contains(",]") { s = s.replace(",]", "]"); }
+        while s.contains(",]") {
+            s = s.replace(",]", "]");
+        }
         s
     };
 
@@ -224,10 +228,7 @@ fn extract_kv_pairs(input: &str) -> serde_json::Map<String, serde_json::Value> {
                 .trim_matches('"')
                 .trim_matches('\'')
                 .to_string();
-            let val_str = trimmed[colon_pos + 1..]
-                .trim()
-                .trim_end_matches(',')
-                .trim();
+            let val_str = trimmed[colon_pos + 1..].trim().trim_end_matches(',').trim();
             if !key.is_empty() {
                 let val = val_str.trim_matches('"').trim_matches('\'');
                 map.insert(key, serde_json::Value::String(val.to_string()));

@@ -40,10 +40,7 @@ impl NetworkPolicy {
 }
 
 fn extract_host(url: &str) -> Option<String> {
-    let rest = url
-        .find("://")
-        .map(|i| &url[i + 3..])
-        .unwrap_or(url);
+    let rest = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
     let end = rest
         .find('/')
         .or_else(|| rest.find('?'))

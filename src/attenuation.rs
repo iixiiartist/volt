@@ -19,10 +19,23 @@ pub fn effective_permission(
         TrustLevel::Trusted => declared,
         TrustLevel::Installed => {
             let read_only: HashSet<&str> = [
-                "read", "glob", "grep", "web_fetch", "web_search", "browser_navigate",
-                "browser_extract", "json_validate", "json_prettify", "json_query",
-                "memory_read", "get_current_time", "convert_time", "sequential_thinking",
-                "web_search", "you_research", "you_contents",
+                "read",
+                "glob",
+                "grep",
+                "web_fetch",
+                "web_search",
+                "browser_navigate",
+                "browser_extract",
+                "json_validate",
+                "json_prettify",
+                "json_query",
+                "memory_read",
+                "get_current_time",
+                "convert_time",
+                "sequential_thinking",
+                "web_search",
+                "you_research",
+                "you_contents",
             ]
             .iter()
             .copied()

@@ -12,11 +12,11 @@
 
 use std::sync::Arc;
 use volt::agent::loop_rs::Agent;
+use volt::attenuation::TrustLevel;
 use volt::commands::AgentMode;
 use volt::context::{ContextEntry, ContextKind, ContextStore};
 use volt::embedding::{deterministic_placeholder_embedding, EmbeddingClient};
 use volt::models::*;
-use volt::attenuation::TrustLevel;
 use volt::test_utils::MockLLMProvider;
 use volt::tools::ToolRegistry;
 

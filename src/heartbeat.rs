@@ -16,12 +16,14 @@ impl Heartbeat {
         job_manager: Arc<JobManager>,
         workspace: Option<PathBuf>,
     ) -> Self {
-        Self { interval, job_manager, workspace }
+        Self {
+            interval,
+            job_manager,
+            workspace,
+        }
     }
 
-    pub async fn run(&self,
-        shutdown: tokio::sync::watch::Receiver<bool>,
-    ) {
+    pub async fn run(&self, shutdown: tokio::sync::watch::Receiver<bool>) {
         let mut ticker = interval(self.interval);
         loop {
             ticker.tick().await;

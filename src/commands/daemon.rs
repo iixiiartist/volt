@@ -1,9 +1,9 @@
+use crate::heartbeat::Heartbeat;
+use crate::jobs::monitor::SelfRepairMonitor;
+use crate::jobs::JobManager;
+use crate::routines::engine::RoutineEngine;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::heartbeat::Heartbeat;
-use crate::jobs::JobManager;
-use crate::jobs::monitor::SelfRepairMonitor;
-use crate::routines::engine::RoutineEngine;
 
 pub async fn run_heartbeat(settings: &crate::config::Settings) -> anyhow::Result<()> {
     let pool = match crate::db::connect(&settings.database_url).await {
@@ -15,7 +15,11 @@ pub async fn run_heartbeat(settings: &crate::config::Settings) -> anyhow::Result
     };
     let manager = Arc::new(JobManager::new(pool));
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let heartbeat = Heartbeat::new(Duration::from_secs(60), manager, std::env::current_dir().ok());
+    let heartbeat = Heartbeat::new(
+        Duration::from_secs(60),
+        manager,
+        std::env::current_dir().ok(),
+    );
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         let _ = tx.send(true);
@@ -34,11 +38,8 @@ pub async fn run_jobs_monitor(settings: &crate::config::Settings) -> anyhow::Res
     };
     let manager = Arc::new(JobManager::new(pool));
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let monitor = SelfRepairMonitor::new(
-        manager,
-        Duration::from_secs(30),
-        Duration::from_secs(300),
-    );
+    let monitor =
+        SelfRepairMonitor::new(manager, Duration::from_secs(30), Duration::from_secs(300));
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         let _ = tx.send(true);

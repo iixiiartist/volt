@@ -14,13 +14,19 @@ pub struct RoutineEngine {
 }
 
 impl RoutineEngine {
-    pub fn new(pool: Option<PgPool>, job_manager: Arc<JobManager>, check_interval: Duration) -> Self {
-        Self { pool, job_manager, check_interval }
+    pub fn new(
+        pool: Option<PgPool>,
+        job_manager: Arc<JobManager>,
+        check_interval: Duration,
+    ) -> Self {
+        Self {
+            pool,
+            job_manager,
+            check_interval,
+        }
     }
 
-    pub async fn run(&self,
-        shutdown: tokio::sync::watch::Receiver<bool>,
-    ) {
+    pub async fn run(&self, shutdown: tokio::sync::watch::Receiver<bool>) {
         let mut ticker = interval(self.check_interval);
         loop {
             ticker.tick().await;
@@ -41,9 +47,7 @@ impl RoutineEngine {
         }
     }
 
-    async fn fire_due_routines(&self,
-        pool: &PgPool,
-    ) -> anyhow::Result<usize> {
+    async fn fire_due_routines(&self, pool: &PgPool) -> anyhow::Result<usize> {
         let rows: Vec<RoutineRow> = sqlx::query_as(
             "SELECT id, name, cron, action_prompt, last_run, next_run, trigger_type, trigger_config, guardrails_max_tokens, guardrails_max_tool_calls, guardrails_allowed_tools, guardrails_timeout_secs FROM routines
              WHERE enabled = true AND next_run IS NOT NULL AND next_run <= NOW()"

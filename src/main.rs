@@ -237,7 +237,9 @@ async fn main() -> anyhow::Result<()> {
             agents_file,
             tasks_file,
             allow,
-        } => commands::workflow::run(pattern, agents, tasks, agents_file, tasks_file, allow).await?,
+        } => {
+            commands::workflow::run(pattern, agents, tasks, agents_file, tasks_file, allow).await?
+        }
         Commands::Eval { suite, model } => commands::eval::run(suite, model).await?,
         Commands::McpServe => commands::mcp::serve_stdio().await?,
         Commands::ProvisionSkill { path } => {
@@ -262,18 +264,22 @@ async fn main() -> anyhow::Result<()> {
             let pool = volt::db::connect(&settings.database_url).await?;
             volt::db::init_schema(&pool).await?;
             println!("schema migrated");
-        },
-        Commands::Jobs { subcommand: JobsSubcommand::List } => {
+        }
+        Commands::Jobs {
+            subcommand: JobsSubcommand::List,
+        } => {
             let pool = volt::db::connect(&settings.database_url).await?;
             let manager = volt::jobs::JobManager::new(Some(pool));
             let jobs = manager.list_jobs(None).await?;
             println!("{}", serde_json::to_string_pretty(&jobs)?);
-        },
-        Commands::Routines { subcommand: RoutinesSubcommand::List } => {
+        }
+        Commands::Routines {
+            subcommand: RoutinesSubcommand::List,
+        } => {
             let pool = volt::db::connect(&settings.database_url).await?;
             let routines = volt::db::list_routines(&pool).await?;
             println!("{}", serde_json::to_string_pretty(&routines)?);
-        },
+        }
         Commands::AgentChat { .. } => {
             eprintln!("AgentChat is deprecated — use AgentRun or AgentTui");
         }

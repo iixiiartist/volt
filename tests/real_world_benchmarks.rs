@@ -643,12 +643,18 @@ async fn test_workflow5_mcp_agent_to_agent() {
     let server_cap_mgr = {
         use volt::capability::{CapabilityManager, CapabilityScope};
         let mgr = Arc::new(CapabilityManager::new());
-        mgr.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::System, 20, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::System, 20, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1))
+            .await;
         mgr
     };
 

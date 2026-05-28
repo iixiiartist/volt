@@ -68,13 +68,22 @@ pub struct MCPServer {
 impl MCPServer {
     pub async fn new(tools: Arc<ToolRegistry>) -> Self {
         let mgr = Arc::new(CapabilityManager::new());
-        mgr.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::System, 20, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1)).await;
-        mgr.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1)).await;
-        Self { tools, capability_manager: mgr }
+        mgr.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::System, 20, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1))
+            .await;
+        mgr.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1))
+            .await;
+        Self {
+            tools,
+            capability_manager: mgr,
+        }
     }
 
     /// Serve MCP over stdio (stdin/stdout JSON-RPC).
@@ -109,12 +118,18 @@ impl MCPServer {
     ) -> anyhow::Result<()> {
         let mgr = {
             let m = Arc::new(CapabilityManager::new());
-            m.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1)).await;
-            m.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1)).await;
-            m.issue(CapabilityScope::System, 20, chrono::Duration::hours(1)).await;
-            m.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1)).await;
-            m.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1)).await;
-            m.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1)).await;
+            m.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1))
+                .await;
+            m.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1))
+                .await;
+            m.issue(CapabilityScope::System, 20, chrono::Duration::hours(1))
+                .await;
+            m.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1))
+                .await;
+            m.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1))
+                .await;
+            m.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1))
+                .await;
             m
         };
         let state = Arc::new(McpAppState {
@@ -168,7 +183,10 @@ impl MCPServer {
                     .as_ref()
                     .map(|p| &p["arguments"])
                     .unwrap_or(&serde_json::Value::Null);
-                let result = self.tools.execute_gated(name, args, &self.capability_manager).await;
+                let result = self
+                    .tools
+                    .execute_gated(name, args, &self.capability_manager)
+                    .await;
                 match result {
                     Ok(res) => JsonRpcResponse::success(
                         serde_json::json!({

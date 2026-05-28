@@ -252,7 +252,9 @@ impl ContextStore {
         // 1. Commit to the local runtime memory buffer for immediate multi-agent visibility
         {
             let mut entries_guard = self.entries.write().await;
-            entries_guard.push(StoredEntry { entry: entry.clone() });
+            entries_guard.push(StoredEntry {
+                entry: entry.clone(),
+            });
         }
 
         // 2. Force immediate, non-batched database write to guarantee survival across process reboots

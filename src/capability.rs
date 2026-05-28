@@ -69,6 +69,12 @@ pub struct CapabilityManager {
     clock_leeway: chrono::Duration,
 }
 
+impl Default for CapabilityManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CapabilityManager {
     pub fn new() -> Self {
         let key = rand::random::<[u8; 32]>().to_vec();
@@ -120,9 +126,16 @@ impl CapabilityManager {
     }
 
     /// Verify a token is valid for the given scope and has remaining budget.
-    pub fn verify(&self, token: &CapabilityToken, scope: &CapabilityScope) -> Result<(), CapabilityError> {
+    pub fn verify(
+        &self,
+        token: &CapabilityToken,
+        scope: &CapabilityScope,
+    ) -> Result<(), CapabilityError> {
         if token.scope != *scope {
-            return Err(CapabilityError::ScopeMismatch(token.scope.clone(), scope.clone()));
+            return Err(CapabilityError::ScopeMismatch(
+                token.scope.clone(),
+                scope.clone(),
+            ));
         }
         let now = chrono::Utc::now();
         let deadline = token.expires_at + self.clock_leeway;
@@ -148,19 +161,18 @@ impl CapabilityManager {
 
     /// List all currently tracked tokens (for capability checks).
     pub async fn list_tokens(&self) -> Vec<CapabilityToken> {
-        self.tokens
-            .lock()
-            .await
-            .values()
-            .cloned()
-            .collect()
+        self.tokens.lock().await.values().cloned().collect()
     }
 
     /// Atomically reserve budget from a token for the given scope.
     /// Deducts `amount` from remaining *before* execution so concurrent
     /// tool calls don't over-allocate the same budget.
     /// Returns the token with updated remaining on success.
-    pub async fn reserve(&self, scope: &CapabilityScope, amount: u64) -> Result<CapabilityToken, CapabilityError> {
+    pub async fn reserve(
+        &self,
+        scope: &CapabilityScope,
+        amount: u64,
+    ) -> Result<CapabilityToken, CapabilityError> {
         let mut tokens = self.tokens.lock().await;
         let deadline = chrono::Utc::now() + self.clock_leeway;
         let token = tokens
@@ -170,7 +182,7 @@ impl CapabilityManager {
                     && t.remaining >= amount
                     && deadline <= t.expires_at + self.clock_leeway
             })
-            .ok_or_else(|| CapabilityError::BudgetExhausted(amount))?;
+            .ok_or(CapabilityError::BudgetExhausted(amount))?;
 
         token.remaining -= amount;
         let payload = build_token_payload(
@@ -188,13 +200,15 @@ impl CapabilityManager {
     /// Returns `(nonce, actual_deducted)` or `None` if no budget left at all.
     /// Use this for dynamic allocation windows — concurrent parallel tools
     /// won't trigger false out-of-budget errors from sibling escrow.
-    pub async fn reserve_if_available(&self, scope: &CapabilityScope, amount: u64) -> Option<(String, u64)> {
+    pub async fn reserve_if_available(
+        &self,
+        scope: &CapabilityScope,
+        amount: u64,
+    ) -> Option<(String, u64)> {
         let mut tokens = self.tokens.lock().await;
         let deadline = chrono::Utc::now() + self.clock_leeway;
         let token = tokens.values_mut().find(|t| {
-            t.scope == *scope
-                && t.remaining > 0
-                && deadline <= t.expires_at + self.clock_leeway
+            t.scope == *scope && t.remaining > 0 && deadline <= t.expires_at + self.clock_leeway
         })?;
 
         let actual = amount.min(token.remaining);
@@ -254,7 +268,8 @@ impl CapabilityManager {
 
         // Fallback: soft-reserve whatever is available
         for t in tokens.values_mut() {
-            if t.scope == *scope && t.remaining > 0 && deadline <= t.expires_at + self.clock_leeway {
+            if t.scope == *scope && t.remaining > 0 && deadline <= t.expires_at + self.clock_leeway
+            {
                 let actual = requested_amount.min(t.remaining);
                 t.remaining -= actual;
                 let payload = build_token_payload(
@@ -311,16 +326,16 @@ impl CapabilityManager {
         let tokens = self.tokens.lock().await;
         tokens
             .values()
-            .find(|t| {
-                t.scope == *scope
-                    && t.remaining > 0
-                    && chrono::Utc::now() <= t.expires_at
-            })
+            .find(|t| t.scope == *scope && t.remaining > 0 && chrono::Utc::now() <= t.expires_at)
             .cloned()
     }
 
     /// Consume one unit of budget from a token. Returns remaining budget.
-    pub fn consume(&self, token: &mut CapabilityToken, amount: u64) -> Result<u64, CapabilityError> {
+    pub fn consume(
+        &self,
+        token: &mut CapabilityToken,
+        amount: u64,
+    ) -> Result<u64, CapabilityError> {
         if token.remaining < amount {
             return Err(CapabilityError::BudgetExhausted(amount));
         }
@@ -416,7 +431,9 @@ impl Drop for RefundGuard {
         let amount = self.amount;
         let nonce_debug = nonce.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            if let (Some(ref tokens_arc), Some(ref nonce), Some(ref key)) = (&tokens_arc, &nonce, &key) {
+            if let (Some(ref tokens_arc), Some(ref nonce), Some(ref key)) =
+                (&tokens_arc, &nonce, &key)
+            {
                 let nonce_clone = nonce.clone();
                 let tokens_clone = Arc::clone(tokens_arc);
                 let key_clone = key.clone();
@@ -446,7 +463,6 @@ impl Drop for RefundGuard {
     }
 }
 
-
 /// Map a tool name to the required capability scope for authorization.
 /// Fail-closed default: unknown/unmapped tools require System scope (maximum protection).
 pub fn tool_required_scope(tool_name: &str) -> CapabilityScope {
@@ -454,16 +470,12 @@ pub fn tool_required_scope(tool_name: &str) -> CapabilityScope {
         "read" | "glob" | "grep" | "list_files" | "file_system" => CapabilityScope::FsRead,
         "write" | "edit" | "create" | "delete" | "rename" | "mkdir" | "rmdir" | "move_file"
         | "copy_file" => CapabilityScope::FsWrite,
-        "bash" | "sh" | "powershell" | "cmd" | "run" | "execute" | "run_command"
-        | "run_shell" | "spawn_process" => CapabilityScope::System,
+        "bash" | "sh" | "powershell" | "cmd" | "run" | "execute" | "run_command" | "run_shell"
+        | "spawn_process" => CapabilityScope::System,
         "web_search" | "web_fetch" | "browser_navigate" | "browser_extract" | "web_scrape"
-        | "you_research" | "you_contents" | "http_get" | "http_post" => {
-            CapabilityScope::Network
-        }
+        | "you_research" | "you_contents" | "http_get" | "http_post" => CapabilityScope::Network,
         "db_query" | "sql" | "database" | "pg_query" => CapabilityScope::Database,
-        "memory_read" | "memory_write" | "memory_search" | "memory_save" => {
-            CapabilityScope::Memory
-        }
+        "memory_read" | "memory_write" | "memory_search" | "memory_save" => CapabilityScope::Memory,
         // Tools with API namespaced scopes
         name if name.starts_with("api_") || name.starts_with("mcp_") => {
             CapabilityScope::Api(name.to_string())
@@ -482,33 +494,27 @@ mod tests {
     #[tokio::test]
     async fn test_issue_and_verify() {
         let mgr = CapabilityManager::new();
-        let token = mgr.issue(
-            CapabilityScope::FsRead,
-            10,
-            chrono::Duration::hours(1),
-        ).await;
+        let token = mgr
+            .issue(CapabilityScope::FsRead, 10, chrono::Duration::hours(1))
+            .await;
         assert!(mgr.verify(&token, &CapabilityScope::FsRead).is_ok());
     }
 
     #[tokio::test]
     async fn test_wrong_scope_fails() {
         let mgr = CapabilityManager::new();
-        let token = mgr.issue(
-            CapabilityScope::FsRead,
-            10,
-            chrono::Duration::hours(1),
-        ).await;
+        let token = mgr
+            .issue(CapabilityScope::FsRead, 10, chrono::Duration::hours(1))
+            .await;
         assert!(mgr.verify(&token, &CapabilityScope::FsWrite).is_err());
     }
 
     #[tokio::test]
     async fn test_consume_reduces_budget() {
         let mgr = CapabilityManager::new();
-        let mut token = mgr.issue(
-            CapabilityScope::FsRead,
-            5,
-            chrono::Duration::hours(1),
-        ).await;
+        let mut token = mgr
+            .issue(CapabilityScope::FsRead, 5, chrono::Duration::hours(1))
+            .await;
         assert_eq!(token.remaining, 5);
         mgr.consume(&mut token, 3).unwrap();
         assert_eq!(token.remaining, 2);
@@ -520,22 +526,18 @@ mod tests {
     #[tokio::test]
     async fn test_exceed_budget_fails() {
         let mgr = CapabilityManager::new();
-        let mut token = mgr.issue(
-            CapabilityScope::FsRead,
-            3,
-            chrono::Duration::hours(1),
-        ).await;
+        let mut token = mgr
+            .issue(CapabilityScope::FsRead, 3, chrono::Duration::hours(1))
+            .await;
         assert!(mgr.consume(&mut token, 5).is_err());
     }
 
     #[tokio::test]
     async fn test_tampered_token_detected() {
         let mgr = CapabilityManager::new();
-        let mut token = mgr.issue(
-            CapabilityScope::FsRead,
-            10,
-            chrono::Duration::hours(1),
-        ).await;
+        let mut token = mgr
+            .issue(CapabilityScope::FsRead, 10, chrono::Duration::hours(1))
+            .await;
         token.remaining = 999;
         assert!(mgr.verify(&token, &CapabilityScope::FsRead).is_err());
     }
@@ -543,16 +545,24 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_reserve_and_guard() {
         let mgr = CapabilityManager::new();
-        mgr.issue(
-            CapabilityScope::FsRead,
-            10,
-            chrono::Duration::hours(1),
-        ).await;
-        let guard = mgr.acquire_execution_guard(&CapabilityScope::FsRead, 3).await.unwrap();
-        let remaining = mgr.find_token(&CapabilityScope::FsRead).await.unwrap().remaining;
+        mgr.issue(CapabilityScope::FsRead, 10, chrono::Duration::hours(1))
+            .await;
+        let guard = mgr
+            .acquire_execution_guard(&CapabilityScope::FsRead, 3)
+            .await
+            .unwrap();
+        let remaining = mgr
+            .find_token(&CapabilityScope::FsRead)
+            .await
+            .unwrap()
+            .remaining;
         assert_eq!(remaining, 7);
         drop(guard);
-        let after_refund = mgr.find_token(&CapabilityScope::FsRead).await.unwrap().remaining;
+        let after_refund = mgr
+            .find_token(&CapabilityScope::FsRead)
+            .await
+            .unwrap()
+            .remaining;
         assert_eq!(after_refund, 10);
     }
 

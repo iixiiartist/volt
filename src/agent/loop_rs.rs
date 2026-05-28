@@ -79,32 +79,38 @@ impl Agent {
             crate::capability::CapabilityScope::FsRead,
             100,
             chrono::Duration::hours(24),
-        ).await;
+        )
+        .await;
         mgr.issue(
             crate::capability::CapabilityScope::FsWrite,
             50,
             chrono::Duration::hours(24),
-        ).await;
+        )
+        .await;
         mgr.issue(
             crate::capability::CapabilityScope::System,
             20,
             chrono::Duration::hours(24),
-        ).await;
+        )
+        .await;
         mgr.issue(
             crate::capability::CapabilityScope::Network,
             200,
             chrono::Duration::hours(24),
-        ).await;
+        )
+        .await;
         mgr.issue(
             crate::capability::CapabilityScope::Database,
             30,
             chrono::Duration::hours(24),
-        ).await;
+        )
+        .await;
         mgr.issue(
             crate::capability::CapabilityScope::Memory,
             50,
             chrono::Duration::hours(24),
-        ).await;
+        )
+        .await;
         Self {
             config,
             state: Arc::new(Mutex::new(state)),
@@ -180,7 +186,10 @@ impl Agent {
         self
     }
 
-    pub fn with_failure_tracker(mut self, tracker: crate::tool_failure_tracker::ToolFailureTracker) -> Self {
+    pub fn with_failure_tracker(
+        mut self,
+        tracker: crate::tool_failure_tracker::ToolFailureTracker,
+    ) -> Self {
         self.failure_tracker = Some(tracker);
         self
     }
@@ -188,7 +197,10 @@ impl Agent {
     /// Attach a batched checkpoint journal to avoid SQLite write-lock contention
     /// in parallel multi-agent setups. When set, `save_checkpoint()` sends to
     /// the journal's in-memory channel instead of writing directly to SQLite.
-    pub fn with_checkpoint_journal(mut self, journal: Arc<crate::checkpoint_journal::CheckpointJournal>) -> Self {
+    pub fn with_checkpoint_journal(
+        mut self,
+        journal: Arc<crate::checkpoint_journal::CheckpointJournal>,
+    ) -> Self {
         self.checkpoint_journal = Some(journal);
         self
     }
@@ -196,7 +208,10 @@ impl Agent {
     /// Replace the default CapabilityManager with a shared one.
     /// Use this for sub-agents that should share a parent's budget quotas
     /// instead of getting fresh per-session budgets.
-    pub fn with_capability_manager(mut self, cap_mgr: Arc<crate::capability::CapabilityManager>) -> Self {
+    pub fn with_capability_manager(
+        mut self,
+        cap_mgr: Arc<crate::capability::CapabilityManager>,
+    ) -> Self {
         self.capability_manager = cap_mgr;
         self
     }
@@ -363,7 +378,8 @@ impl Agent {
                 &state.messages,
                 state.total_prompt_tokens,
                 state.total_completion_tokens,
-            ).await;
+            )
+            .await;
 
             // Audit log: record this complete LLM turn (request + response) in ContextStore
             self.audit_turn(&request, &response, &state).await;
@@ -408,7 +424,8 @@ impl Agent {
                             &state.messages,
                             state.total_prompt_tokens,
                             state.total_completion_tokens,
-                        ).await;
+                        )
+                        .await;
                         drop(state);
                         continue;
                     }
@@ -449,12 +466,16 @@ impl Agent {
                         let rid = format!("ref_{}_turn_{}", tool_name, state.iteration);
                         let snippet = if output.len() > 500 {
                             let mut idx = 500;
-                            while !output.is_char_boundary(idx) && idx > 0 { idx -= 1; }
+                            while !output.is_char_boundary(idx) && idx > 0 {
+                                idx -= 1;
+                            }
                             &output[..idx]
                         } else {
                             &output
                         };
-                        self.tool_output_buffer.lock().await
+                        self.tool_output_buffer
+                            .lock()
+                            .await
                             .insert(rid.clone(), output.clone());
                         format!(
                             "[Tool output: {} ({} chars)]\n{}\n\n[Reference: {} — use `get_tool_output` with ref_id=\"{}\" to inspect full output]",
@@ -589,7 +610,9 @@ impl Agent {
             // Fallback: direct synchronous write (legacy path)
             // Circuit breaker: check if we're about to re-enter a poisoned state
             let state_hash = crate::session::compute_state_hash(messages);
-            if let Err(msg) = crate::session::check_circuit_breaker(pool, sid, iteration, &state_hash).await {
+            if let Err(msg) =
+                crate::session::check_circuit_breaker(pool, sid, iteration, &state_hash).await
+            {
                 tracing::error!("[circuit-breaker] {}", msg);
                 return;
             }
@@ -651,7 +674,10 @@ impl Agent {
             let ld = crate::leak_detector::LeakDetector::new();
             let result = ld.scan(input);
             if !result.found.is_empty() {
-                tracing::warn!("[leak detector] redacted {} secrets from user input", result.found.len());
+                tracing::warn!(
+                    "[leak detector] redacted {} secrets from user input",
+                    result.found.len()
+                );
             }
             result.redacted_text
         } else {
@@ -902,7 +928,10 @@ impl Agent {
             let mut compressed: Vec<LLMMessage> = Vec::with_capacity(recent.len() + 1);
             if keep_start > 0 {
                 // Seed truncated messages into context store for RAG retrievability
-                let truncated: Vec<&Message> = snapshot.messages[..keep_start.min(snapshot.messages.len())].iter().collect();
+                let truncated: Vec<&Message> = snapshot.messages
+                    [..keep_start.min(snapshot.messages.len())]
+                    .iter()
+                    .collect();
                 if let Some(ref store) = self.context_store {
                     self.seed_truncated_context(store, &truncated).await;
                 }
@@ -962,7 +991,8 @@ impl Agent {
                     .iter()
                     .filter_map(|&&idx| llm_messages.get(idx))
                     .collect();
-                self.seed_truncated_context_llm(store, &truncated_msgs).await;
+                self.seed_truncated_context_llm(store, &truncated_msgs)
+                    .await;
             }
         }
 
@@ -1002,7 +1032,11 @@ impl Agent {
     /// Seed truncated messages into the context store so they remain
     /// retrievable via the existing RAG pipeline despite being removed
     /// from the active message vector.
-    async fn seed_truncated_context(&self, store: &crate::context::ContextStore, truncated: &[&Message]) {
+    async fn seed_truncated_context(
+        &self,
+        store: &crate::context::ContextStore,
+        truncated: &[&Message],
+    ) {
         if truncated.is_empty() {
             return;
         }
@@ -1024,7 +1058,10 @@ impl Agent {
             truncated.len(),
             topic_hint
         );
-        let session_id = self.session_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".into());
+        let session_id = self
+            .session_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown".into());
         let truncated_text: String = truncated
             .iter()
             .map(|m| format!("[{}] {}", m.role, m.content))
@@ -1035,12 +1072,22 @@ impl Agent {
                 .seed_truncated_history_persistent(&session_id, truncated_text, summary, pool)
                 .await;
         } else {
-            store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+            store
+                .add(
+                    crate::context::ContextKind::Conversation,
+                    &summary,
+                    serde_json::json!({}),
+                )
+                .await;
         }
     }
 
     /// Same as seed_truncated_context but for LLMMessage slices (selective path).
-    async fn seed_truncated_context_llm(&self, store: &crate::context::ContextStore, truncated: &[&LLMMessage]) {
+    async fn seed_truncated_context_llm(
+        &self,
+        store: &crate::context::ContextStore,
+        truncated: &[&LLMMessage],
+    ) {
         if truncated.is_empty() {
             return;
         }
@@ -1062,7 +1109,10 @@ impl Agent {
             truncated.len(),
             topic_hint
         );
-        let session_id = self.session_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".into());
+        let session_id = self
+            .session_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown".into());
         let truncated_text: String = truncated
             .iter()
             .map(|m| format!("[{}] {}", m.role, m.content))
@@ -1073,7 +1123,13 @@ impl Agent {
                 .seed_truncated_history_persistent(&session_id, truncated_text, summary, pool)
                 .await;
         } else {
-            store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+            store
+                .add(
+                    crate::context::ContextKind::Conversation,
+                    &summary,
+                    serde_json::json!({}),
+                )
+                .await;
         }
     }
 
@@ -1144,11 +1200,9 @@ impl Agent {
         for tc in tool_calls {
             let scope = crate::capability::tool_required_scope(&tc.name);
             let tokens = self.capability_manager.list_tokens().await;
-            let has_valid = tokens.iter().any(|t| {
-                t.scope == scope
-                    && t.remaining > 0
-                    && chrono::Utc::now() <= t.expires_at
-            });
+            let has_valid = tokens
+                .iter()
+                .any(|t| t.scope == scope && t.remaining > 0 && chrono::Utc::now() <= t.expires_at);
             if !has_valid {
                 tracing::warn!(
                     "[capability] no valid token for {:?} — skipping tool '{}'",
@@ -1225,7 +1279,9 @@ impl Agent {
                         format!("error: {}", error_msg.unwrap_or_default())
                     };
 
-                    let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref() != Some("false") {
+                    let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref()
+                        != Some("false")
+                    {
                         crate::safety_layer::wrap_tool_output(&name, &raw_output)
                     } else {
                         raw_output
@@ -1236,16 +1292,22 @@ impl Agent {
             })
             .collect();
 
-        let mut results: Vec<(String, String, String, ToolResult)> = futures::future::join_all(futures).await;
+        let mut results: Vec<(String, String, String, ToolResult)> =
+            futures::future::join_all(futures).await;
 
         // Append skipped tools with failure results
         for (name, id, warning) in skipped {
-            results.push((name, id, warning.clone(), ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(warning),
-                duration_ms: 0,
-            }));
+            results.push((
+                name,
+                id,
+                warning.clone(),
+                ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(warning),
+                    duration_ms: 0,
+                },
+            ));
         }
 
         // Publish tool execution events

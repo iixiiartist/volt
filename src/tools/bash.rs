@@ -13,9 +13,18 @@ fn build_shell_command(user_command: &str) -> Command {
     if is_windows() {
         let mut cmd = Command::new("cmd.exe");
         cmd.env_clear()
-            .env("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap_or_else(|_| "C:\\Windows".into()))
-            .env("TEMP", std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()))
-            .env("TMP", std::env::var("TMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()))
+            .env(
+                "SYSTEMROOT",
+                std::env::var("SYSTEMROOT").unwrap_or_else(|_| "C:\\Windows".into()),
+            )
+            .env(
+                "TEMP",
+                std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()),
+            )
+            .env(
+                "TMP",
+                std::env::var("TMP").unwrap_or_else(|_| "C:\\Windows\\Temp".into()),
+            )
             .env("PATH", std::env::var("PATH").unwrap_or_default());
         cmd.arg("/c").arg(user_command);
         cmd

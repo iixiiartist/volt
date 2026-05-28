@@ -5,8 +5,14 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoutineTrigger {
     Cron(String),
-    Event { event: String, filter: Option<serde_json::Value> },
-    Webhook { path: String, secret: String },
+    Event {
+        event: String,
+        filter: Option<serde_json::Value>,
+    },
+    Webhook {
+        path: String,
+        secret: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

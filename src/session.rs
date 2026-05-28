@@ -211,10 +211,7 @@ pub fn compute_state_hash(messages: &[Message]) -> String {
 }
 
 /// Save a checkpoint for a given session+iteration with retry tracking.
-pub async fn save_checkpoint(
-    pool: &SqlitePool,
-    data: &CheckpointData,
-) -> anyhow::Result<()> {
+pub async fn save_checkpoint(pool: &SqlitePool, data: &CheckpointData) -> anyhow::Result<()> {
     let state_hash = compute_state_hash(&data.messages);
 
     // Check if this checkpoint already exists — if so, increment retry count
@@ -271,7 +268,9 @@ pub async fn load_latest_checkpoint(
     .fetch_optional(pool)
     .await?;
 
-    let Some(row) = row else { return Ok(None); };
+    let Some(row) = row else {
+        return Ok(None);
+    };
 
     let iteration: i64 = row.try_get("iteration")?;
     let messages_json: String = row.try_get("messages_json")?;
@@ -280,7 +279,10 @@ pub async fn load_latest_checkpoint(
     let messages: Vec<Message> = serde_json::from_str(&messages_json)?;
     let tokens: serde_json::Value = serde_json::from_str(&token_json)?;
     let token_prompt = tokens.get("prompt").and_then(|v| v.as_u64()).unwrap_or(0);
-    let token_completion = tokens.get("completion").and_then(|v| v.as_u64()).unwrap_or(0);
+    let token_completion = tokens
+        .get("completion")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     Ok(Some(CheckpointData {
         session_id,

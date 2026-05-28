@@ -1,10 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::post,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, response::Json, routing::post, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -32,7 +26,8 @@ impl WebhookChannel {
         Self { port, secret }
     }
 
-    pub async fn serve(&self,
+    pub async fn serve(
+        &self,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         let state = Arc::new(self.clone());
@@ -63,6 +58,9 @@ async fn chat_handler(
         "Webhook received: '{}'. Agent integration pending.",
         req.message
     );
-    let session_id = req.session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let session_id = req
+        .session_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     Ok(Json(ChatResponse { reply, session_id }))
 }

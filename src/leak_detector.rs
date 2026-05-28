@@ -82,7 +82,7 @@ impl LeakDetector {
         }
 
         // Sort by start descending so we can replace without invalidating offsets
-        replacements.sort_by(|a, b| b.0.cmp(&a.0));
+        replacements.sort_by_key(|b| std::cmp::Reverse(b.0));
         for (start, end, replacement) in replacements {
             redacted.replace_range(start..end, &replacement);
         }
@@ -126,7 +126,8 @@ mod tests {
     #[test]
     fn test_jwt_redaction() {
         let ld = LeakDetector::new();
-        let text = "token: eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMe";
+        let text =
+            "token: eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMe";
         let result = ld.scan(text);
         assert!(!result.found.is_empty());
         assert!(result.redacted_text.contains("[REDACTED:jwt]"));

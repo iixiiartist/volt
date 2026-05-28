@@ -24,18 +24,16 @@ impl crate::channels::Channel for TelegramChannel {
             let bot = Bot::new(&self.token);
             tracing::info!("[telegram] bot started");
 
-            let handler = dptree::entry()
-                .branch(Update::filter_message().endpoint(
-                    |msg: Message, _: Bot| async move {
-                        if let Some(text) = msg.text() {
-                            tracing::info!("[telegram] received: {}", text);
-                        }
-                        anyhow::Ok(())
-                    },
-                ));
+            let handler = dptree::entry().branch(Update::filter_message().endpoint(
+                |msg: Message, _: Bot| async move {
+                    if let Some(text) = msg.text() {
+                        tracing::info!("[telegram] received: {}", text);
+                    }
+                    anyhow::Ok(())
+                },
+            ));
 
-            let mut dispatcher = Dispatcher::builder(bot, handler)
-                .build();
+            let mut dispatcher = Dispatcher::builder(bot, handler).build();
 
             tokio::select! {
                 _ = dispatcher.dispatch() => {},

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
-use volt::jobs::JobManager;
 use volt::heartbeat::Heartbeat;
 use volt::jobs::monitor::SelfRepairMonitor;
+use volt::jobs::JobManager;
 use volt::routines::engine::RoutineEngine;
 
 #[tokio::test]
@@ -15,7 +15,8 @@ async fn test_heartbeat_instantiation() {
 #[tokio::test]
 async fn test_jobs_monitor_instantiation() {
     let manager = Arc::new(JobManager::new(None));
-    let _monitor = SelfRepairMonitor::new(manager, Duration::from_secs(30), Duration::from_secs(300));
+    let _monitor =
+        SelfRepairMonitor::new(manager, Duration::from_secs(30), Duration::from_secs(300));
     assert!(true);
 }
 

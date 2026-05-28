@@ -26,9 +26,7 @@ fn xml_escape(input: &str) -> String {
 }
 
 fn xml_escape_attr(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
+    input.replace('&', "&amp;").replace('"', "&quot;")
 }
 
 #[cfg(test)]

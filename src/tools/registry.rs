@@ -1,7 +1,7 @@
-use crate::capability::{CapabilityManager, tool_required_scope};
+use crate::attenuation::{effective_permission, TrustLevel};
+use crate::capability::{tool_required_scope, CapabilityManager};
 use crate::cosine_similarity;
 use crate::embedding::EmbeddingClient;
-use crate::attenuation::{TrustLevel, effective_permission};
 use crate::models::{PermissionLevel, ToolDefinition, ToolResult};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,7 @@ impl ToolRegistry {
         .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_with_permission(
         &self,
         name: &str,
@@ -117,21 +118,18 @@ impl ToolRegistry {
         let required_scope = tool_required_scope(name);
 
         // Find a valid token before reserving (advisory fast-fail)
-        let token = cap_mgr
-            .find_token(&required_scope)
-            .await
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "capability denied: no valid token for scope {:?} (tool '{}')",
-                    required_scope,
-                    name
-                )
-            })?;
+        let token = cap_mgr.find_token(&required_scope).await.ok_or_else(|| {
+            anyhow::anyhow!(
+                "capability denied: no valid token for scope {:?} (tool '{}')",
+                required_scope,
+                name
+            )
+        })?;
 
         // Verify the token's HMAC signature
-        cap_mgr.verify(&token, &required_scope).map_err(|e| {
-            anyhow::anyhow!("capability verify failed for tool '{}': {}", name, e)
-        })?;
+        cap_mgr
+            .verify(&token, &required_scope)
+            .map_err(|e| anyhow::anyhow!("capability verify failed for tool '{}': {}", name, e))?;
 
         // Atomic reserve + guard creation. Eliminates the budget-leak
         // window where a panic between reserve() and RefundGuard::new()
@@ -173,7 +171,10 @@ impl ToolRegistry {
 
     /// Legacy execute path — does NOT enforce capability checks.
     /// Kept only for test backward compatibility.
-    #[deprecated(since = "0.2.0", note = "CRITICAL SECURITY RISK: Bypasses capability tracking. Use execute_gated() instead.")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "CRITICAL SECURITY RISK: Bypasses capability tracking. Use execute_gated() instead."
+    )]
     pub async fn execute(&self, name: &str, args: &Value) -> anyhow::Result<ToolResult> {
         let tool = self
             .tools
@@ -288,7 +289,8 @@ impl ToolRegistry {
             .iter()
             .enumerate()
             .filter_map(|(i, (_, _, _, emb))| {
-                emb.as_ref().map(|e| (cosine_similarity(e, query_embedding), i))
+                emb.as_ref()
+                    .map(|e| (cosine_similarity(e, query_embedding), i))
             })
             .collect();
         dense_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -297,9 +299,10 @@ impl ToolRegistry {
         // Sparse: BM25 ranking (if query text provided)
         let bm25_order: Vec<usize> = if let Some(qt) = query_text {
             let bm25 = crate::vector_index::Bm25Scorer::build(
-                tool_entries.iter().enumerate().map(|(i, (name, desc, _, _))| {
-                    (i, format!("{}: {}", name, desc))
-                }),
+                tool_entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, desc, _, _))| (i, format!("{}: {}", name, desc))),
                 1.2,
                 0.75,
                 0.5,
@@ -402,25 +405,41 @@ fn embed_content_hash(items: &[(String, String)]) -> String {
 ///
 /// **Performance:** Disk I/O is offloaded via `tokio::fs`. Zero blocking on the main thread loop.
 /// **Time Complexity:** O(N) where N is the file size in bytes.
-async fn load_embed_cache_async(path: &std::path::Path, expected_hash: &str) -> Option<Vec<(String, Vec<f32>)>> {
+async fn load_embed_cache_async(
+    path: &std::path::Path,
+    expected_hash: &str,
+) -> Option<Vec<(String, Vec<f32>)>> {
     let data = tokio::fs::read_to_string(path).await.ok()?;
     let cache: EmbedCache = serde_json::from_str(&data).ok()?;
     if cache.hash != expected_hash {
         return None;
     }
-    Some(cache.entries.into_iter().map(|e| (e.name, e.embedding)).collect())
+    Some(
+        cache
+            .entries
+            .into_iter()
+            .map(|e| (e.name, e.embedding))
+            .collect(),
+    )
 }
 
 /// Asynchronously saves the embedding cache to disk, offloaded from the async runtime.
 ///
 /// **Performance:** Uses `tokio::fs::write` to avoid blocking the Tokio worker thread.
-async fn save_embed_cache_async(path: &std::path::Path, hash: &str, entries: &[(String, Vec<f32>)]) {
+async fn save_embed_cache_async(
+    path: &std::path::Path,
+    hash: &str,
+    entries: &[(String, Vec<f32>)],
+) {
     let cache = EmbedCache {
         hash: hash.to_string(),
-        entries: entries.iter().map(|(name, emb)| EmbedCacheEntry {
-            name: name.clone(),
-            embedding: emb.clone(),
-        }).collect(),
+        entries: entries
+            .iter()
+            .map(|(name, emb)| EmbedCacheEntry {
+                name: name.clone(),
+                embedding: emb.clone(),
+            })
+            .collect(),
     };
     if let Ok(json) = serde_json::to_string(&cache) {
         let _ = tokio::fs::write(path, &json).await;

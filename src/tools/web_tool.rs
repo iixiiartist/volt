@@ -66,9 +66,15 @@ pub fn validate_url(url_str: &str) -> Result<Url, String> {
         .ok_or_else(|| "URL missing host".to_string())?;
 
     // Network allowlist check
-    let allowed_hosts: Option<Vec<String>> = std::env::var("VOLT_ALLOWED_HOSTS").ok().map(|s| s.split(',').map(|h| h.trim().to_string()).filter(|h| !h.is_empty()).collect());
+    let allowed_hosts: Option<Vec<String>> = std::env::var("VOLT_ALLOWED_HOSTS").ok().map(|s| {
+        s.split(',')
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect()
+    });
     if let Some(ref hosts) = allowed_hosts {
-        if let Err(e) = crate::network_policy::NetworkPolicy::check(url_str, Some(hosts.as_slice())) {
+        if let Err(e) = crate::network_policy::NetworkPolicy::check(url_str, Some(hosts.as_slice()))
+        {
             return Err(format!("network policy: {}", e));
         }
     }
@@ -85,8 +91,6 @@ pub fn validate_url(url_str: &str) -> Result<Url, String> {
 
     Ok(parsed)
 }
-
-
 
 pub async fn web_fetch(url: &str) -> ToolResult {
     let started = Instant::now();

@@ -156,16 +156,14 @@ pub fn linearize_messages(messages: &[Message]) -> Vec<&Message> {
 
     // Build a lookup: id -> &Message
     // Build a lookup: id -> &Message (used in branching resolution)
-    let _by_id: std::collections::HashMap<Uuid, &Message> = messages
-        .iter()
-        .map(|m| (m.id, m))
-        .collect();
+    let _by_id: std::collections::HashMap<Uuid, &Message> =
+        messages.iter().map(|m| (m.id, m)).collect();
 
     // Find root messages (no parent, or parent not in set) and leaf messages
     let ids: std::collections::HashSet<Uuid> = messages.iter().map(|m| m.id).collect();
     let roots: Vec<&Message> = messages
         .iter()
-        .filter(|m| m.parent_message_id.map_or(true, |p| !ids.contains(&p)))
+        .filter(|m| m.parent_message_id.is_none_or(|p| !ids.contains(&p)))
         .collect();
 
     // BFS level-ordering: start from roots

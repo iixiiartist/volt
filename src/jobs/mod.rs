@@ -60,7 +60,7 @@ impl JobManager {
         let id = Uuid::new_v4();
         if let Some(ref pool) = self.pool {
             sqlx::query(
-                "INSERT INTO jobs (id, description, state, context) VALUES ($1, $2, 'Pending', $3)"
+                "INSERT INTO jobs (id, description, state, context) VALUES ($1, $2, 'Pending', $3)",
             )
             .bind(id)
             .bind(description)
@@ -112,24 +112,20 @@ impl JobManager {
 
     pub async fn cancel_job(&self, id: Uuid) -> anyhow::Result<()> {
         if let Some(ref pool) = self.pool {
-            sqlx::query(
-                "UPDATE jobs SET state = 'Cancelled', updated_at = NOW() WHERE id = $1"
-            )
-            .bind(id)
-            .execute(pool)
-            .await?;
+            sqlx::query("UPDATE jobs SET state = 'Cancelled', updated_at = NOW() WHERE id = $1")
+                .bind(id)
+                .execute(pool)
+                .await?;
         }
         Ok(())
     }
 
     pub async fn heartbeat(&self, id: Uuid) -> anyhow::Result<()> {
         if let Some(ref pool) = self.pool {
-            sqlx::query(
-                "UPDATE jobs SET last_activity_at = NOW() WHERE id = $1"
-            )
-            .bind(id)
-            .execute(pool)
-            .await?;
+            sqlx::query("UPDATE jobs SET last_activity_at = NOW() WHERE id = $1")
+                .bind(id)
+                .execute(pool)
+                .await?;
         }
         Ok(())
     }
@@ -164,7 +160,7 @@ impl JobManager {
             let rows: Vec<(Uuid,)> = sqlx::query_as(
                 "UPDATE jobs SET state = 'Stuck', updated_at = NOW()
                  WHERE state = 'InProgress' AND last_activity_at < NOW() - INTERVAL '1 second' * $1
-                 RETURNING id"
+                 RETURNING id",
             )
             .bind(timeout_secs)
             .fetch_all(pool)
@@ -176,12 +172,11 @@ impl JobManager {
 
     pub async fn retry_job(&self, id: Uuid) -> anyhow::Result<bool> {
         if let Some(ref pool) = self.pool {
-            let row: Option<(i32, i32)> = sqlx::query_as(
-                "SELECT attempt_count, max_attempts FROM jobs WHERE id = $1"
-            )
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+            let row: Option<(i32, i32)> =
+                sqlx::query_as("SELECT attempt_count, max_attempts FROM jobs WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?;
             if let Some((attempts, max)) = row {
                 if attempts < max {
                     sqlx::query(
