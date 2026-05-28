@@ -20,6 +20,10 @@ volt-bfcl/*.txt
 # Competitive intelligence (external analysis docs)
 VOLT_IRONCLAW_PLAN.md
 
+# Netlify / frontend deployment artifacts (Rust binary only — no web UI)
+.netlify/
+netlify.toml
+
 # Temp scripts and artifacts
 script*.py
 search*.py
