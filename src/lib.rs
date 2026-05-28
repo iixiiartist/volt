@@ -1,6 +1,11 @@
+#![deny(deprecated)]
+
 pub mod agent;
 pub mod attenuation;
+pub mod capability;
+
 pub mod channels;
+pub mod checkpoint_journal;
 pub mod code_parser;
 pub mod command_guard;
 pub mod commands;
@@ -39,11 +44,25 @@ pub mod worker;
 #[cfg(any(test, feature = "testutils"))]
 pub mod test_utils;
 
-pub fn http_client(timeout_secs: u64) -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .expect("reqwest client build must succeed")
+use std::sync::OnceLock;
+
+/// Returns a shared reqwest::Client backed by a single global connection pool.
+/// All callers share the same pool (`pool_max_idle_per_host=100`,
+/// `tcp_keepalive=60s`), eliminating the 800+ idle-ephemeral-connection
+/// problem from ad-hoc per-tool client creation.
+pub fn http_client() -> reqwest::Client {
+    static GLOBAL_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    GLOBAL_HTTP_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_max_idle_per_host(100)
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .tcp_keepalive(std::time::Duration::from_secs(60))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("global reqwest client build must succeed")
+        })
+        .clone()
 }
 
 /// Cosine similarity between two vectors of equal length.

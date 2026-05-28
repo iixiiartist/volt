@@ -1,14 +1,14 @@
+use crate::agent::tool_parser::parse_lossy_json;
 use crate::llm::provider::TokenCallback;
 use crate::llm::LLMProvider;
 use crate::models::{LLMRequest, LLMResponse, ToolCall, Usage};
 use async_trait::async_trait;
 use futures::StreamExt;
-use reqwest::Client;
 use serde_json::json;
 use std::sync::Arc;
 
 pub struct AnthropicProvider {
-    http: Client,
+    http: reqwest::Client,
     api_key: String,
     base_url: String,
     name: String,
@@ -17,7 +17,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: String, base_url: Option<String>, name: String) -> Self {
         Self {
-            http: crate::http_client(300),
+            http: crate::http_client().clone(),
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".into()),
             name,
@@ -143,15 +143,20 @@ impl LLMProvider for AnthropicProvider {
             body["tools"] = json!(ts);
         }
 
-        let response = self
+        let fut = self
             .http
             .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
-            .send()
-            .await?
-            .error_for_status()?;
+            .send();
+
+        let response = tokio::time::timeout(std::time::Duration::from_secs(300), fut)
+            .await
+            .map_err(|_| anyhow::anyhow!("anthropic request timed out after 300s"))?
+            .map_err(|e| anyhow::anyhow!("anthropic request failed: {}", e))?
+            .error_for_status()
+            .map_err(|e| anyhow::anyhow!("anthropic HTTP error: {}", e))?;
 
         let mut full_content = String::new();
         let mut tool_calls_acc: Vec<ToolCall> = Vec::new();
@@ -194,17 +199,14 @@ impl LLMProvider for AnthropicProvider {
                                     current_tool_call = Some(ToolCall {
                                         id,
                                         name,
-                                        arguments: serde_json::from_str(input).unwrap_or_default(),
+                                        arguments: parse_lossy_json(input),
                                     });
                                 } else if let Some(ref mut current) = current_tool_call {
-                                    if let Ok(additional) =
-                                        serde_json::from_str::<serde_json::Value>(input)
-                                    {
-                                        if let Some(existing) = current.arguments.as_object_mut() {
-                                            if let Some(additional_obj) = additional.as_object() {
-                                                for (k, v) in additional_obj {
-                                                    existing.insert(k.clone(), v.clone());
-                                                }
+                                    let additional = parse_lossy_json(input);
+                                    if let Some(existing) = current.arguments.as_object_mut() {
+                                        if let Some(additional_obj) = additional.as_object() {
+                                            for (k, v) in additional_obj {
+                                                existing.insert(k.clone(), v.clone());
                                             }
                                         }
                                     }

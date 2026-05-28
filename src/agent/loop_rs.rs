@@ -11,12 +11,17 @@ use crate::skills::SkillRegistry;
 use crate::tools::ToolRegistry;
 use crate::worker::SeedChannel;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
+use uuid::Uuid;
 
 /// An autonomous agent — holds configuration, LLM provider, tool registry, and session state.
+/// Maximum tool output characters before truncation with a reference token.
+const MAX_TOOL_OUTPUT_CHARS: usize = 2000;
+
 /// Built via `Agent::new()` with chained `.with_*()` methods for context, skills, sessions, etc.
 pub struct Agent {
     config: AgentConfig,
@@ -35,6 +40,9 @@ pub struct Agent {
     workspace: Option<PathBuf>,
     event_bus: Option<crate::events::EventBus>,
     failure_tracker: Option<crate::tool_failure_tracker::ToolFailureTracker>,
+    tool_output_buffer: Arc<Mutex<HashMap<String, String>>>,
+    capability_manager: Arc<crate::capability::CapabilityManager>,
+    checkpoint_journal: Option<Arc<crate::checkpoint_journal::CheckpointJournal>>,
 }
 
 impl Agent {
@@ -47,7 +55,7 @@ impl Agent {
 }
 
 impl Agent {
-    pub fn new(
+    pub async fn new(
         config: AgentConfig,
         provider: Box<dyn LLMProvider>,
         tools: Arc<ToolRegistry>,
@@ -61,10 +69,42 @@ impl Agent {
             allow_session: false,
             total_prompt_tokens: 0,
             total_completion_tokens: 0,
+            last_saved_message_idx: 0,
             messages: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
+        let mgr = Arc::new(crate::capability::CapabilityManager::new());
+        mgr.issue(
+            crate::capability::CapabilityScope::FsRead,
+            100,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::FsWrite,
+            50,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::System,
+            20,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::Network,
+            200,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::Database,
+            30,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::Memory,
+            50,
+            chrono::Duration::hours(24),
+        ).await;
         Self {
             config,
             state: Arc::new(Mutex::new(state)),
@@ -82,6 +122,9 @@ impl Agent {
             workspace: None,
             event_bus: None,
             failure_tracker: None,
+            tool_output_buffer: Arc::new(Mutex::new(HashMap::new())),
+            checkpoint_journal: None,
+            capability_manager: mgr,
         }
     }
 
@@ -142,6 +185,22 @@ impl Agent {
         self
     }
 
+    /// Attach a batched checkpoint journal to avoid SQLite write-lock contention
+    /// in parallel multi-agent setups. When set, `save_checkpoint()` sends to
+    /// the journal's in-memory channel instead of writing directly to SQLite.
+    pub fn with_checkpoint_journal(mut self, journal: Arc<crate::checkpoint_journal::CheckpointJournal>) -> Self {
+        self.checkpoint_journal = Some(journal);
+        self
+    }
+
+    /// Replace the default CapabilityManager with a shared one.
+    /// Use this for sub-agents that should share a parent's budget quotas
+    /// instead of getting fresh per-session budgets.
+    pub fn with_capability_manager(mut self, cap_mgr: Arc<crate::capability::CapabilityManager>) -> Self {
+        self.capability_manager = cap_mgr;
+        self
+    }
+
     /// Precision mode: only Tool + Artifact context kinds active.
     /// Used for BFCL-style function calling, code tasks, structured output.
     fn is_precision_mode(&self) -> bool {
@@ -190,6 +249,8 @@ impl Agent {
                     state.messages.insert(
                         0,
                         Message {
+                            id: Uuid::new_v4(),
+                            parent_message_id: None,
                             role: "system".into(),
                             content: Arc::new(current_prompt),
                             tool_calls: None,
@@ -205,6 +266,10 @@ impl Agent {
         self.push_user_message(input).await;
 
         for _iteration in 0..self.config.max_iterations {
+            // Cooperative yield to prevent Tokio scheduler starvation
+            // in multi-agent or concurrent serving topologies.
+            tokio::task::yield_now().await;
+
             if self.is_cancelled() {
                 return Err(anyhow::anyhow!("cancelled by user"));
             }
@@ -292,6 +357,14 @@ impl Agent {
                 state.total_completion_tokens += usage.completion_tokens;
             }
 
+            // Checkpoint after each iteration so crashes can rehydrate
+            self.save_checkpoint(
+                state.iteration,
+                &state.messages,
+                state.total_prompt_tokens,
+                state.total_completion_tokens,
+            ).await;
+
             // Audit log: record this complete LLM turn (request + response) in ContextStore
             self.audit_turn(&request, &response, &state).await;
 
@@ -312,7 +385,10 @@ impl Agent {
                             .await;
                         for (idx, err) in &validation_errors {
                             let tool_name = &tool_calls[*idx].name;
+                            let parent_id = crate::models::Message::last_id(&state.messages);
                             state.messages.push(Message {
+                                id: Uuid::new_v4(),
+                                parent_message_id: parent_id,
                                 role: "tool".into(),
                                 content: Arc::new(
                                     crate::agent::tool_parser::build_validation_error_message(
@@ -325,6 +401,14 @@ impl Agent {
                                 created_at: chrono::Utc::now(),
                             });
                         }
+                        // Save checkpoint so rehydration sees validation errors
+                        // — otherwise the loop retries with the same state forever.
+                        self.save_checkpoint(
+                            state.iteration,
+                            &state.messages,
+                            state.total_prompt_tokens,
+                            state.total_completion_tokens,
+                        ).await;
                         drop(state);
                         continue;
                     }
@@ -339,7 +423,7 @@ impl Agent {
                     self.push_assistant_message(&mut state, &response, Some(tool_calls))
                         .await;
                     drop(state);
-                    self.save_session_messages().await;
+                    self.save_session_messages_delta().await;
                     return Ok(answer);
                 }
 
@@ -359,9 +443,32 @@ impl Agent {
                 let mut state = self.state.lock().await;
                 for (tool_name, call_id, output, result) in tool_results {
                     self.seed_artifact_if_applicable(&tool_name, &result).await;
+                    let msg_content = if output.len() > MAX_TOOL_OUTPUT_CHARS {
+                        // Deterministic reference based on tool name + iteration
+                        // so the prompt prefix stays identical across retries (KV-cache friendly).
+                        let rid = format!("ref_{}_turn_{}", tool_name, state.iteration);
+                        let snippet = if output.len() > 500 {
+                            let mut idx = 500;
+                            while !output.is_char_boundary(idx) && idx > 0 { idx -= 1; }
+                            &output[..idx]
+                        } else {
+                            &output
+                        };
+                        self.tool_output_buffer.lock().await
+                            .insert(rid.clone(), output.clone());
+                        format!(
+                            "[Tool output: {} ({} chars)]\n{}\n\n[Reference: {} — use `get_tool_output` with ref_id=\"{}\" to inspect full output]",
+                            tool_name, output.len(), snippet, rid, rid
+                        )
+                    } else {
+                        output.clone()
+                    };
+                    let parent_id = crate::models::Message::last_id(&state.messages);
                     state.messages.push(Message {
+                        id: Uuid::new_v4(),
+                        parent_message_id: parent_id,
                         role: "tool".into(),
-                        content: Arc::new(output.clone()),
+                        content: Arc::new(msg_content),
                         tool_calls: None,
                         tool_result: Some(output),
                         tool_name: Some(call_id),
@@ -381,13 +488,13 @@ impl Agent {
                 self.seed_episode_complete(input, response.content.as_str(), &state)
                     .await;
                 drop(state);
-                self.save_session_messages().await;
+                self.save_session_messages_delta().await;
                 return Ok(Arc::unwrap_or_clone(response.content));
             }
         }
 
         // Max iterations exhausted — return last meaningful content
-        self.save_session_messages().await;
+        self.save_session_messages_delta().await;
         let state = self.state.lock().await;
         let last_answer = state
             .messages
@@ -412,18 +519,83 @@ impl Agent {
         }
     }
 
-    /// Audit log: store the complete LLM turn (request + response) as a ContextEntry.
-    /// Enables full traceability for EU AI Act Article 12 compliance.
-    async fn save_session_messages(&self) {
+    /// Persist only new messages since the last save (delta-based).
+    /// Uses a high-water mark (`last_saved_message_idx`) to avoid
+    /// re-writing the entire message history every turn — eliminating
+    /// the O(N) write-amplification bug under multi-agent load.
+    async fn save_session_messages_delta(&self) {
         if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
-            let state = self.state.lock().await;
-            // Only save messages that are new (not loaded from session)
-            // We track by checking if messages exceed what was originally loaded
-            // Simple heuristic: save all messages — SQLite INSERT is idempotent via ON CONFLICT
-            for msg in &state.messages {
-                if let Err(e) = crate::session::save_message(pool, sid, msg).await {
+            let mut state = self.state.lock().await;
+            let last = state.last_saved_message_idx;
+            let current = state.messages.len();
+            if last >= current {
+                return;
+            }
+            // Batch new messages in a single transaction
+            let mut tx = match pool.begin().await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::warn!("[session] begin tx failed: {}", e);
+                    return;
+                }
+            };
+            for msg in &state.messages[last..current] {
+                if let Err(e) = sqlx::query(
+                    "INSERT OR REPLACE INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                )
+                .bind(sid.to_string())
+                .bind(&msg.role)
+                .bind(msg.content.as_str())
+                .bind(msg.tool_calls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
+                .bind(msg.tool_result.as_ref())
+                .bind(msg.tool_name.as_ref())
+                .bind(msg.created_at.to_rfc3339())
+                .execute(&mut *tx)
+                .await
+                {
                     tracing::warn!("[session] failed to save message: {}", e);
                 }
+            }
+            if let Err(e) = tx.commit().await {
+                tracing::warn!("[session] commit failed: {}", e);
+            } else {
+                state.last_saved_message_idx = current;
+            }
+        }
+    }
+
+    async fn save_checkpoint(
+        &self,
+        iteration: u32,
+        messages: &[crate::models::Message],
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) {
+        if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
+            let data = crate::session::CheckpointData {
+                session_id: sid,
+                iteration,
+                messages: messages.to_vec(),
+                token_prompt: prompt_tokens,
+                token_completion: completion_tokens,
+            };
+
+            // If a checkpoint journal is configured, use it for batched async writes.
+            if let Some(ref journal) = self.checkpoint_journal {
+                journal.push(data).await;
+                return;
+            }
+
+            // Fallback: direct synchronous write (legacy path)
+            // Circuit breaker: check if we're about to re-enter a poisoned state
+            let state_hash = crate::session::compute_state_hash(messages);
+            if let Err(msg) = crate::session::check_circuit_breaker(pool, sid, iteration, &state_hash).await {
+                tracing::error!("[circuit-breaker] {}", msg);
+                return;
+            }
+
+            if let Err(e) = crate::session::save_checkpoint(pool, &data).await {
+                tracing::warn!("[checkpoint] failed: {}", e);
             }
         }
     }
@@ -486,7 +658,10 @@ impl Agent {
             input.to_string()
         };
         let mut state = self.state.lock().await;
+        let parent_id = crate::models::Message::last_id(&state.messages);
         state.messages.push(Message {
+            id: Uuid::new_v4(),
+            parent_message_id: parent_id,
             role: "user".into(),
             content: Arc::new(safe_input),
             tool_calls: None,
@@ -559,9 +734,12 @@ impl Agent {
                     .iter()
                     .position(|m| m.role != "system")
                     .unwrap_or(state.messages.len());
+                let parent_id = crate::models::Message::last_id(&state.messages);
                 state.messages.insert(
                     insert_idx,
                     Message {
+                        id: Uuid::new_v4(),
+                        parent_message_id: parent_id,
                         role: "system".into(),
                         content: Arc::new(format!(
                             "## Retrieved context\n{}\n\nDO NOT repeat or echo the above context. Respond to the user's request directly.",
@@ -587,7 +765,10 @@ impl Agent {
                         .collect();
                     if !block.is_empty() {
                         let mut state = self.state.lock().await;
+                        let parent_id = crate::models::Message::last_id(&state.messages);
                         state.messages.push(Message {
+                            id: Uuid::new_v4(),
+                            parent_message_id: parent_id,
                             role: "system".into(),
                             content: Arc::new(format!(
                                 "## Retrieved skills\n{}\n\nDO NOT repeat or echo the above context.",
@@ -614,7 +795,10 @@ impl Agent {
                             .collect();
                         let ctx = format!("## Relevant memories\n{}", block.join("\n"));
                         let mut state = self.state.lock().await;
+                        let parent_id = crate::models::Message::last_id(&state.messages);
                         state.messages.push(Message {
+                            id: Uuid::new_v4(),
+                            parent_message_id: parent_id,
                             role: "system".into(),
                             content: Arc::new(ctx),
                             tool_calls: None,
@@ -630,11 +814,28 @@ impl Agent {
         context_embedding.map(|e| (e, context_query))
     }
 
+    /// Push a message with automatic id assignment and parent linkage.
+    /// This preserves the DAG topology so that `linearize_messages()` can
+    /// reconstruct the correct chronological order in branching conversations.
+    async fn push_message(
+        state: &mut tokio::sync::MutexGuard<'_, AgentState>,
+        role: impl Into<String>,
+        content: impl Into<String>,
+    ) {
+        let parent_id = crate::models::Message::last_id(&state.messages);
+        let msg = crate::models::Message::new(role, content).with_parent_option(parent_id);
+        state.messages.push(msg);
+    }
+
     async fn build_llm_messages(&self) -> Vec<LLMMessage> {
         let state_snapshot = self.state.lock().await;
         let mut llm_messages: Vec<LLMMessage> = Vec::new();
 
-        for m in &state_snapshot.messages {
+        // Linearize the message DAG into a topological order.
+        // In the common non-branching case this is identical to the push order.
+        let linearized = crate::models::linearize_messages(&state_snapshot.messages);
+
+        for m in linearized {
             let mut msg = LLMMessage {
                 role: m.role.clone(),
                 content: m.content.clone(),
@@ -669,7 +870,6 @@ impl Agent {
         }
 
         // Categorize messages: system (preserve all), conversation (compressible)
-        // System messages containing tool definitions or retrieved context must be kept.
         let mut system_total: u32 = 0;
         let mut conversation_indices: Vec<usize> = Vec::new();
         for (i, msg) in llm_messages.iter().enumerate() {
@@ -700,6 +900,11 @@ impl Agent {
             };
             let mut compressed: Vec<LLMMessage> = Vec::with_capacity(recent.len() + 1);
             if keep_start > 0 {
+                // Seed truncated messages into context store for RAG retrievability
+                let truncated: Vec<&Message> = snapshot.messages[..keep_start.min(snapshot.messages.len())].iter().collect();
+                if let Some(ref store) = self.context_store {
+                    self.seed_truncated_context(store, &truncated).await;
+                }
                 compressed.push(LLMMessage {
                     role: "system".into(),
                     content: std::sync::Arc::new(format!(
@@ -727,15 +932,11 @@ impl Agent {
         }
 
         // Selective compression: keep all system messages, compress conversation history.
-        // The conversation budget is what remains after system messages.
         let conv_budget = budget.saturating_sub(system_total);
 
-        // Build the compressed message list by keeping all system messages
-        // plus as many recent conversation messages as fit in the conv budget.
         let mut conv_running: u32 = 0;
         let mut conv_keep: Vec<(usize, u32)> = Vec::new();
 
-        // Walk conversation indices in reverse (most recent first) to fill budget
         for &idx in conversation_indices.iter().rev() {
             let tok = msg_tokens[idx];
             if conv_running + tok > conv_budget {
@@ -749,14 +950,27 @@ impl Agent {
         let total_conversation: u32 = conversation_indices.iter().map(|&i| msg_tokens[i]).sum();
         let compressed_conv_count = conversation_indices.len().saturating_sub(conv_keep.len());
 
+        // Seed truncated conversation messages into context store
+        if compressed_conv_count > 0 {
+            if let Some(ref store) = self.context_store {
+                let truncated_indices: Vec<&usize> = conversation_indices
+                    .iter()
+                    .filter(|idx| !conv_keep.iter().any(|(ki, _)| ki == *idx))
+                    .collect();
+                let truncated_msgs: Vec<&LLMMessage> = truncated_indices
+                    .iter()
+                    .filter_map(|&&idx| llm_messages.get(idx))
+                    .collect();
+                self.seed_truncated_context_llm(store, &truncated_msgs).await;
+            }
+        }
+
         let mut compressed: Vec<LLMMessage> = Vec::with_capacity(before);
-        // Add all system messages first
         for msg in &llm_messages {
             if msg.role == "system" {
                 compressed.push(msg.clone());
             }
         }
-        // If we dropped conversation messages, add a summary marker
         if compressed_conv_count > 0 {
             compressed.push(LLMMessage {
                 role: "system".into(),
@@ -772,7 +986,6 @@ impl Agent {
                 tool_call_id: None,
             });
         }
-        // Add the kept conversation messages
         for (idx, _) in &conv_keep {
             let msg = &llm_messages[*idx];
             compressed.push(msg.clone());
@@ -785,13 +998,70 @@ impl Agent {
         compressed
     }
 
+    /// Seed truncated messages into the context store so they remain
+    /// retrievable via the existing RAG pipeline despite being removed
+    /// from the active message vector.
+    async fn seed_truncated_context(&self, store: &crate::context::ContextStore, truncated: &[&Message]) {
+        if truncated.is_empty() {
+            return;
+        }
+        let topic_hint = truncated
+            .iter()
+            .take(3)
+            .filter_map(|m| {
+                let c = m.content.trim();
+                if !c.is_empty() && c.len() > 10 {
+                    Some(c.chars().take(120).collect::<String>())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let summary = format!(
+            "[Compressed conversation segment: {} messages. Topics: {}]",
+            truncated.len(),
+            topic_hint
+        );
+        store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+    }
+
+    /// Same as seed_truncated_context but for LLMMessage slices (selective path).
+    async fn seed_truncated_context_llm(&self, store: &crate::context::ContextStore, truncated: &[&LLMMessage]) {
+        if truncated.is_empty() {
+            return;
+        }
+        let topic_hint = truncated
+            .iter()
+            .take(3)
+            .filter_map(|m| {
+                let c = m.content.trim();
+                if !c.is_empty() && c.len() > 10 {
+                    Some(c.chars().take(120).collect::<String>())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let summary = format!(
+            "[Compressed conversation segment: {} messages. Topics: {}]",
+            truncated.len(),
+            topic_hint
+        );
+        store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+    }
+
     async fn push_assistant_message(
         &self,
         state: &mut tokio::sync::MutexGuard<'_, AgentState>,
         response: &LLMResponse,
         tool_calls: Option<&Vec<ToolCall>>,
     ) {
+        let parent_id = crate::models::Message::last_id(&state.messages);
         state.messages.push(Message {
+            id: Uuid::new_v4(),
+            parent_message_id: parent_id,
             role: "assistant".into(),
             content: response.content.clone(),
             tool_calls: tool_calls.cloned(),
@@ -842,24 +1112,50 @@ impl Agent {
             return Vec::new();
         }
 
-        // Failure tracker advisory (blocking)
-        let mut skipped = Vec::new();
+        // Capability token pre-check (advisory — execute_gated enforces the real check)
+        // Uses the registry's `execute_gated` internally which handles verify + reserve
+        // + RefundGuard. We pre-check here to skip tools without budget upfront.
         let mut allowed = Vec::new();
         for tc in tool_calls {
+            let scope = crate::capability::tool_required_scope(&tc.name);
+            let tokens = self.capability_manager.list_tokens().await;
+            let has_valid = tokens.iter().any(|t| {
+                t.scope == scope
+                    && t.remaining > 0
+                    && chrono::Utc::now() <= t.expires_at
+            });
+            if !has_valid {
+                tracing::warn!(
+                    "[capability] no valid token for {:?} — skipping tool '{}'",
+                    scope,
+                    tc.name
+                );
+                continue;
+            }
+            allowed.push(tc.clone());
+        }
+
+        // Failure tracker advisory (blocking)
+        let mut skipped = Vec::new();
+        let mut failure_filtered = Vec::new();
+        for tc in &allowed {
             if let Some(ref tracker) = self.failure_tracker {
                 if let Some(warning) = tracker.should_avoid(&tc.name).await {
                     skipped.push((tc.name.clone(), tc.id.clone(), warning));
                     continue;
                 }
             }
-            allowed.push(tc.clone());
+            failure_filtered.push(tc.clone());
         }
 
-        // Execute approved tools concurrently
-        let futures: Vec<_> = allowed
+        // Execute approved tools concurrently through the gated path.
+        // execute_gated handles verify + reserve + RefundGuard internally.
+        let cap_mgr = self.capability_manager.clone();
+        let futures: Vec<_> = failure_filtered
             .iter()
             .map(|tc| {
                 let tools = self.tools.clone();
+                let cap_mgr = cap_mgr.clone();
                 let name = tc.name.clone();
                 let args = tc.arguments.clone();
                 let id = tc.id.clone();
@@ -867,8 +1163,11 @@ impl Agent {
                 let embedder = self.embedder.clone();
                 info!("executing tool: {} with {}", name, args);
                 async move {
+                    // All capability enforcement (verify + reserve + RefundGuard)
+                    // is handled inside execute_gated. The agent loop no longer
+                    // duplicates this logic.
                     let result = tools
-                        .execute(&name, &args)
+                        .execute_gated(&name, &args, &cap_mgr)
                         .await
                         .unwrap_or_else(|e| ToolResult {
                             success: false,

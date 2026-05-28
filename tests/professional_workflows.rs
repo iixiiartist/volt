@@ -170,7 +170,7 @@ async fn test_final_answer_terminates_agent_loop_and_returns_answer() {
         )
         .await;
 
-    let agent = Agent::new(precision_config(), provider, registry);
+    let agent = Agent::new(precision_config(), provider, registry).await;
     let result = agent.run("What is the meaning of life?").await;
     assert!(result.is_ok(), "final_answer should return Ok");
     assert_eq!(result.unwrap(), "42 is the answer");
@@ -183,7 +183,7 @@ async fn test_system_prompt_injected_at_position_zero() {
     )]));
     let registry = volt::test_utils::test_tool_registry().await;
 
-    let agent = Agent::new(balanced_config(), provider, registry);
+    let agent = Agent::new(balanced_config(), provider, registry).await;
     let _ = agent.run("test run").await;
 
     let state = agent.state().lock().await;
@@ -209,7 +209,7 @@ async fn test_max_iteration_fallback_returns_last_content() {
 
     let provider = Box::new(MockLLMProvider::new(responses));
     let registry = volt::test_utils::test_tool_registry().await;
-    let agent = Agent::new(balanced_config(), provider, registry);
+    let agent = Agent::new(balanced_config(), provider, registry).await;
 
     let result = agent.run("Loop forever").await;
     assert!(
@@ -228,7 +228,7 @@ async fn test_precision_mode_skips_session_loading() {
         "precision done",
     )]));
     let registry = volt::test_utils::test_tool_registry().await;
-    let agent = Agent::new(precision_config(), provider, registry);
+    let agent = Agent::new(precision_config(), provider, registry).await;
     let result = agent.run("simple precision task").await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "precision done");
@@ -246,7 +246,7 @@ async fn test_all_three_modes_produce_valid_agent_runs() {
             &response,
         )]));
         let registry = volt::test_utils::test_tool_registry().await;
-        let agent = Agent::new(config.clone(), provider, registry);
+        let agent = Agent::new(config.clone(), provider, registry).await;
         let result = agent.run(&format!("test in {} mode", label)).await;
         assert!(result.is_ok(), "{} mode agent should complete", label);
     }
@@ -289,7 +289,7 @@ async fn test_parallel_workflow_pattern() {
                     essential_tools: vec![],
                     context_kind_quotas: Default::default(),
                 };
-                let agent = Agent::new(config, provider, reg);
+                let agent = Agent::new(config, provider, reg).await;
                 agent.run(task).await
             })
         })
@@ -327,7 +327,7 @@ async fn test_pipeline_workflow_with_output_chaining() {
             essential_tools: vec![],
             context_kind_quotas: Default::default(),
         };
-        let agent = Agent::new(config, provider, registry.clone());
+        let agent = Agent::new(config, provider, registry.clone()).await;
         agent
             .run("Find all Rust files")
             .await
@@ -358,7 +358,7 @@ async fn test_pipeline_workflow_with_output_chaining() {
             essential_tools: vec![],
             context_kind_quotas: Default::default(),
         };
-        let agent = Agent::new(config, provider, registry);
+        let agent = Agent::new(config, provider, registry).await;
         let output = agent.run(&stage2_task).await.expect("Stage 2 must succeed");
         assert!(
             output.contains("3"),
@@ -416,7 +416,7 @@ async fn test_supervisor_routes_task_to_worker_agents() {
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
     };
-    let agent = Agent::new(config, provider, registry);
+    let agent = Agent::new(config, provider, registry).await;
     let result = agent.run("Run code analysis").await;
     assert!(result.is_ok());
 }
@@ -982,7 +982,7 @@ async fn test_parallel_agents_with_mixed_modes() {
                 };
 
                 let ctx_kinds = config.enabled_context_kinds.clone();
-                let agent = Agent::new(config, provider, reg);
+                let agent = Agent::new(config, provider, reg).await;
                 let result = agent.run(task).await;
 
                 // Each agent must complete successfully

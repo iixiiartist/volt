@@ -20,6 +20,8 @@ pub async fn web_scrape(url: &str, selector: &str) -> ToolResult {
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build()
     {
         Ok(c) => c,
@@ -117,6 +119,8 @@ pub async fn web_scrape_all(url: &str) -> ToolResult {
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build()
     {
         Ok(c) => c,

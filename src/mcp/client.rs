@@ -78,7 +78,11 @@ impl MCPClient {
 
         match &self.transport {
             MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } => {
-                let client = reqwest::Client::new();
+                let client = reqwest::Client::builder()
+                    .pool_max_idle_per_host(100)
+                    .pool_idle_timeout(std::time::Duration::from_secs(90))
+                    .build()
+                    .unwrap_or_default();
                 let mut req = client.post(url).json(&body);
                 if let Some(hdrs) = headers {
                     for (k, v) in hdrs {
@@ -132,7 +136,11 @@ impl MCPClient {
                 Ok(serde_json::from_str(&stdout)?)
             }
             MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } => {
-                let client = reqwest::Client::new();
+                let client = reqwest::Client::builder()
+                    .pool_max_idle_per_host(100)
+                    .pool_idle_timeout(std::time::Duration::from_secs(90))
+                    .build()
+                    .unwrap_or_default();
                 let mut req = client.post(url).json(body);
                 if let Some(hdrs) = headers {
                     for (k, v) in hdrs {

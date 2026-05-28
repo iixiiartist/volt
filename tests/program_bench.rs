@@ -59,7 +59,7 @@ async fn test_program_bench() {
         essential_tools: volt::models::default_essential_tools(),
         context_kind_quotas: Default::default(),
     };
-    let agent = Agent::new(config, provider, tools);
+    let agent = Agent::new(config, provider, tools).await;
 
     let mut correct = 0u32;
     let total = PROBLEMS.len();

@@ -140,7 +140,7 @@ async fn test_final_answer_terminates_agent_loop() {
         }),
     ).await;
 
-    let agent = Agent::new(precision_config(), provider, registry);
+    let agent = Agent::new(precision_config(), provider, registry).await;
     let result = agent.run("What is the meaning of life?").await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "42 is the answer");
@@ -153,7 +153,7 @@ async fn test_precision_mode_agent_runs_without_context_noise() {
         "done",
     )]));
     let registry = volt::tools::ToolRegistry::new();
-    let agent = Agent::new(precision_config(), provider, registry);
+    let agent = Agent::new(precision_config(), provider, registry).await;
     let result = agent.run("simple task").await;
     assert!(result.is_ok());
 }
@@ -164,7 +164,7 @@ async fn test_balanced_mode_agent_runs_without_context_noise() {
         "done",
     )]));
     let registry = volt::tools::ToolRegistry::new();
-    let agent = Agent::new(balanced_config(), provider, registry);
+    let agent = Agent::new(balanced_config(), provider, registry).await;
     let result = agent.run("simple task").await;
     assert!(result.is_ok());
 }

@@ -108,7 +108,12 @@ async fn http_send(
     headers: &Option<std::collections::HashMap<String, String>>,
     request: serde_json::Value,
 ) -> ToolResult {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .build()
+        .unwrap_or_default();
     let mut req_builder = client.post(url).json(&request);
     if let Some(hdrs) = headers {
         for (k, v) in hdrs {

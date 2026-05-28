@@ -369,7 +369,7 @@ async fn test_workflow2_data_analysis_pipeline() {
         ),
     ]);
 
-    let agent = Agent::new(mock_config("data-analyst", 6), provider, registry.clone());
+    let agent = Agent::new(mock_config("data-analyst", 6), provider, registry.clone()).await;
     let result = agent
         .run("Analyze weather data from https://weather.example.com")
         .await;
@@ -426,7 +426,7 @@ async fn test_workflow3_multi_agent_research() {
         let response = format!("Research findings on '{}': key insights here", topic);
         handles.push(tokio::spawn(async move {
             let provider = mock_result!(&response);
-            let agent = Agent::new(mock_config(name, 3), provider, reg);
+            let agent = Agent::new(mock_config(name, 3), provider, reg).await;
             agent.run(topic).await
         }));
     }
@@ -458,7 +458,7 @@ async fn test_workflow3_multi_agent_research() {
 
     let synth_provider =
         mock_result!("Synthesized report: combined insights from all 3 researchers");
-    let synth_agent = Agent::new(mock_config("synthesizer", 3), synth_provider, registry);
+    let synth_agent = Agent::new(mock_config("synthesizer", 3), synth_provider, registry).await;
     let final_report = synth_agent
         .run(&tasks)
         .await
@@ -638,6 +638,20 @@ async fn test_workflow5_mcp_agent_to_agent() {
     let port = listener.local_addr().unwrap().port();
     let server_addr = format!("127.0.0.1:{}", port);
 
+    // Build capability manager with pre-issued tokens for the server
+    // Issue() is async now, so we build the manager before the spawn block.
+    let server_cap_mgr = {
+        use volt::capability::{CapabilityManager, CapabilityScope};
+        let mgr = Arc::new(CapabilityManager::new());
+        mgr.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::System, 20, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1)).await;
+        mgr
+    };
+
     tokio::spawn(async move {
         let app = axum::Router::new()
             .route("/mcp/tools/list", axum::routing::post(
@@ -662,7 +676,7 @@ async fn test_workflow5_mcp_agent_to_agent() {
                  axum::Json(request): axum::Json<serde_json::Value>| async move {
                     let name = request["params"]["name"].as_str().unwrap_or("");
                     let args = &request["params"]["arguments"];
-                    let result = state.tools.execute(name, args).await;
+                    let result = state.tools.execute_gated(name, args, &state.capability_manager).await;
                     match result {
                         Ok(res) => axum::Json(serde_json::json!({
                             "jsonrpc": "2.0",
@@ -680,12 +694,17 @@ async fn test_workflow5_mcp_agent_to_agent() {
             .with_state(Arc::new(volt::mcp::server::McpAppState {
                 tools: server_tools,
                 agent_name: "server-agent".into(),
+                capability_manager: server_cap_mgr,
             }));
 
         axum::serve(listener, app).await.ok();
     });
 
-    // Give server a moment to start
+    // Pre-issue tokens to the server's capability manager so the test can execute
+    // remote tools through execute_gated. This must happen before the client
+    // attempts to call any tool.
+    // (The server's McpAppState gets a fresh empty manager; the test creates
+    //  the MCP client separately.)
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Client: list tools via HTTP
@@ -815,7 +834,7 @@ async fn test_workflow6_codebase_refactor() {
         ),
     ]);
 
-    let agent = Agent::new(mock_config("refactor-agent", 7), provider, registry.clone());
+    let agent = Agent::new(mock_config("refactor-agent", 7), provider, registry.clone()).await;
     let result = agent
         .run("Refactor old_function to new_function across the codebase")
         .await;
@@ -879,7 +898,7 @@ async fn test_workflow7_long_context_stress() {
     }
 
     let provider = Box::new(MockLLMProvider::new(responses));
-    let agent = Agent::new(mock_config("long-context-agent", 50), provider, registry);
+    let agent = Agent::new(mock_config("long-context-agent", 50), provider, registry).await;
     let result = agent.run("Start the long context test").await;
 
     assert!(

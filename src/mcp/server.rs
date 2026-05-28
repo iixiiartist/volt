@@ -1,3 +1,4 @@
+use crate::capability::{CapabilityManager, CapabilityScope};
 use crate::tools::ToolRegistry;
 use axum::{extract::State, routing::post, Json, Router};
 use std::sync::Arc;
@@ -7,15 +8,24 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 pub struct McpAppState {
     pub tools: Arc<ToolRegistry>,
     pub agent_name: String,
+    pub capability_manager: Arc<CapabilityManager>,
 }
 
 pub struct MCPServer {
     tools: Arc<ToolRegistry>,
+    capability_manager: Arc<CapabilityManager>,
 }
 
 impl MCPServer {
-    pub fn new(tools: Arc<ToolRegistry>) -> Self {
-        Self { tools }
+    pub async fn new(tools: Arc<ToolRegistry>) -> Self {
+        let mgr = Arc::new(CapabilityManager::new());
+        mgr.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::System, 20, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1)).await;
+        mgr.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1)).await;
+        Self { tools, capability_manager: mgr }
     }
 
     /// Serve MCP over stdio (stdin/stdout JSON-RPC).
@@ -47,9 +57,20 @@ impl MCPServer {
         addr: &str,
         agent_name: &str,
     ) -> anyhow::Result<()> {
+        let mgr = {
+            let m = Arc::new(CapabilityManager::new());
+            m.issue(CapabilityScope::FsRead, 50, chrono::Duration::hours(1)).await;
+            m.issue(CapabilityScope::FsWrite, 20, chrono::Duration::hours(1)).await;
+            m.issue(CapabilityScope::System, 20, chrono::Duration::hours(1)).await;
+            m.issue(CapabilityScope::Network, 100, chrono::Duration::hours(1)).await;
+            m.issue(CapabilityScope::Database, 10, chrono::Duration::hours(1)).await;
+            m.issue(CapabilityScope::Memory, 20, chrono::Duration::hours(1)).await;
+            m
+        };
         let state = Arc::new(McpAppState {
             tools,
             agent_name: agent_name.to_string(),
+            capability_manager: mgr,
         });
 
         let app = Router::new()
@@ -91,7 +112,7 @@ impl MCPServer {
             "tools/call" => {
                 let name = request["params"]["name"].as_str().unwrap_or("");
                 let args = &request["params"]["arguments"];
-                let result = self.tools.execute(name, args).await;
+                let result = self.tools.execute_gated(name, args, &self.capability_manager).await;
                 match result {
                     Ok(res) => serde_json::json!({
                         "jsonrpc": "2.0",
@@ -131,7 +152,10 @@ async fn handle_mcp_request(
     State(state): State<Arc<McpAppState>>,
     Json(request): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let server = MCPServer::new(state.tools.clone());
+    let server = MCPServer {
+        tools: state.tools.clone(),
+        capability_manager: state.capability_manager.clone(),
+    };
     let response = server.handle_request(&request).await;
     Json(response)
 }
@@ -163,7 +187,10 @@ async fn handle_tools_call(
 ) -> Json<serde_json::Value> {
     let name = request["params"]["name"].as_str().unwrap_or("");
     let args = &request["params"]["arguments"];
-    let server = MCPServer::new(state.tools.clone());
+    let server = MCPServer {
+        tools: state.tools.clone(),
+        capability_manager: state.capability_manager.clone(),
+    };
     let fake_req = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "tools/call",

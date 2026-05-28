@@ -25,7 +25,7 @@ async fn test_agent_returns_text_response() {
         "Hello from the mock LLM!",
     )]));
     let tools = volt::tools::ToolRegistry::new();
-    let agent = Agent::new(agent_config(), provider, tools);
+    let agent = Agent::new(agent_config(), provider, tools).await;
 
     let result = agent.run("Say hello").await;
     assert!(result.is_ok());
@@ -46,7 +46,7 @@ async fn test_agent_runs_tool_and_uses_result() {
         MockLLMProvider::tool_result("Tool result was received."),
     ]));
     let tools = volt::test_utils::test_tool_registry().await;
-    let agent = Agent::new(agent_config(), provider, tools);
+    let agent = Agent::new(agent_config(), provider, tools).await;
 
     let result = agent.run("Use the echo tool").await;
     assert!(result.is_ok());
@@ -69,7 +69,7 @@ async fn test_agent_respects_max_iterations() {
 
     let provider = Box::new(MockLLMProvider::new(responses));
     let tools = volt::test_utils::test_tool_registry().await;
-    let agent = Agent::new(agent_config(), provider, tools);
+    let agent = Agent::new(agent_config(), provider, tools).await;
 
     let result = agent.run("Loop forever").await;
     // With max_iterations=5 and tool calls causing loops, agent returns last content
@@ -83,7 +83,7 @@ async fn test_agent_push_user_message() {
         "response",
     )]));
     let tools = volt::tools::ToolRegistry::new();
-    let agent = Agent::new(agent_config(), provider, tools);
+    let agent = Agent::new(agent_config(), provider, tools).await;
 
     agent.run("test input").await.ok();
 

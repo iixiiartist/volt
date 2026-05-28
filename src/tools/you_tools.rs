@@ -39,6 +39,8 @@ pub async fn web_search(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build();
     let client = match client {
         Ok(c) => c,
@@ -104,6 +106,8 @@ pub async fn you_research(input: &str, research_effort: Option<&str>) -> ToolRes
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build();
     let client = match client {
         Ok(c) => c,
@@ -190,6 +194,8 @@ pub async fn you_contents(urls: &[String], content_format: Option<&str>) -> Tool
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build();
     let client = match client {
         Ok(c) => c,

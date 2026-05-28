@@ -2,15 +2,68 @@ use crate::embedding::vector_literal;
 use crate::models::{AgentTool, ExecutionRecord, MemoryEntry, RegistryManifest};
 use anyhow::Context;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
+use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
-pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
-    PgPoolOptions::new()
-        .max_connections(16)
-        .acquire_timeout(std::time::Duration::from_secs(10))
+/// Build a shared PgPool singleton with production-grade parameters.
+/// - `max_connections(50)`: handles bursty multi-agent DAG loads
+/// - `min_connections(5)`: keeps hot connections alive to avoid cold-start latency
+/// - `idle_timeout(300s)`: reclaims connections during idle periods
+/// - `max_lifetime(1800s)`: prevents connection leakage from long-lived agents
+pub async fn build_shared_pg_pool(database_url: &str) -> anyhow::Result<Arc<PgPool>> {
+    let pool = PgPoolOptions::new()
+        .max_connections(50)
+        .min_connections(5)
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(1800))
+        .acquire_timeout(Duration::from_secs(10))
         .connect(database_url)
         .await
-        .context("failed to connect to PostgreSQL")
+        .context("failed to connect to PostgreSQL")?;
+    Ok(Arc::new(pool))
+}
+
+/// Backward-compatible wrapper for call sites that still use `connect()`.
+/// Returns a bare PgPool (not Arc-wrapped).
+pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
+    let arc = build_shared_pg_pool(database_url).await?;
+    Ok(Arc::unwrap_or_clone(arc))
+}
+
+/// Execute a database operation with automatic retry on serialization failures
+/// (PostgreSQL SQLSTATE 40001). Uses jittered linear backoff to prevent
+/// thundering-herd re-contention after concurrent transaction conflicts.
+///
+/// Retries up to 3 times with delays: ~50ms, ~100ms, ~150ms (+ random jitter).
+/// After 3 failures the error is propagated to the caller.
+pub async fn execute_with_serialization_retry<F, Fut, T>(
+    mut f: F,
+) -> anyhow::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
+{
+    let max_attempts = 3;
+    for attempt in 0..max_attempts {
+        match f().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                let should_retry = e
+                    .as_database_error()
+                    .and_then(|pg_err| pg_err.code())
+                    .map(|code| code.as_ref() == "40001")
+                    .unwrap_or(false);
+                if should_retry && attempt + 1 < max_attempts {
+                    let delay_ms = 50 * (attempt as u64 + 1) + (rand::random::<u64>() % 20);
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                return Err(anyhow::Error::from(e));
+            }
+        }
+    }
+    unreachable!("retry loop should have returned or errored")
 }
 
 pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {

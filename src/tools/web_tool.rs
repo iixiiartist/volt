@@ -106,6 +106,8 @@ pub async fn web_fetch(url: &str) -> ToolResult {
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(100)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build();
     let client = match client {
         Ok(c) => c,

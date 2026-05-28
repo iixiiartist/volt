@@ -14,7 +14,7 @@ pub async fn run(
     }
     let tasks: Vec<String> = serde_json::from_str(&tasks)?;
     let tools = crate::tools::register_all_tools().await;
-    let orch = Orchestrator::new(tools);
+    let orch = Orchestrator::new(tools).await;
     let result = orch.run_workflow(&pattern, specs, tasks).await?;
     println!(
         "{}",

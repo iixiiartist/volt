@@ -66,6 +66,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
     };
     let config_quotas = config.context_kind_quotas.clone();
     let mut agent = Agent::new(config, provider, tools_for_agent)
+        .await
         .with_workspace(std::env::current_dir().unwrap_or_default())
         .with_cancel(cancel_for_agent)
         .with_stream(Arc::new(|token| {

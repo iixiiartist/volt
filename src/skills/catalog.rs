@@ -1,6 +1,5 @@
 use crate::db;
 use crate::embedding::EmbeddingClient;
-use crate::http_client;
 use serde::Deserialize;
 use sqlx::PgPool;
 
@@ -26,7 +25,7 @@ pub struct SkillCatalog {
 /// Fetch the skill catalog from the default registry URL.
 pub async fn fetch_catalog(url: Option<&str>) -> anyhow::Result<SkillCatalog> {
     let url = url.unwrap_or(DEFAULT_CATALOG_URL);
-    let client = http_client(30);
+    let client = crate::http_client();
     let resp = client.get(url).send().await?;
     if !resp.status().is_success() {
         anyhow::bail!("catalog fetch returned HTTP {}", resp.status().as_u16());
@@ -105,7 +104,7 @@ async fn fetch_skill_content(
 ) -> anyhow::Result<String> {
     // Try remote first
     let skill_url = format!("{}/{}", catalog.base_url.trim_end_matches('/'), entry.path);
-    let client = http_client(10);
+    let client = crate::http_client();
     match client.get(&skill_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             return resp

@@ -1,8 +1,10 @@
+use crate::capability::{CapabilityManager, tool_required_scope};
 use crate::cosine_similarity;
 use crate::embedding::EmbeddingClient;
 use crate::attenuation::{TrustLevel, effective_permission};
 use crate::models::{PermissionLevel, ToolDefinition, ToolResult};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -95,6 +97,83 @@ impl ToolRegistry {
             .unwrap_or(PermissionLevel::Allow)
     }
 
+    /// Execute a tool with capability enforcement.
+    ///
+    /// Every caller MUST provide a `CapabilityManager` with appropriate tokens.
+    /// The method will:
+    /// 1. Resolve the required scope for the tool name (fail-closed: unmapped → System)
+    /// 2. Find a valid token for that scope
+    /// 3. Verify the token's HMAC signature
+    /// 4. Atomically reserve budget
+    /// 5. Attach a RefundGuard for panic-safe budget return
+    /// 6. Execute the tool function with a 300s timeout
+    /// 7. Defuse the guard on success (keep budget consumed) or auto-refund on failure
+    pub async fn execute_gated(
+        &self,
+        name: &str,
+        args: &Value,
+        cap_mgr: &Arc<CapabilityManager>,
+    ) -> anyhow::Result<ToolResult> {
+        let required_scope = tool_required_scope(name);
+
+        // Find a valid token before reserving (advisory fast-fail)
+        let token = cap_mgr
+            .find_token(&required_scope)
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "capability denied: no valid token for scope {:?} (tool '{}')",
+                    required_scope,
+                    name
+                )
+            })?;
+
+        // Verify the token's HMAC signature
+        cap_mgr.verify(&token, &required_scope).map_err(|e| {
+            anyhow::anyhow!("capability verify failed for tool '{}': {}", name, e)
+        })?;
+
+        // Atomic reserve + guard creation. Eliminates the budget-leak
+        // window where a panic between reserve() and RefundGuard::new()
+        // would orphan the deducted budget.
+        let mut guard = match cap_mgr.acquire_execution_guard(&required_scope, 1).await {
+            Ok(g) => g,
+            Err(e) => {
+                anyhow::bail!("capability guard failed for tool '{}': {}", name, e);
+            }
+        };
+
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("tool '{}' not found", name))?;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            (tool.exec)(args.clone()),
+        )
+        .await;
+
+        let result = match result {
+            Ok(res) => res,
+            Err(_) => ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("tool '{}' timed out after 300s", name)),
+                duration_ms: 300_000,
+            },
+        };
+
+        // Defuse on success (keep budget consumed), auto-refund on drop for failure/panic
+        if result.success {
+            guard.defuse();
+        }
+
+        Ok(result)
+    }
+
+    /// Legacy execute path — does NOT enforce capability checks.
+    /// Kept only for test backward compatibility.
+    #[deprecated(since = "0.2.0", note = "CRITICAL SECURITY RISK: Bypasses capability tracking. Use execute_gated() instead.")]
     pub async fn execute(&self, name: &str, args: &Value) -> anyhow::Result<ToolResult> {
         let tool = self
             .tools
@@ -127,23 +206,52 @@ impl ToolRegistry {
             })
             .collect();
 
-        let sem = Arc::new(tokio::sync::Semaphore::new(5));
+        // Build a content hash so we invalidate cache when tool definitions change
+        let content_hash = embed_content_hash(&items);
+        let cache_path = std::path::Path::new(".volt_tool_cache.json");
+
+        // Try loading from disk cache
+        if let Some(cached) = load_embed_cache(cache_path, &content_hash) {
+            tracing::info!("loaded {} tool embeddings from cache", cached.len());
+            for (name, emb) in cached {
+                if let Some(mut tool) = self.tools.get_mut(&name) {
+                    tool.embedding = Some(emb);
+                }
+            }
+            return;
+        }
+
+        tracing::info!("computing embeddings for {} tools", items.len());
+        let sem = Arc::new(tokio::sync::Semaphore::new(3));
+        let total = items.len();
+        let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let results: Vec<(String, Option<Vec<f32>>)> =
             futures::future::join_all(items.into_iter().map(|(name, text)| {
                 let sem = sem.clone();
+                let done = done.clone();
                 async move {
                     let _permit = sem.acquire().await.ok();
                     let emb = embedder.embed_description(&text).await.ok();
+                    let count = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    tracing::info!("embedded [{}/{}] {}", count, total, name);
                     (name, emb)
                 }
             }))
             .await;
+        tracing::info!("tool embeddings computed");
 
+        let mut cache = Vec::new();
         for (name, emb) in results {
+            if let Some(emb) = emb.clone() {
+                cache.push((name.clone(), emb));
+            }
             if let Some(mut tool) = self.tools.get_mut(&name) {
                 tool.embedding = emb;
             }
         }
+
+        // Save to disk cache
+        save_embed_cache(cache_path, &content_hash, &cache);
     }
 
     pub async fn search_tools(
@@ -240,5 +348,51 @@ impl ToolRegistry {
     /// Builds co-occurrence edges in the ToolGraph for future retrieval.
     pub fn record_co_occurrence(&self, tool_names: &[String]) {
         self.graph.record_co_occurrence(tool_names);
+    }
+}
+
+// ─── Embedding cache ──────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+struct EmbedCache {
+    hash: String,
+    entries: Vec<EmbedCacheEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EmbedCacheEntry {
+    name: String,
+    embedding: Vec<f32>,
+}
+
+fn embed_content_hash(items: &[(String, String)]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (name, text) in items {
+        name.hash(&mut hasher);
+        text.hash(&mut hasher);
+    }
+    format!("{:x}", hasher.finish())
+}
+
+fn load_embed_cache(path: &std::path::Path, expected_hash: &str) -> Option<Vec<(String, Vec<f32>)>> {
+    let data = std::fs::read_to_string(path).ok()?;
+    let cache: EmbedCache = serde_json::from_str(&data).ok()?;
+    if cache.hash != expected_hash {
+        return None;
+    }
+    Some(cache.entries.into_iter().map(|e| (e.name, e.embedding)).collect())
+}
+
+fn save_embed_cache(path: &std::path::Path, hash: &str, entries: &[(String, Vec<f32>)]) {
+    let cache = EmbedCache {
+        hash: hash.to_string(),
+        entries: entries.iter().map(|(name, emb)| EmbedCacheEntry {
+            name: name.clone(),
+            embedding: emb.clone(),
+        }).collect(),
+    };
+    if let Ok(json) = serde_json::to_string(&cache) {
+        let _ = std::fs::write(path, &json);
     }
 }

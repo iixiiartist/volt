@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use volt::capability::{CapabilityManager, CapabilityScope};
 use volt::tools::ToolRegistry;
 
 fn get_token() -> String {
@@ -30,6 +32,21 @@ async fn test_all_searchhq_tools() {
 
     println!("Registered {} tools\n", count);
 
+    let cap_mgr = {
+        let mgr = Arc::new(CapabilityManager::new());
+        for scope in &[
+            CapabilityScope::FsRead,
+            CapabilityScope::FsWrite,
+            CapabilityScope::System,
+            CapabilityScope::Network,
+            CapabilityScope::Database,
+            CapabilityScope::Memory,
+        ] {
+            mgr.issue(scope.clone(), 500, chrono::Duration::hours(1));
+        }
+        mgr
+    };
+
     let defs = registry.get_definitions().await;
     let mut passes = 0;
     let mut fails = 0;
@@ -47,7 +64,7 @@ async fn test_all_searchhq_tools() {
             serde_json::to_string(&args).unwrap_or_default()
         );
 
-        let result = registry.execute(&def.name, &args).await;
+        let result = registry.execute_gated(&def.name, &args, &cap_mgr).await;
         match result {
             Ok(r) => {
                 if r.success {

@@ -80,17 +80,122 @@ pub struct AgentState {
     pub total_prompt_tokens: u64,
     #[serde(default)]
     pub total_completion_tokens: u64,
+    /// High-water mark: index of the last message persisted to SQLite.
+    /// Enables delta-based saves so we don't re-write the entire history
+    /// on every iteration turn (fixes the O(N) write amplification bug).
+    #[serde(default)]
+    pub last_saved_message_idx: usize,
 }
 
 /// A single message in the agent's conversation history (user, assistant, system, or tool result).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    #[serde(default = "default_message_id")]
+    pub id: Uuid,
+    #[serde(default)]
+    pub parent_message_id: Option<Uuid>,
     pub role: String,
     pub content: Arc<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_result: Option<String>,
     pub tool_name: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+fn default_message_id() -> Uuid {
+    Uuid::nil()
+}
+
+impl Message {
+    /// Create a new message with an auto-generated id and no parent.
+    pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            parent_message_id: None,
+            role: role.into(),
+            content: Arc::new(content.into()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Chain a parent message so the DAG topology is preserved.
+    pub fn with_parent(mut self, parent_id: Uuid) -> Self {
+        self.parent_message_id = Some(parent_id);
+        self
+    }
+
+    /// Chain a parent message from an Option (convenience for builders).
+    pub fn with_parent_option(mut self, parent_id: Option<Uuid>) -> Self {
+        self.parent_message_id = parent_id;
+        self
+    }
+
+    /// Extract the last message id from a slice to use as parent.
+    pub fn last_id(messages: &[Self]) -> Option<Uuid> {
+        messages.last().map(|m| m.id)
+    }
+}
+
+/// Linearize a slice of messages into a topological order by their parent chain.
+///
+/// In the common non-branching case every message's parent is the previous
+/// message, so the returned order is identical to the input order.
+///
+/// In a branching conversation (parallel agent outputs merged into a
+/// supervisor), messages may share parents. This function resolves the DAG
+/// by walking from each leaf up through its parent chain, producing a
+/// breadth-first level ordering that guarantees every parent appears before
+/// its children.
+pub fn linearize_messages(messages: &[Message]) -> Vec<&Message> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    // Build a lookup: id -> &Message
+    // Build a lookup: id -> &Message (used in branching resolution)
+    let _by_id: std::collections::HashMap<Uuid, &Message> = messages
+        .iter()
+        .map(|m| (m.id, m))
+        .collect();
+
+    // Find root messages (no parent, or parent not in set) and leaf messages
+    let ids: std::collections::HashSet<Uuid> = messages.iter().map(|m| m.id).collect();
+    let roots: Vec<&Message> = messages
+        .iter()
+        .filter(|m| m.parent_message_id.map_or(true, |p| !ids.contains(&p)))
+        .collect();
+
+    // BFS level-ordering: start from roots
+    let mut result: Vec<&Message> = Vec::with_capacity(messages.len());
+    let mut visited: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    let mut queue: Vec<&Message> = roots;
+
+    while let Some(msg) = queue.pop() {
+        if visited.contains(&msg.id) {
+            continue;
+        }
+        visited.insert(msg.id);
+        result.push(msg);
+
+        // Find direct children
+        for child in messages.iter() {
+            if child.parent_message_id == Some(msg.id) && !visited.contains(&child.id) {
+                queue.push(child);
+            }
+        }
+    }
+
+    // Append any messages not reachable from roots (shouldn't happen, but be safe)
+    for msg in messages {
+        if !visited.contains(&msg.id) {
+            result.push(msg);
+        }
+    }
+
+    result
 }
 
 /// A tool call issued by the LLM — name, arguments, and a unique call ID.
@@ -566,6 +671,7 @@ mod tests {
             allow_session: false,
             total_prompt_tokens: 0,
             total_completion_tokens: 0,
+            last_saved_message_idx: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

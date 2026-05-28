@@ -1,14 +1,14 @@
+use crate::agent::tool_parser::parse_lossy_json;
 use crate::llm::provider::TokenCallback;
 use crate::llm::LLMProvider;
 use crate::models::{LLMRequest, LLMResponse, ToolCall, Usage};
 use async_trait::async_trait;
 use futures::StreamExt;
-use reqwest::Client;
 use serde_json::json;
 use std::sync::Arc;
 
 pub struct OpenAIProvider {
-    http: Client,
+    http: reqwest::Client,
     api_key: String,
     base_url: String,
     name: String,
@@ -17,7 +17,7 @@ pub struct OpenAIProvider {
 impl OpenAIProvider {
     pub fn new(api_key: String, base_url: String, name: String) -> Self {
         Self {
-            http: crate::http_client(300),
+            http: crate::http_client().clone(),
             api_key,
             base_url,
             name,
@@ -97,7 +97,10 @@ impl LLMProvider for OpenAIProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let resp_val = req.json(&body).send().await?;
+        let resp_val = req
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(300))
+            .send().await?;
 
         let status = resp_val.status();
         if !status.is_success() {
@@ -126,7 +129,10 @@ impl LLMProvider for OpenAIProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response = req.json(&body).send().await?;
+        let response = req
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(300))
+            .send().await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -181,8 +187,7 @@ impl LLMProvider for OpenAIProvider {
                                     if !id.is_empty() {
                                         if let Some(mut prev) = current_tool_call.take() {
                                             prev.arguments =
-                                                serde_json::from_str(&current_args_string)
-                                                    .unwrap_or_default();
+                                                crate::agent::tool_parser::parse_lossy_json(&current_args_string);
                                             tool_calls_acc.push(prev);
                                         }
                                         current_args_string = args;
@@ -213,7 +218,7 @@ impl LLMProvider for OpenAIProvider {
         }
 
         if let Some(mut tc) = current_tool_call {
-            tc.arguments = serde_json::from_str(&current_args_string).unwrap_or_default();
+            tc.arguments = parse_lossy_json(&current_args_string);
             tool_calls_acc.push(tc);
         }
 
@@ -240,7 +245,7 @@ fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse>
             .map(|tc| {
                 let args_val = &tc["function"]["arguments"];
                 let arguments = if args_val.is_string() {
-                    serde_json::from_str(args_val.as_str().unwrap_or("{}")).unwrap_or_default()
+                    parse_lossy_json(args_val.as_str().unwrap_or("{}"))
                 } else {
                     args_val.clone()
                 };

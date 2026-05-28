@@ -15,7 +15,11 @@ pub fn init_otel(service_name: &str) {
         let _ = opentelemetry::global::set_tracer_provider(provider);
 
         let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
         let subscriber = tracing_subscriber::registry()
+            .with(env_filter)
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_target(false)

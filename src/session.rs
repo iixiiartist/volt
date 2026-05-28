@@ -1,18 +1,23 @@
 use crate::models::{Message, Session};
 use anyhow::Context;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Open (or create) the SQLite sessions database and run pending schema migrations.
 pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(5));
     let pool = SqlitePoolOptions::new()
-        .max_connections(4)
+        .max_connections(16)
         .connect_with(options)
         .await
         .context("failed to open SQLite sessions DB")?;
@@ -36,6 +41,14 @@ pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
 
     if current < 1 {
         run_migration_v1(&pool).await?;
+    }
+
+    if current < 2 {
+        run_migration_v2(&pool).await?;
+    }
+
+    if current < 3 {
+        run_migration_v3(&pool).await?;
     }
 
     Ok(pool)
@@ -85,6 +98,197 @@ async fn run_migration_v1(pool: &SqlitePool) -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+async fn run_migration_v2(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS checkpoints (
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            iteration INTEGER NOT NULL,
+            messages_json TEXT NOT NULL,
+            token_counts_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, iteration)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES (2, ?)")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+async fn run_migration_v3(pool: &SqlitePool) -> anyhow::Result<()> {
+    // Add retry tracking columns to checkpoints table for circuit breaker
+    sqlx::query(
+        r#"
+        ALTER TABLE checkpoints ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0
+        "#,
+    )
+    .execute(pool)
+    .await
+    // May fail if column already exists (idempotent)
+    .ok();
+
+    sqlx::query(
+        r#"
+        ALTER TABLE checkpoints ADD COLUMN state_hash TEXT NOT NULL DEFAULT ''
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+
+    sqlx::query("INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, ?)")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+/// Snapshot of agent state at one iteration for checkpoint rehydration.
+#[derive(Serialize, Deserialize)]
+pub struct CheckpointData {
+    pub session_id: Uuid,
+    pub iteration: u32,
+    pub messages: Vec<Message>,
+    pub token_prompt: u64,
+    pub token_completion: u64,
+}
+
+/// Maximum retries from the same state hash before circuit breaker trips.
+const MAX_CONSECUTIVE_RETRIES: u32 = 3;
+
+/// Check whether the session has been poisoned by repeated rehydration
+/// to the same state (detect infinite crash-recovery loops).
+pub async fn check_circuit_breaker(
+    pool: &SqlitePool,
+    session_id: Uuid,
+    iteration: u32,
+    state_hash: &str,
+) -> Result<(), String> {
+    let row: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT retry_count FROM checkpoints
+        WHERE session_id = ? AND iteration = ? AND state_hash = ?
+        "#,
+    )
+    .bind(session_id.to_string())
+    .bind(iteration as i64)
+    .bind(state_hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Some(count) = row {
+        if count as u32 >= MAX_CONSECUTIVE_RETRIES {
+            return Err(format!(
+                "circuit breaker tripped: session {} iteration {} hash {} retried {} times",
+                session_id, iteration, state_hash, count
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Compute a hash of the message history for poison-pill detection.
+/// Uses the last N messages' content + roles to detect state stagnation.
+pub fn compute_state_hash(messages: &[Message]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for msg in messages.iter().rev().take(4) {
+        msg.role.hash(&mut hasher);
+        msg.content.as_str().hash(&mut hasher);
+    }
+    format!("{:x}", hasher.finish())
+}
+
+/// Save a checkpoint for a given session+iteration with retry tracking.
+pub async fn save_checkpoint(
+    pool: &SqlitePool,
+    data: &CheckpointData,
+) -> anyhow::Result<()> {
+    let state_hash = compute_state_hash(&data.messages);
+
+    // Check if this checkpoint already exists — if so, increment retry count
+    let existing: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT retry_count FROM checkpoints
+        WHERE session_id = ? AND iteration = ?
+        "#,
+    )
+    .bind(data.session_id.to_string())
+    .bind(data.iteration as i64)
+    .fetch_optional(pool)
+    .await?;
+
+    let retry_count = existing.map(|c| c + 1).unwrap_or(0);
+
+    sqlx::query(
+        r#"
+        INSERT OR REPLACE INTO checkpoints
+            (session_id, iteration, messages_json, token_counts_json, created_at, retry_count, state_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(data.session_id.to_string())
+    .bind(data.iteration as i64)
+    .bind(serde_json::to_string(&data.messages)?)
+    .bind(serde_json::to_string(&serde_json::json!({
+        "prompt": data.token_prompt,
+        "completion": data.token_completion,
+    }))?)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(retry_count)
+    .bind(&state_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Load the most recent checkpoint for a session (highest iteration).
+pub async fn load_latest_checkpoint(
+    pool: &SqlitePool,
+    session_id: Uuid,
+) -> anyhow::Result<Option<CheckpointData>> {
+    let row = sqlx::query(
+        r#"
+        SELECT iteration, messages_json, token_counts_json
+        FROM checkpoints
+        WHERE session_id = ?
+        ORDER BY iteration DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else { return Ok(None); };
+
+    let iteration: i64 = row.try_get("iteration")?;
+    let messages_json: String = row.try_get("messages_json")?;
+    let token_json: String = row.try_get("token_counts_json")?;
+
+    let messages: Vec<Message> = serde_json::from_str(&messages_json)?;
+    let tokens: serde_json::Value = serde_json::from_str(&token_json)?;
+    let token_prompt = tokens.get("prompt").and_then(|v| v.as_u64()).unwrap_or(0);
+    let token_completion = tokens.get("completion").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    Ok(Some(CheckpointData {
+        session_id,
+        iteration: iteration as u32,
+        messages,
+        token_prompt,
+        token_completion,
+    }))
 }
 
 pub async fn list_sessions(pool: &SqlitePool, limit: i64) -> anyhow::Result<Vec<Session>> {
@@ -211,6 +415,8 @@ pub async fn load_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Resul
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         out.push(Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
             role: row.try_get("role")?,
             content: Arc::new(row.try_get("content")?),
             tool_calls: row
@@ -244,9 +450,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("volt_test_{}", uuid::Uuid::new_v4()));
         let options = SqliteConnectOptions::new()
             .filename(&dir)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
-            .max_connections(2)
+            .max_connections(4)
             .connect_with(options)
             .await
             .unwrap();
@@ -313,6 +522,8 @@ mod tests {
         create_session(&pool, &session).await.unwrap();
 
         let msg = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
             role: "user".into(),
             content: Arc::new("hello".to_string()),
             tool_calls: None,
@@ -342,6 +553,8 @@ mod tests {
         create_session(&pool, &session).await.unwrap();
 
         let msg = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
             role: "user".into(),
             content: Arc::new("data".to_string()),
             tool_calls: None,

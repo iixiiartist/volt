@@ -14,6 +14,7 @@ use axum::{
 };
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -45,6 +46,8 @@ struct AppState {
     default_mode: String,
     default_allow: bool,
     default_max_iterations: u32,
+    cap_mgr: Arc<crate::capability::CapabilityManager>,
+    pg_pool: Option<Arc<PgPool>>,
 }
 
 struct ConversationState;
@@ -131,10 +134,12 @@ async fn chat_handler(
     let tools = state.tools.clone();
     let embedder = state.embedder.clone();
     let settings = state.settings.clone();
+    let pool = state.pg_pool.clone();
 
     match run_agent(
         &tools,
         &embedder,
+        pool,
         &settings,
         &model,
         &mode,
@@ -168,6 +173,7 @@ async fn chat_handler(
 async fn run_agent(
     tools: &Arc<crate::tools::ToolRegistry>,
     embedder: &EmbeddingClient,
+    pg_pool: Option<Arc<PgPool>>,
     settings: &crate::config::Settings,
     model: &str,
     mode: &str,
@@ -195,6 +201,7 @@ async fn run_agent(
     };
 
     let mut agent = Agent::new(config, provider, tools.clone())
+        .await
         .with_workspace(std::env::current_dir().unwrap_or_default());
 
     // Wire Phase 3 infrastructure into agent
@@ -211,11 +218,6 @@ async fn run_agent(
         }
     });
     agent = agent.with_event_bus(event_bus);
-
-    if let Ok(pool) = db::connect(&settings.database_url).await {
-        let failure_tracker = crate::tool_failure_tracker::ToolFailureTracker::new(Some(pool.clone()));
-        agent = agent.with_failure_tracker(failure_tracker);
-    }
 
     let context_store = ContextStore::new();
     let (seed_channel, seed_rx) = worker::create_seed_channel();
@@ -241,7 +243,11 @@ async fn run_agent(
         .await;
     });
 
-    if let Ok(pool) = db::connect(&settings.database_url).await {
+    if let Some(ref pool_arc) = pg_pool {
+        let pool = PgPool::clone(pool_arc);
+        let failure_tracker = crate::tool_failure_tracker::ToolFailureTracker::new(Some(pool.clone()));
+        agent = agent.with_failure_tracker(failure_tracker);
+
         context_store.set_db(pool.clone());
         agent = agent.with_memory(pool.clone(), embedder.clone());
         let cs_for_skills = context_store.clone();
@@ -281,23 +287,38 @@ async fn run_agent(
 }
 
 async fn research_handler(
+    State(state): State<AppState>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
     eprintln!("[web research] query='{}'", req.query);
-    match crate::tools::you_tools::web_search(
+    // Capability check: require a Network token with 1 budget unit
+    // Uses the merged atomic reserve+guard to eliminate budget-leak windows.
+    let scope = crate::capability::CapabilityScope::Network;
+    let mut guard = state
+        .cap_mgr
+        .acquire_execution_guard(&scope, 1)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("capability guard failed: {}", e),
+            )
+        })?;
+    let search_result = crate::tools::you_tools::web_search(
         &req.query,
         req.count,
         None,
         None,
     )
-    .await
-    {
+    .await;
+    match search_result {
         ToolResult {
             success: true,
             output,
             error: _,
             duration_ms,
         } => {
+            guard.defuse();
             eprintln!("[web research] ok duration_ms={}", duration_ms);
             Ok(Json(SearchResponse {
                 result: output,
@@ -336,6 +357,44 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
     let embedder = EmbeddingClient::new_smart().await;
     tools.compute_embeddings(&embedder).await;
 
+    let cap_mgr = {
+        let mgr = Arc::new(crate::capability::CapabilityManager::new());
+        mgr.issue(
+            crate::capability::CapabilityScope::FsRead,
+            100,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::FsWrite,
+            50,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::System,
+            20,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::Network,
+            200,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::Database,
+            30,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr.issue(
+            crate::capability::CapabilityScope::Memory,
+            50,
+            chrono::Duration::hours(24),
+        ).await;
+        mgr
+    };
+
+    // Build a single shared PgPool for all concurrent requests
+    let shared_pg_pool = db::build_shared_pg_pool(&opts.settings.database_url).await.ok();
+
     let state = AppState {
         conversations: Arc::new(DashMap::new()),
         tools,
@@ -345,6 +404,8 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
         default_mode: opts.mode,
         default_allow: opts.allow,
         default_max_iterations: opts.max_iterations,
+        cap_mgr,
+        pg_pool: shared_pg_pool,
     };
 
     let app = Router::new()

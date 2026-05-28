@@ -149,6 +149,94 @@ pub fn build_validation_error_message(tool_name: &str, error: &str) -> String {
     )
 }
 
+/// Attempt to parse JSON, with automatic repair of common LLM output issues:
+/// - Truncated brackets (missing closing `}` or `]`)
+/// - Trailing commas before closing brackets
+/// - Single-quoted keys/values (treated as unquoted and repaired)
+pub fn parse_lossy_json(input: &str) -> serde_json::Value {
+    // 1. Direct parse
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(input) {
+        return val;
+    }
+
+    // 2. Try with trailing comma removal + bracket closure
+    let repaired = try_repair_json(input);
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&repaired) {
+        return val;
+    }
+
+    // 3. Try extracting any JSON object from the text
+    if let Some(start) = input.find('{') {
+        let candidate = &input[start..];
+        // Try progressively shorter suffixes
+        for len in (candidate.len().saturating_sub(50)..candidate.len()).rev() {
+            let sub = &candidate[..=len];
+            let sub_repaired = try_repair_json(sub);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&sub_repaired) {
+                return val;
+            }
+        }
+    }
+
+    // 4. Last resort: extract any key-value pairs with a simple regex
+    serde_json::Value::Object(extract_kv_pairs(input))
+}
+
+fn try_repair_json(input: &str) -> String {
+    let trimmed = input.trim();
+
+    // Count opening vs closing braces/brackets
+    let open_braces = trimmed.matches('{').count();
+    let close_braces = trimmed.matches('}').count();
+    let open_brackets = trimmed.matches('[').count();
+    let close_brackets = trimmed.matches(']').count();
+
+    // Remove trailing commas before closing brackets
+    let no_trailing_commas = {
+        let mut s = trimmed.to_string();
+        // Remove comma before }
+        while s.contains(",}") { s = s.replace(",}", "}"); }
+        // Remove comma before ]
+        while s.contains(",]") { s = s.replace(",]", "]"); }
+        s
+    };
+
+    // Add missing closing braces/brackets
+    let mut result = no_trailing_commas;
+    for _ in 0..open_braces.saturating_sub(close_braces) {
+        result.push('}');
+    }
+    for _ in 0..open_brackets.saturating_sub(close_brackets) {
+        result.push(']');
+    }
+
+    result
+}
+
+fn extract_kv_pairs(input: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    // Simple heuristic: find all `"key": value` or `key: value` patterns
+    for cap in input.lines() {
+        let trimmed = cap.trim();
+        if let Some(colon_pos) = trimmed.find(':') {
+            let key = trimmed[..colon_pos]
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
+            let val_str = trimmed[colon_pos + 1..]
+                .trim()
+                .trim_end_matches(',')
+                .trim();
+            if !key.is_empty() {
+                let val = val_str.trim_matches('"').trim_matches('\'');
+                map.insert(key, serde_json::Value::String(val.to_string()));
+            }
+        }
+    }
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +349,47 @@ mod tests {
             arguments: serde_json::json!({"filter": {"min_score": "high"}}),
         };
         assert!(validate_tool_call(&tc_bad, &def).is_err());
+    }
+
+    #[test]
+    fn test_parse_lossy_valid() {
+        let val = parse_lossy_json(r#"{"name": "test", "count": 42}"#);
+        assert_eq!(val["name"], "test");
+        assert_eq!(val["count"], 42);
+    }
+
+    #[test]
+    fn test_parse_lossy_truncated() {
+        // Missing closing brace
+        let val = parse_lossy_json(r#"{"name": "test", "count": 42"#);
+        assert_eq!(val["name"], "test");
+        assert_eq!(val["count"], 42);
+    }
+
+    #[test]
+    fn test_parse_lossy_trailing_comma() {
+        let val = parse_lossy_json(r#"{"name": "test", "count": 42,}"#);
+        assert_eq!(val["name"], "test");
+        assert_eq!(val["count"], 42);
+    }
+
+    #[test]
+    fn test_parse_lossy_empty() {
+        let val = parse_lossy_json("");
+        assert!(val.is_object());
+    }
+
+    #[test]
+    fn test_parse_lossy_garbage() {
+        let val = parse_lossy_json("not json at all");
+        assert!(val.is_object() || val.is_null());
+    }
+
+    #[test]
+    fn test_parse_lossy_nested_truncated() {
+        // Nested object with missing closing braces
+        let val = parse_lossy_json(r#"{"outer": {"inner": "value""#);
+        assert_eq!(val["outer"]["inner"], "value");
     }
 
     #[test]

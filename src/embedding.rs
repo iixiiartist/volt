@@ -178,7 +178,7 @@ impl EmbeddingClient {
             api_key,
         };
         Self {
-            http: crate::http_client(30),
+            http: crate::http_client(),
             providers: vec![config],
             verbose: false,
             #[cfg(feature = "tools-local-embeddings")]
@@ -204,7 +204,7 @@ impl EmbeddingClient {
     /// let client = EmbeddingClient::new_smart().await;
     /// ```
     pub async fn new_smart() -> Self {
-        let http = crate::http_client(10);
+        let http = crate::http_client();
         let provider_str = std::env::var("EMBEDDING_PROVIDER").ok();
 
         let providers = match provider_str {
@@ -240,6 +240,17 @@ impl EmbeddingClient {
         }
     }
 
+    /// Synchronous version for use with `tokio::task::spawn_blocking`.
+    /// Only tries the local ONNX embedder (no remote fallback).
+    pub fn embed_description_blocking(&self, description: &str) -> anyhow::Result<Vec<f32>> {
+        #[cfg(feature = "tools-local-embeddings")]
+        if let Some(local) = &self.local {
+            let truncated = truncate_description(description);
+            return local.embed(truncated).map(normalize_dims);
+        }
+        Err(anyhow::anyhow!("no local embedder available"))
+    }
+
     /// Embed text by trying each provider in the fallback chain.
     /// Returns a deterministic placeholder embedding if all providers fail.
     pub async fn embed_description(&self, description: &str) -> anyhow::Result<Vec<f32>> {
@@ -247,23 +258,13 @@ impl EmbeddingClient {
             return Ok(deterministic_placeholder_embedding(description));
         }
 
-        // Truncate to fit within typical embedding model context windows.
-        // mxbai-embed-large: 512 tokens, BGE-small: 512 tokens.
-        // ~512 bytes is a safe upper bound for most models (~128-170 tokens).
-        let truncated = if description.len() > 512 {
-            let mut idx = 512;
-            while !description.is_char_boundary(idx) && idx > 0 {
-                idx -= 1;
-            }
-            &description[..idx]
-        } else {
-            description
-        };
+        let truncated = truncate_description(description);
 
         // 1. Try local embedder first (fast, offline, no API key)
         #[cfg(feature = "tools-local-embeddings")]
         if let Some(local) = &self.local {
-            match local.embed(truncated) {
+            let cloned = local.clone();
+            match cloned.embed_async(truncated.to_string()).await {
                 Ok(embedding) => return Ok(normalize_dims(embedding)),
                 Err(e) => {
                     if self.verbose {
@@ -441,6 +442,18 @@ fn normalize_dims(mut coords: Vec<f32>) -> Vec<f32> {
         coords.truncate(EMBEDDING_DIMENSIONS);
     }
     coords
+}
+
+fn truncate_description(description: &str) -> &str {
+    if description.len() > 512 {
+        let mut idx = 512;
+        while !description.is_char_boundary(idx) && idx > 0 {
+            idx -= 1;
+        }
+        &description[..idx]
+    } else {
+        description
+    }
 }
 
 // ─── Auto-Detection ──────────────────────────────────────────────
@@ -631,14 +644,14 @@ mod tests {
     async fn test_empty_providers_fallback() {
         #[cfg(feature = "tools-local-embeddings")]
         let client = EmbeddingClient {
-            http: crate::http_client(5),
+            http: crate::http_client(),
             providers: vec![],
             verbose: false,
             local: None,
         };
         #[cfg(not(feature = "tools-local-embeddings"))]
         let client = EmbeddingClient {
-            http: crate::http_client(5),
+            http: crate::http_client(),
             providers: vec![],
             verbose: false,
         };

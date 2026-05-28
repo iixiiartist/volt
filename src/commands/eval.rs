@@ -25,6 +25,7 @@ pub async fn run(suite: PathBuf, model: Option<String>) -> anyhow::Result<()> {
         context_kind_quotas: Default::default(),
     };
     let agent = Agent::new(config, provider, tools)
+        .await
         .with_workspace(std::env::current_dir().unwrap_or_default());
     let summary = crate::eval::run_suite(&suite_data, &agent).await;
     crate::eval::print_summary(&summary);

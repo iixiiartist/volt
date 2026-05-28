@@ -260,7 +260,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
                 match crate::orchestrator::parse_agent_specs(agents_json) {
                     Ok(specs) => match serde_json::from_str::<Vec<String>>(tasks_json) {
                         Ok(tasks) => {
-                            let orch = crate::orchestrator::Orchestrator::new(wt.clone());
+                            let orch = crate::orchestrator::Orchestrator::new(wt.clone()).await;
                             match orch.run_workflow(pattern, specs, tasks).await {
                                 Ok(result) => crate::models::ToolResult {
                                     success: true,

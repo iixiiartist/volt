@@ -18,7 +18,16 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
     let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "volt-agent");
     let tools = crate::tools::register_all_tools().await;
     let embedder = EmbeddingClient::new_smart().await;
-    tools.compute_embeddings(&embedder).await;
+    // Compute embeddings in background so TUI starts immediately.
+    // First run takes ~7 min (39 tools × ~30s each / 3 concurrency).
+    // Subsequent runs load from disk cache instantly.
+    {
+        let tools = tools.clone();
+        let embedder = embedder.clone();
+        tokio::spawn(async move {
+            tools.compute_embeddings(&embedder).await;
+        });
+    }
 
     let mode_profile = mode.parse::<AgentMode>().unwrap_or(AgentMode::Balanced);
 
@@ -37,6 +46,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         context_kind_quotas: Default::default(),
     };
     let mut agent = Agent::new(config, provider, tools.clone())
+        .await
         .with_workspace(std::env::current_dir().unwrap_or_default());
 
     let context_store = ContextStore::new();

@@ -1,4 +1,7 @@
 #[cfg(feature = "tools-local-embeddings")]
+use std::sync::Arc;
+
+#[cfg(feature = "tools-local-embeddings")]
 use tract_onnx::prelude::*;
 
 #[cfg(feature = "tools-local-embeddings")]
@@ -52,6 +55,14 @@ impl LocalEmbedder {
         );
 
         Ok(Self { model, tokenizer })
+    }
+
+    /// Same as `embed()` but runs on tokio's blocking thread pool
+    /// so it doesn't starve the async runtime.
+    pub async fn embed_async(self: Arc<Self>, text: String) -> anyhow::Result<Vec<f32>> {
+        tokio::task::spawn_blocking(move || self.embed(&text))
+            .await
+            .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
     }
 
     /// Embed text to a 1024-dimensional vector (mean pooling + L2 normalize).

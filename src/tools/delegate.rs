@@ -1,4 +1,5 @@
 use crate::agent::loop_rs::Agent;
+use crate::capability::CapabilityManager;
 use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai::OpenAIProvider;
 use crate::models::{AgentConfig, ToolResult};
@@ -25,7 +26,22 @@ fn sanitize_prompt_input(s: &str, max: usize) -> String {
     }
 }
 
-pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) -> ToolResult {
+pub async fn delegate_task(
+    task: &str,
+    context: &str,
+    tools: Arc<ToolRegistry>,
+) -> ToolResult {
+    delegate_task_with_cap_mgr(task, context, tools, None).await
+}
+
+/// Same as `delegate_task` but allows sharing a parent's CapabilityManager so the
+/// sub-agent inherits the parent's budget quotas instead of getting fresh ones.
+pub async fn delegate_task_with_cap_mgr(
+    task: &str,
+    context: &str,
+    tools: Arc<ToolRegistry>,
+    cap_mgr: Option<Arc<CapabilityManager>>,
+) -> ToolResult {
     let started = Instant::now();
 
     let safe_task = sanitize_prompt_input(task, MAX_TASK_CHARS);
@@ -74,7 +90,10 @@ pub async fn delegate_task(task: &str, context: &str, tools: Arc<ToolRegistry>) 
         context_kind_quotas: Default::default(),
     };
 
-    let sub_agent = Agent::new(config, provider, tools);
+    let mut sub_agent = Agent::new(config, provider, tools).await;
+    if let Some(mgr) = cap_mgr {
+        sub_agent = sub_agent.with_capability_manager(mgr);
+    }
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(600),

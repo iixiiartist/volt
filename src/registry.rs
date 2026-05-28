@@ -20,7 +20,7 @@ impl Default for RegistryClient {
 impl RegistryClient {
     pub fn new() -> Self {
         Self {
-            http: crate::http_client(30),
+            http: crate::http_client(),
         }
     }
 

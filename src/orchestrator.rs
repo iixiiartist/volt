@@ -65,9 +65,54 @@ pub struct WorkflowResult {
 
 pub struct Orchestrator {
     tools: Arc<ToolRegistry>,
+    cap_mgr: Arc<crate::capability::CapabilityManager>,
 }
 
-fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
+impl Orchestrator {
+    pub async fn new(tools: Arc<ToolRegistry>) -> Self {
+        let cap_mgr = {
+            let mgr = Arc::new(crate::capability::CapabilityManager::new());
+            mgr.issue(
+                crate::capability::CapabilityScope::FsRead,
+                100,
+                chrono::Duration::hours(24),
+            ).await;
+            mgr.issue(
+                crate::capability::CapabilityScope::FsWrite,
+                50,
+                chrono::Duration::hours(24),
+            ).await;
+            mgr.issue(
+                crate::capability::CapabilityScope::System,
+                20,
+                chrono::Duration::hours(24),
+            ).await;
+            mgr.issue(
+                crate::capability::CapabilityScope::Network,
+                200,
+                chrono::Duration::hours(24),
+            ).await;
+            mgr.issue(
+                crate::capability::CapabilityScope::Database,
+                30,
+                chrono::Duration::hours(24),
+            ).await;
+            mgr.issue(
+                crate::capability::CapabilityScope::Memory,
+                50,
+                chrono::Duration::hours(24),
+            ).await;
+            mgr
+        };
+        Self { tools, cap_mgr }
+    }
+}
+
+async fn create_agent(
+    spec: AgentSpec,
+    tools: Arc<ToolRegistry>,
+    cap_mgr: Option<Arc<crate::capability::CapabilityManager>>,
+) -> Agent {
     let route = resolve_provider(&spec.model);
 
     let llm_provider: Box<dyn LLMProvider> = match route.kind {
@@ -93,7 +138,7 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
         None => crate::models::default_context_kinds(),
     };
 
-    Agent::new(
+    let mut agent = Agent::new(
         AgentConfig {
             name: spec.name,
             model: spec.model,
@@ -110,7 +155,11 @@ fn create_agent(spec: AgentSpec, tools: Arc<ToolRegistry>) -> Agent {
         },
         llm_provider,
         tools,
-    )
+    ).await;
+    if let Some(mgr) = cap_mgr {
+        agent = agent.with_capability_manager(mgr);
+    }
+    agent
 }
 
 fn kind_from_str(s: &str) -> ProviderKind {
@@ -233,10 +282,6 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
 }
 
 impl Orchestrator {
-    pub fn new(tools: Arc<ToolRegistry>) -> Self {
-        Self { tools }
-    }
-
     pub async fn run_parallel(
         &self,
         tasks: Vec<(AgentSpec, String)>,
@@ -246,6 +291,7 @@ impl Orchestrator {
 
         for (spec, task) in tasks {
             let tools = self.tools.clone();
+            let cap_mgr = self.cap_mgr.clone();
             let permit = semaphore.clone().acquire_owned().await;
             let agent_name = spec.name.clone();
             handles.push(tokio::spawn(async move {
@@ -263,7 +309,7 @@ impl Orchestrator {
                     }
                 };
                 let step_started = Instant::now();
-                let agent = create_agent(spec, tools);
+                let agent = create_agent(spec, tools, Some(cap_mgr.clone())).await;
                 let result = match agent.run(&task).await {
                     Ok(output) => {
                         let state = agent.state().lock().await;
@@ -322,7 +368,7 @@ impl Orchestrator {
             let task = task_template.replace("{prev}", &prev_output);
             let agent_name = spec.name.clone();
 
-            let agent = create_agent(spec, self.tools.clone());
+            let agent = create_agent(spec, self.tools.clone(), Some(self.cap_mgr.clone())).await;
             match agent.run(&task).await {
                 Ok(output) => {
                     let state = agent.state().lock().await;
@@ -429,7 +475,7 @@ impl Orchestrator {
             mode: None,
         };
 
-        let supervisor = create_agent(supervisor_spec, self.tools.clone());
+        let supervisor = create_agent(supervisor_spec, self.tools.clone(), Some(self.cap_mgr.clone())).await;
         let output = supervisor.run(task).await?;
         let state = supervisor.state().lock().await;
 
@@ -712,11 +758,17 @@ impl DagWorkflow {
 /// A DAG scheduler that executes multi-agent workflows as directed acyclic graphs.
 pub struct DagScheduler<'a> {
     tools: &'a Arc<ToolRegistry>,
+    cap_mgr: Option<&'a Arc<crate::capability::CapabilityManager>>,
 }
 
 impl<'a> DagScheduler<'a> {
     pub fn new(tools: &'a Arc<ToolRegistry>) -> Self {
-        Self { tools }
+        Self { tools, cap_mgr: None }
+    }
+
+    pub fn with_capability_manager(mut self, cap_mgr: &'a Arc<crate::capability::CapabilityManager>) -> Self {
+        self.cap_mgr = Some(cap_mgr);
+        self
     }
 
     /// Execute a DAG workflow with the given initial input.
@@ -768,8 +820,9 @@ impl<'a> DagScheduler<'a> {
             let mut handles = Vec::new();
             for (node_id, agent_spec, task) in payloads {
                 let tools = self.tools.clone();
+                let cap_mgr = self.cap_mgr.cloned();
                 handles.push(tokio::spawn(async move {
-                    let agent = create_agent(agent_spec, tools);
+                    let agent = create_agent(agent_spec, tools, cap_mgr).await;
                     let result = agent.run(&task).await;
                     (node_id, result)
                 }));
@@ -799,7 +852,7 @@ impl Orchestrator {
     ) -> anyhow::Result<WorkflowResult> {
         let started = std::time::Instant::now();
         let workflow = DagWorkflow::from_json(dag_json)?;
-        let scheduler = DagScheduler::new(&self.tools);
+        let scheduler = DagScheduler::new(&self.tools).with_capability_manager(&self.cap_mgr);
         let outputs = scheduler.execute(&workflow, initial_input).await?;
 
         // Build the workflow result

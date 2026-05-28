@@ -373,7 +373,7 @@ async fn test_parallel_multi_agent_workflow() {
     let specs = parse_agent_specs(agents_json).expect("valid agent specs");
     let tasks: Vec<String> = serde_json::from_str(tasks_json).expect("valid tasks JSON");
 
-    let orch = Orchestrator::new(tools);
+    let orch = Orchestrator::new(tools).await;
     let started = Instant::now();
     let result = orch.run_workflow("parallel", specs, tasks).await;
 
@@ -464,7 +464,7 @@ async fn test_pipeline_workflow() {
     let specs = parse_agent_specs(agents_json).expect("valid agent specs");
     let tasks: Vec<String> = serde_json::from_str(tasks_json).expect("valid tasks JSON");
 
-    let orch = Orchestrator::new(tools);
+    let orch = Orchestrator::new(tools).await;
     let started = Instant::now();
     let result = orch.run_workflow("pipeline", specs, tasks).await;
 
