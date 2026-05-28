@@ -249,9 +249,9 @@ impl EmbeddingClient {
 
         // Truncate to fit within typical embedding model context windows.
         // mxbai-embed-large: 512 tokens, BGE-small: 512 tokens.
-        // ~2000 bytes is a safe upper bound for most models.
-        let truncated = if description.len() > 2000 {
-            let mut idx = 2000;
+        // ~512 bytes is a safe upper bound for most models (~128-170 tokens).
+        let truncated = if description.len() > 512 {
+            let mut idx = 512;
             while !description.is_char_boundary(idx) && idx > 0 {
                 idx -= 1;
             }

@@ -68,14 +68,17 @@ impl LocalEmbedder {
             .iter()
             .map(|&v| v as i64)
             .collect();
+        let token_type: Vec<i64> = vec![0i64; seq_len];
 
         let input_ids_arr = ndarray::Array2::from_shape_vec((1, seq_len), token_ids)?;
         let attn_mask_arr = ndarray::Array2::from_shape_vec((1, seq_len), attn_mask.clone())?;
+        let token_type_arr = ndarray::Array2::from_shape_vec((1, seq_len), token_type)?;
 
-        // Build inputs for BERT encoder: [input_ids, attention_mask]
+        // Build inputs for BERT encoder: [input_ids, attention_mask, token_type_ids]
         let mut inputs: tract_onnx::prelude::TVec<TValue> = Default::default();
         inputs.push(Tensor::from(input_ids_arr.into_dyn()).into());
         inputs.push(Tensor::from(attn_mask_arr.into_dyn()).into());
+        inputs.push(Tensor::from(token_type_arr.into_dyn()).into());
 
         let outputs = self.model.run(inputs)?;
 
