@@ -86,25 +86,17 @@ enum Commands {
         mode: String,
     },
     McpServe,
-    Serve {
-        #[arg(long)]
-        model: Option<String>,
-        #[arg(long, short = 'a', default_value_t = false)]
-        allow: bool,
-        #[arg(long)]
-        max_iterations: Option<u32>,
-        #[arg(long, default_value = "balanced")]
-        mode: String,
-        #[arg(long, default_value_t = 8080)]
-        port: u16,
-    },
     Workflow {
         #[arg(long)]
         pattern: String,
         #[arg(long)]
-        agents: String,
+        agents: Option<String>,
         #[arg(long)]
-        tasks: String,
+        tasks: Option<String>,
+        #[arg(long)]
+        agents_file: Option<PathBuf>,
+        #[arg(long)]
+        tasks_file: Option<PathBuf>,
         #[arg(long, short = 'a', default_value_t = false)]
         allow: bool,
     },
@@ -242,27 +234,12 @@ async fn main() -> anyhow::Result<()> {
             pattern,
             agents,
             tasks,
+            agents_file,
+            tasks_file,
             allow,
-        } => commands::workflow::run(pattern, agents, tasks, allow).await?,
+        } => commands::workflow::run(pattern, agents, tasks, agents_file, tasks_file, allow).await?,
         Commands::Eval { suite, model } => commands::eval::run(suite, model).await?,
         Commands::McpServe => commands::mcp::serve_stdio().await?,
-        Commands::Serve {
-            model,
-            allow,
-            max_iterations,
-            mode,
-            port,
-        } => {
-            commands::serve::serve(commands::serve::ServeOptions {
-                model: commands::serve::ServeOptions::model_or_default(model),
-                allow,
-                max_iterations: max_iterations.unwrap_or(25),
-                mode,
-                port,
-                settings,
-            })
-            .await?
-        }
         Commands::ProvisionSkill { path } => {
             commands::skills::provision_skill(path, &settings).await?
         }

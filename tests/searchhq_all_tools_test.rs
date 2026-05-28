@@ -42,7 +42,7 @@ async fn test_all_searchhq_tools() {
             CapabilityScope::Database,
             CapabilityScope::Memory,
         ] {
-            mgr.issue(scope.clone(), 500, chrono::Duration::hours(1));
+            mgr.issue(scope.clone(), 500, chrono::Duration::hours(1)).await;
         }
         mgr
     };

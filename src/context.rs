@@ -1,7 +1,8 @@
 use crate::cosine_similarity;
 use crate::embedding::EmbeddingClient;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -220,6 +221,49 @@ impl ContextStore {
         };
         self.entries.write().await.push(StoredEntry { entry });
         id
+    }
+
+    /// Hardened, immediate persistence path for truncated conversation blocks.
+    /// Terminates the 'in-memory only' gap and forces data directly into pgvector/SQL pools.
+    pub async fn seed_truncated_history_persistent(
+        &self,
+        session_id: &str,
+        truncated_text: String,
+        summary_hint: String,
+        db_pool: &PgPool,
+    ) -> anyhow::Result<()> {
+        let entry = ContextEntry {
+            id: Uuid::new_v4(),
+            kind: ContextKind::Conversation,
+            content: truncated_text,
+            embedding: None,
+            metadata: json!({
+                "session_id": session_id,
+                "summary": summary_hint,
+                "archived_at": chrono::Utc::now().to_rfc3339()
+            }),
+            frequency: 0,
+            success_rate: 0.0,
+            usage_count: 0,
+            last_used_at: chrono::Utc::now(),
+            created_at: chrono::Utc::now(),
+        };
+
+        // 1. Commit to the local runtime memory buffer for immediate multi-agent visibility
+        {
+            let mut entries_guard = self.entries.write().await;
+            entries_guard.push(StoredEntry { entry: entry.clone() });
+        }
+
+        // 2. Force immediate, non-batched database write to guarantee survival across process reboots
+        crate::db::insert_context_entry(db_pool, &entry).await?;
+
+        tracing::info!(
+            session_id = %session_id,
+            entry_id = %entry.id,
+            "persisted L2 cold-history snapshot to pgvector"
+        );
+        Ok(())
     }
 
     pub async fn compute_embeddings(&self, embedder: &EmbeddingClient) {
@@ -458,15 +502,20 @@ impl ContextStore {
 
     const DEDUP_THRESHOLD: f32 = 0.92;
 
+    /// Seed batch of entries into the context store with semantic dedup and quota eviction.
+    ///
+    /// **Performance:** Entries without embeddings use content-hash dedup to prevent
+    /// silent duplicates when compression cycles produce identical conversation summaries.
+    /// Embedded entries use cosine similarity (≥ DEDUP_THRESHOLD = 0.92).
+    /// **Time Complexity:** O(N * M) where N = batch size, M = store size per kind.
     pub async fn seed_batch(&self, entries: Vec<ContextEntry>) {
         let mut store = self.entries.write().await;
         let mut inserted = 0usize;
 
         for entry in entries {
-            // 1. Semantic dedup: if an existing entry with same kind has
-            //    cosine ≥ DEDUP_THRESHOLD, merge frequencies instead of inserting.
+            // 1. Semantic dedup: content-hash for non-embedded, cosine for embedded
+            let mut merged = false;
             if let Some(ref emb) = entry.embedding {
-                let mut merged = false;
                 for existing in store.iter_mut() {
                     if existing.entry.kind != entry.kind {
                         continue;
@@ -481,9 +530,22 @@ impl ContextStore {
                         }
                     }
                 }
-                if merged {
-                    continue;
+            } else {
+                // Content-hash dedup for entries without embeddings
+                for existing in store.iter_mut() {
+                    if existing.entry.kind != entry.kind {
+                        continue;
+                    }
+                    if existing.entry.content == entry.content {
+                        existing.entry.frequency += 1;
+                        existing.entry.last_used_at = chrono::Utc::now();
+                        merged = true;
+                        break;
+                    }
                 }
+            }
+            if merged {
+                continue;
             }
 
             store.push(StoredEntry {
@@ -493,9 +555,7 @@ impl ContextStore {
 
             // Persist to PostgreSQL if available
             if let Some(db) = self.db() {
-                if entry.embedding.is_some() {
-                    let _ = crate::db::insert_context_entry(db, &entry).await;
-                }
+                let _ = crate::db::insert_context_entry(db, &entry).await;
             }
         }
 

@@ -94,14 +94,13 @@ All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate
 | **Tool execution** | `futures::join_all` parallel execution |
 | **Path safety** | RwLock-cached root with staleness check |
 | **Sandbox** | env_clear() on Windows + Unix, timeout, output limits |
-| **Feature flags** | All opt-in (`default = []`) |
+| **Feature flags** | All opt-in (`default = ["tools-local-embeddings"]`) |
 | **Agent state** | SQLite session persistence |
 | **Token counting** | tiktoken-rs cl100k_base (replaces chars/3) |
 | **OpenTelemetry** | tracing→OTel bridge with OTLP export support |
 | **GraphRAG** | petgraph ToolGraph with BFS traversal |
-| **HNSW index** | In-memory cosine similarity for ContextStore |
-| **tree-sitter** | Feature-gated AST parsing (tools-ast) |
-| **candle** | Feature-gated local embeddings (tools-local-embeddings) |
+| **Local ONNX** | tract-onnx BGE-large-en-v1.5 (tools-local-embeddings) |
+| **LSH index** | vector_index::LshIndex for approximate nearest neighbor |
 
 ### 7. Permission System
 
@@ -114,13 +113,13 @@ All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate
 
 ## Tool Registry
 
-### Built-in Tools (47)
+### Built-in Tools (39+)
 
 | Category | Tools | Feature Flag |
 |---|---|---|
 | **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | built-in |
 | **Shell** | `bash` | built-in |
-| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all` | built-in |
+| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all`, `web_search`, `you_research`, `you_contents` | built-in |
 | **Data** | `json_validate`, `json_prettify`, `json_query`, `csv_read`, `csv_write` | built-in |
 | **Archives** | `archive_extract`, `archive_create` | built-in |
 | **Memory** | `memory_append`, `todo_add` | built-in |
@@ -132,7 +131,7 @@ All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate
 | **PDF** | `create_pdf` | tools-pdf |
 | **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop |
 | **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser |
-| **Delegation** | `delegate`, `run_workflow` | built-in |
+| **Delegation** | `delegate`, `run_workflow`, `final_answer` | built-in |
 | **MCP** | `searchhq_*` (19 tools) | runtime registration |
 
 ---
@@ -193,6 +192,7 @@ async fn run(&self, input: &str) -> Result<String> {
 | Model | Distractors | Accuracy | Evaluation |
 |---|---|---|---|
 | llama-3.1-8b-instant | 200 | **100%** | Argument-aware |
+| qwen/qwen3-32b | 200 | 92% | Argument-aware |
 | llama-3.3-70b-versatile | 200 | 90% | Argument-aware |
 
 ### Tool-Count Scaling Ablation

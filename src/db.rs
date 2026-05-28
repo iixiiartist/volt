@@ -600,13 +600,31 @@ pub async fn insert_context_entry(pool: &PgPool, entry: &ContextEntry) -> anyhow
         .bind(entry.created_at)
         .execute(pool)
         .await?;
-    }
-    let sql2 = include_str!("../migrations/0002_jobs_and_routines.sql");
-    for statement in split_sql_statements(sql2) {
-        let statement = statement.trim();
-        if !statement.is_empty() {
-            sqlx::query(statement).execute(pool).await?;
-        }
+    } else {
+        sqlx::query(
+            r#"
+            INSERT INTO context_entries (id, kind, content, embedding, metadata, frequency, success_rate, usage_count, last_used_at, created_at)
+            VALUES ($1, $2, $3, NULL::vector, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+                frequency = context_entries.frequency + EXCLUDED.frequency,
+                success_rate = (context_entries.success_rate * context_entries.usage_count::real + EXCLUDED.success_rate * EXCLUDED.usage_count::real) / NULLIF(context_entries.usage_count + EXCLUDED.usage_count, 0)::real,
+                usage_count = context_entries.usage_count + EXCLUDED.usage_count,
+                last_used_at = EXCLUDED.last_used_at,
+                content = EXCLUDED.content,
+                metadata = EXCLUDED.metadata
+            "#,
+        )
+        .bind(entry.id)
+        .bind(entry.kind.as_str())
+        .bind(&entry.content)
+        .bind(&entry.metadata)
+        .bind(i32::try_from(entry.frequency).unwrap_or(i32::MAX))
+        .bind(entry.success_rate)
+        .bind(i32::try_from(entry.usage_count).unwrap_or(i32::MAX))
+        .bind(entry.last_used_at)
+        .bind(entry.created_at)
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }

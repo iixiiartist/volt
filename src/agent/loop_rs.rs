@@ -817,6 +817,7 @@ impl Agent {
     /// Push a message with automatic id assignment and parent linkage.
     /// This preserves the DAG topology so that `linearize_messages()` can
     /// reconstruct the correct chronological order in branching conversations.
+    #[expect(dead_code)]
     async fn push_message(
         state: &mut tokio::sync::MutexGuard<'_, AgentState>,
         role: impl Into<String>,
@@ -855,7 +856,7 @@ impl Agent {
 
     async fn compress_if_needed(&self, llm_messages: Vec<LLMMessage>) -> Vec<LLMMessage> {
         let model_ctx = ModelContext::for_model(&self.config.model);
-        let budget = model_ctx.max_context_tokens.saturating_sub(2048);
+        let budget = (model_ctx.max_context_tokens as f64 * 0.80) as u32;
         let before = llm_messages.len();
 
         // Compute per-message token counts
@@ -1023,7 +1024,19 @@ impl Agent {
             truncated.len(),
             topic_hint
         );
-        store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+        let session_id = self.session_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".into());
+        let truncated_text: String = truncated
+            .iter()
+            .map(|m| format!("[{}] {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(ref pool) = self.db {
+            let _ = store
+                .seed_truncated_history_persistent(&session_id, truncated_text, summary, pool)
+                .await;
+        } else {
+            store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+        }
     }
 
     /// Same as seed_truncated_context but for LLMMessage slices (selective path).
@@ -1049,7 +1062,19 @@ impl Agent {
             truncated.len(),
             topic_hint
         );
-        store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+        let session_id = self.session_id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".into());
+        let truncated_text: String = truncated
+            .iter()
+            .map(|m| format!("[{}] {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(ref pool) = self.db {
+            let _ = store
+                .seed_truncated_history_persistent(&session_id, truncated_text, summary, pool)
+                .await;
+        } else {
+            store.add(crate::context::ContextKind::Conversation, &summary, serde_json::json!({})).await;
+        }
     }
 
     async fn push_assistant_message(

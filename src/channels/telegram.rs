@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 
 pub struct TelegramChannel {
-    token: String,
+    #[allow(dead_code)]
+    pub token: String,
 }
 
 impl TelegramChannel {

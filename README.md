@@ -1,8 +1,8 @@
 # Volt — The Autonomous Systems Engine
 
-> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, and 38 built-in tools. 100% accuracy at 200 distractors (BFCL-verified). [Paper.](paper/draft.md)**
+> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, and 39+ built-in tools. 100% accuracy at 200 distractors (BFCL-verified). [Paper.](paper/draft.md)**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211) [![GitLab CI](https://gitlab.com/iixiiartist-volt/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist-volt/volt/-/pipelines)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211)
 
 ## Why Volt?
 
@@ -18,42 +18,39 @@ Key design decisions:
 - **Everything-as-RAG**: 12 context kinds dynamically retrievable from unified vector store
 - **Background Auto-Seeding Worker**: MPSC channel daemon maintains context autonomously via Tokio
 - **Four-Pillar Eviction**: Semantic dedup, per-kind quotas, composite scores, episodic merging
-- **38 Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser
-- **Multi-Agent Orchestration**: Parallel, pipeline, and supervisor patterns
+- **39+ Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser
+- **Multi-Agent Orchestration**: Parallel, pipeline, supervisor, and DAG patterns
 - **pgvector Persistence**: PostgreSQL with HNSW indexes, context survives restarts
-- **7 Embedding Providers**: Ollama, llama.cpp, NVIDIA, OpenAI, HuggingFace, Moonshot, deterministic
-- **Single Binary**: Rust-compiled, ~13k lines, 57 source files, MIT license
+- **Local ONNX Embeddings**: BGE-large-en-v1.5 (1024d) via tract-onnx, no C++ dependency
+- **Single Binary**: Rust-compiled, MIT license
 
 ## Quick Start
 
 ```bash
-# Prerequisites: Rust 1.85+, PostgreSQL 16+ with pgvector (optional for full persistence)
+# Prerequisites: Rust 1.85+, PostgreSQL 16+ with pgvector (optional)
 git clone https://github.com/iixiiartist/volt.git
 cd volt
 cargo build --release
 
-# First-run wizard (interactive LLM + DB setup)
-./target/release/volt init
+# Initialize database schema
+./target/release/volt init-db
 
-# Interactive chat with dynamic tool selection
-./target/release/volt agent-chat
-
-# Single-shot execution (autonomous mode)
+# Single-shot execution
 ./target/release/volt agent-run --input "Analyze this codebase" --allow
 
-# Multi-agent workflow
+# Multi-agent parallel workflow (use --agents-file to avoid shell quoting issues)
+cat > agents.json << 'EOF'
+[{"name":"analyst"},{"name":"reviewer"}]
+EOF
 ./target/release/volt workflow --pattern parallel \
-  --agents '[{"name":"analyst"},{"name":"reviewer"}]' \
+  --agents-file agents.json \
   --tasks '["Analyze code","Review security"]'
+
+# Interactive TUI session
+./target/release/volt agent-tui
 
 # End-to-end benchmark with argument validation
 python volt-bfcl/volt_bench.py --category simple_python --distractors 200
-
-# Tool-count scaling ablation
-python volt-bfcl/volt_bench.py --category simple_python --sweep
-
-# Multi-turn episodic memory benchmark
-python volt-bfcl/multi_turn_bench.py --mode episodic
 ```
 
 ## Architecture
@@ -105,80 +102,69 @@ python volt-bfcl/multi_turn_bench.py --mode episodic
 
 **Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200 distractors.
 
-### Built-in Tools (38)
+### Built-in Tools (39+)
 
-| Category | Tools | Permission |
+| Category | Tools | Feature Flag |
 |---|---|---|
-| **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | Prompt/Allow |
-| **Shell** | `bash` | Prompt |
-| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all` | Prompt |
-| **Data** | `json_*` (3), `csv_*` (2), `archive_*` (2) | Allow |
-| **Memory** | `memory_append`, `todo_add` | Allow |
-| **Git** | `git_status`, `git_diff`, `git_add`, `git_commit`, `git_log` (12) | Allow |
-| **Time** | `get_current_time`, `convert_time` | Allow |
-| **Reasoning** | `sequentialthinking` | Allow |
-| **Charts** | `create_bar_chart`, `create_line_chart` | Allow |
-| **Screenshot/PDF/Desktop/Browser** | Feature-gated (12 tools) | Prompt |
-| **Delegation** | `delegate`, `run_workflow` | Prompt/Allow |
-| **MCP** | SearchHQ (19 tools), extensible | Allow |
+| **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | built-in |
+| **Shell** | `bash` | built-in |
+| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all`, `web_search`, `you_research`, `you_contents` | built-in |
+| **Data** | `json_validate`, `json_prettify`, `json_query`, `csv_read`, `csv_write`, `archive_extract`, `archive_create` | built-in |
+| **Memory** | `memory_append`, `todo_add` | built-in |
+| **Git** | `git_status`, `git_diff`, `git_diff_unstaged`, `git_diff_staged`, `git_add`, `git_commit`, `git_reset`, `git_log`, `git_branch`, `git_checkout`, `git_show`, `git_create_branch` | built-in |
+| **Time** | `get_current_time`, `convert_time` | built-in |
+| **Reasoning** | `sequentialthinking` | built-in |
+| **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
+| **Screenshot/PDF/Desktop/Browser** | Feature-gated (12 tools) | opt-in features |
+| **Delegation** | `delegate`, `run_workflow`, `final_answer` | built-in |
+| **MCP** | SearchHQ (19 tools), extensible via `volt mcp-serve` | built-in |
 
-### Embedding Providers
+### Embedding
 
-7-provider fallback chain: Ollama → llama.cpp → NVIDIA → OpenAI → HuggingFace → Moonshot → deterministic. All normalized to 1024d via pad/truncate. Auto-detection with `EMBEDDING_PROVIDER=auto` or explicit via env var.
+Local ONNX inference via tract-onnx with `Xenova/bge-large-en-v1.5` (1024d, ~337MB). Configure via `VOLT_ONNX_MODEL_DIR` or `EMBEDDING_MODEL`. Falls back to deterministic SHA-256 placeholder embeddings when no network or local model is available.
 
 ### Multi-Agent Orchestration
 
-Parallel, pipeline, and supervisor patterns with per-agent token tracking. 3/3 workflow tests pass.
+Parallel, pipeline, supervisor, and DAG-based multi-agent patterns with topological scheduling and parallel level execution.
 
 ### Permission System
 
-23 tools default to `PermissionLevel::Prompt`. Autonomous mode with `--allow` (`-a`). Session-level approval with `allow_session`. Human-in-the-loop enforced at the Rust compiler level.
+23 tools default to `PermissionLevel::Prompt`. Autonomous mode with `--allow` (`-a`). Human-in-the-loop enforced at the Rust compiler level via the `attenuation` module.
 
 ## Testing
 
 ```bash
-# Full test suite (66 tests)
+# Full test suite
 cargo test --features testutils
 
-# Specific test categories
-cargo test --lib                          # 54 unit tests
-cargo test --test agent_tests             # 4 agent tests
-cargo test --test workflow_bench          # 3 multi-agent tests
-cargo test --test bfcl_pipeline           # BFCL pipeline test
+# Unit tests (63)
+cargo test --lib --features testutils
+
+# Professional workflow tests (24)
+cargo test --test professional_workflows --features testutils
+
+# Real-world benchmarks (11)
+cargo test --test real_world_benchmarks --features testutils
 
 # Benchmarks
 python volt-bfcl/volt_bench.py --distractors 200 --model llama-3.1-8b-instant
-python volt-bfcl/volt_bench.py --sweep      # Tool-count scaling
-python volt-bfcl/multi_turn_bench.py         # Episodic memory
 ```
 
 ## CI/CD
 
-Volt uses **GitLab CI** (unlimited free minutes for public repos). The pipeline runs on every push to `main`/`develop` and on every tag for releases.
+Volt uses **GitLab CI** with automated testing and cross-platform builds.
 
-**Stages:** `test` → `lint` → `security` → `docs` → `build` → `release`
-
-### Setup
-1. Mirror this repo to GitLab: **Settings → Repository → Mirroring repositories** (or push directly to GitLab)
-2. GitLab CI will auto-detect `.gitlab-ci.yml` and run pipelines
-
-**Required CI/CD variables** (Settings → CI/CD → Variables):
-- `DATABASE_URL` — Postgres connection string (optional; tests spin up a pgvector service container)
-- `GITHUB_TOKEN` — GitHub personal access token (optional; for pushing releases back to GitHub)
-
-### Cross-platform builds
-GitLab shared runners are **Linux-only** on the free tier. The CI pipeline builds both glibc and musl Linux binaries automatically on every tag.
-
-- **Windows**: Built locally on a Windows dev machine and uploaded to the GitHub Release alongside the Linux artifacts.
-- **macOS**: Not built at this time (requires a Mac or self-hosted runner). Uncomment the `build_macos_*` jobs in `.gitlab-ci.yml` when a runner is available.
+**Required CI/CD variables:**
+- `DATABASE_URL` — Postgres connection string
+- `GITHUB_TOKEN` — GitHub personal access token (for release syncing)
 
 ## Performance
 
 | Metric | Value |
 |---|---|
-| Binary size | Linux glibc ~10 MB, Linux musl ~8 MB, Windows ~20 MB (compressed) |
+| Binary size | ~10 MB Linux, ~20 MB Windows |
 | Cold start | <100ms |
-| Tool search | <1ms (in-memory cosine) |
+| Tool search | <5µs (in-memory cosine, DashMap single-pass) |
 | Memory search | <5ms (pgvector HNSW) |
 | Token savings | 74% vs static injection |
 | Accuracy (200 distractors) | 100% (argument-validated) |

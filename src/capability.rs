@@ -247,6 +247,7 @@ impl CapabilityManager {
                 self.tokens.clone(),
                 nonce,
                 requested_amount,
+                self.key.clone(),
                 self.clock_leeway,
             ));
         }
@@ -268,6 +269,7 @@ impl CapabilityManager {
                     self.tokens.clone(),
                     t.nonce.clone(),
                     actual,
+                    self.key.clone(),
                     self.clock_leeway,
                 ));
             }
@@ -372,6 +374,7 @@ pub struct RefundGuard {
     nonce: Option<String>,
     amount: u64,
     armed: AtomicBool,
+    key: Option<Vec<u8>>,
 }
 
 impl RefundGuard {
@@ -379,6 +382,7 @@ impl RefundGuard {
         tokens: Arc<Mutex<HashMap<String, CapabilityToken>>>,
         nonce: String,
         amount: u64,
+        key: Vec<u8>,
         _clock_leeway: chrono::Duration,
     ) -> Self {
         Self {
@@ -386,6 +390,7 @@ impl RefundGuard {
             nonce: Some(nonce),
             amount,
             armed: AtomicBool::new(true),
+            key: Some(key),
         }
     }
 
@@ -402,24 +407,45 @@ impl RefundGuard {
 
 impl Drop for RefundGuard {
     fn drop(&mut self) {
-        if self.armed.load(Ordering::Acquire) {
-            if let (Some(ref tokens_arc), Some(ref nonce)) = (self.tokens.as_ref(), self.nonce.as_ref()) {
-                let amount = self.amount;
-                let nonce_clone = nonce.to_string();
+        if !self.armed.load(Ordering::Acquire) {
+            return;
+        }
+        let tokens_arc = self.tokens.take();
+        let nonce = self.nonce.take();
+        let key = self.key.take();
+        let amount = self.amount;
+        let nonce_debug = nonce.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            if let (Some(ref tokens_arc), Some(ref nonce), Some(ref key)) = (&tokens_arc, &nonce, &key) {
+                let nonce_clone = nonce.clone();
                 let tokens_clone = Arc::clone(tokens_arc);
-                // Use block_in_place + blocking_lock because Drop is synchronous.
-                // This is safe because the operation is O(1) and will not deadlock
-                // (the mutex is not held by the current task at drop time).
+                let key_clone = key.clone();
                 tokio::task::block_in_place(|| {
                     let mut guard = tokens_clone.blocking_lock();
-                    if let Some(token) = guard.get_mut(nonce_clone.as_str()) {
+                    if let Some(token) = guard.get_mut(&nonce_clone) {
                         token.remaining = token.remaining.saturating_add(amount);
+                        let payload = build_token_payload(
+                            &token.scope,
+                            token.max_budget,
+                            token.remaining,
+                            &token.expires_at,
+                            &token.nonce,
+                        );
+                        token.signature = sign_payload(&key_clone, &payload);
                     }
                 });
             }
+        }));
+        if result.is_err() {
+            eprintln!(
+                "CRITICAL: RefundGuard dropped during an unstable panic unwind state \
+                 (budget for nonce={:?} amount={} may be lost)",
+                nonce_debug, amount
+            );
         }
     }
 }
+
 
 /// Map a tool name to the required capability scope for authorization.
 /// Fail-closed default: unknown/unmapped tools require System scope (maximum protection).

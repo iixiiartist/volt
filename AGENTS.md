@@ -136,7 +136,7 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - `compress_if_needed()` — selective compression preserves ALL system messages, compresses only conversation history
 - Two strategies: selective (keep system, truncate conversation) and fallback (rolling truncation when system exceeds budget)
 - Uses `ModelContext::estimate_tokens()` for accurate tiktoken-based token counting
-- Budget = model max context - 2048; injects `[Conversation summary]` markers when truncation occurs
+- Budget = 80% of model max context; injects `[Conversation summary]` markers when truncation occurs
 
 #### MCP Streaming + Agent-to-Agent
 - `MCPTransport::WebSocket { url, headers }` variant in `models.rs`
