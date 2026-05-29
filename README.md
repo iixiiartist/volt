@@ -26,35 +26,44 @@ Key design decisions:
 
 ## Quick Start
 
-```bash
-# Download pre-built binary (latest release):
-#   https://github.com/iixiiartist/volt/releases
+### Option A: Download binary (easiest)
 
-# Or build from source:
-# Prerequisites: Rust 1.85+, PostgreSQL 16+ with pgvector (optional)
+```powershell
+# 1. Download volt.exe from https://github.com/iixiiartist/volt/releases
+# 2. Run PostgreSQL with pgvector (Docker — one command):
+docker compose -f docker-compose.db.yml up -d
+
+# 3. Set your API key and DB connection:
+set GROQ_API_KEY=gsk_your_key_here
+set DATABASE_URL=postgres://volt:volt@localhost:5432/volt
+
+# 4. Initialize the database schema (one-time):
+volt.exe init-db
+
+# 5. Run:
+volt.exe agent-run --input "Analyze this codebase" --allow
+```
+
+> **No Docker?** Set `DATABASE_URL` to any value (PostgreSQL unreachable is caught gracefully — runs without persistence).
+
+### Option B: Build from source
+
+```bash
 git clone https://github.com/iixiiartist/volt.git
 cd volt
 cargo build --release
 
-# Initialize database schema
+# Initialize, then run
 ./volt init-db
-
-# Single-shot execution
 ./volt agent-run --input "Analyze this codebase" --allow
-
-# Multi-agent parallel workflow (use --agents-file to avoid shell quoting issues)
-cat > agents.json << 'EOF'
-[{"name":"analyst"},{"name":"reviewer"}]
-EOF
-./volt workflow --pattern parallel \
-  --agents-file agents.json \
-  --tasks '["Analyze code","Review security"]'
 
 # Interactive TUI session
 ./volt agent-tui
 
-# End-to-end benchmark with argument validation
-python volt-bfcl/volt_bench.py --category simple_python --distractors 200
+# Multi-agent workflow
+./volt workflow --pattern parallel \
+  --agents '[{"name":"analyst"},{"name":"reviewer"}]' \
+  --tasks '["Analyze code","Review security"]'
 ```
 
 ## Architecture
@@ -139,6 +148,138 @@ Parallel, pipeline, supervisor, and DAG-based multi-agent patterns with topologi
 
 23 tools default to `PermissionLevel::Prompt`. Autonomous mode with `--allow` (`-a`). Human-in-the-loop enforced at the Rust compiler level via the `attenuation` module.
 
+## Commands Reference
+
+### Setup & Database
+
+| Command | Description |
+|---------|-------------|
+| `volt init-db` | Initialize PostgreSQL schema (tables, indexes, pgvector HNSW) — one-time setup |
+| `volt migrate` | Apply database schema migrations |
+
+### Running Agents
+
+| Command | Description |
+|---------|-------------|
+| `volt agent-run --input <query>` | Single-shot agent execution (non-interactive) |
+| `volt agent-tui` | Interactive terminal chat session with the agent |
+
+Common flags for both:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model <name>` | `LLM_MODEL` or `llama-3.1-8b-instant` | LLM model to use |
+| `--allow`, `-a` | off | Autonomous mode (bypass permission prompts) |
+| `--mode <mode>` | `balanced` | Context profile: `precision`, `balanced`, `autonomous` |
+| `--session-id <uuid>` | — | Resume a previous session |
+| `--max-iterations <n>` | 8 (agent-run) / 25 (agent-tui) | Max agent loop iterations |
+| `--load-tools <file>` | — | Path to BFCL tool stubs JSONL (for benchmarks) |
+| `--context-kinds <list>` | mode-driven | Comma-delimited context kinds to enable |
+
+**Context modes:**
+- `precision` — Tool + Artifact only (2 kinds, best for function-calling benchmarks)
+- `balanced` — Tool + Skill + Memory + Conversation + Artifact (5 kinds, default)
+- `autonomous` — All 12 context kinds (best for open-ended research tasks)
+
+### Multi-Agent Workflows
+
+| Command | Description |
+|---------|-------------|
+| `volt workflow --pattern <p> --agents <json> --tasks <json>` | Run a multi-agent workflow |
+
+Patterns: `parallel`, `pipeline`, `supervisor`, or inline DAG JSON.
+
+Use `--agents-file` / `--tasks-file` to pass from files instead of CLI args.
+
+### Tools & Skills Management
+
+| Command | Description |
+|---------|-------------|
+| `volt list-tools` | List all registered tools as JSON |
+| `volt execute --tool <name> --params <json>` | Execute a tool directly by name |
+| `volt validate --manifest <path>` | Validate a tool manifest file |
+| `volt sandbox --command <cmd>` | Run an arbitrary command in the sandbox |
+| `volt history --limit <n>` | Show recent tool execution history |
+| `volt mcp-serve` | Serve all tools over MCP stdio transport (stdin/stdout JSON-RPC) |
+| `volt provision --pkg-id <id>` | Provision a tool from the remote registry |
+| `volt provision-file --manifest <path>` | Provision a tool from a local manifest file |
+| `volt provision-skill --path <path>` | Compile and store a skill from SKILL.md |
+| `volt import-skill --path <file> --format <fmt>` | Import a skill from Claude, Cursor, Copilot, OpenCode, or Markdown |
+| `volt install-skill --name <name>` | Install a skill from the catalog |
+| `volt list-catalog-skills` | List available skills in the catalog |
+| `volt search-catalog-skills --query <q>` | Search the skill catalog |
+
+### Evaluation & Benchmarks
+
+| Command | Description |
+|---------|-------------|
+| `volt eval --suite <file> --model <name>` | Run an evaluation suite against the agent |
+| `bfcl_bench` (separate binary) | BFCL v4 benchmark runner (use `--help` for flags) |
+
+### Daemons (Background Services)
+
+| Command | Description |
+|---------|-------------|
+| `volt heartbeat` | Periodic heartbeat loop (60s interval) |
+| `volt jobs-monitor` | Self-repair job monitor (check 30s, repair 300s) |
+| `volt routines-engine` | Routine scheduling engine (60s check) |
+| `volt jobs list` | List all jobs from the database |
+| `volt routines list` | List all routines from the database |
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string (e.g. `postgres://volt:volt@localhost:5432/volt`) |
+| `GROQ_API_KEY` | For Groq | — | Groq API key for LLM access |
+| `LLM_MODEL` | No | `llama-3.1-8b-instant` | Default LLM model |
+| `LLM_BASE_URL` | No | `http://localhost:11434/v1` | For Ollama or custom OpenAI-compatible endpoints |
+| `LLM_API_KEY` | No | — | API key for custom LLM providers |
+| `OPENAI_API_KEY` | No | — | OpenAI API key |
+| `ANTHROPIC_API_KEY` | No | — | Anthropic API key |
+| `NVIDIA_API_KEY` | No | — | NVIDIA NIM API key |
+| `EMBEDDING_PROVIDER` | No | `nvidia` | Embedding provider: `nvidia`, `ollama`, `openai`, `huggingface`, `moonshot`, `llamacpp` |
+| `EMBEDDING_MODEL` | No | `nvidia/llama-nemotron-embed-1b-v2` | Embedding model ID |
+| `EMBEDDING_ENDPOINT` | No | NVIDIA NIM endpoint | Embedding API URL |
+| `EMBEDDING_API_KEY` | No | — | Embedding API key (NVIDIA NIM) |
+| `HF_TOKEN` | No | — | HuggingFace token (downloads BGE-large-en-v1.5 ONNX model) |
+| `YOUCOM_API_KEY` | No | — | you.com API key for web search/research tools |
+| `VOLT_REGISTRY_BASE_URL` | No | `https://registry.voltagents.com/v1` | Tool registry URL |
+| `VOLT_REGISTRY_TOKEN` | No | — | Tool registry auth token |
+| `VOLT_ONNX_MODEL_DIR` | No | HF cache | Local directory with `model.onnx` + `tokenizer.json` |
+| `RUST_LOG` | No | `info` | Logging/tracing level |
+
+### Feature Flags (compile-time)
+
+| Flag | Enables |
+|------|---------|
+| `tools-screenshot` | Screenshot capture tool |
+| `tools-pdf` | PDF generation tool |
+| `tools-desktop` | Desktop automation (click, type, key, find_window) |
+| `tools-browser` | Browser automation (navigate, extract, screenshot) |
+| `tools-local-embeddings` | Local ONNX embeddings via tract-onnx (**default**) |
+| `tools-mcp-grpc` | gRPC MCP transport (experimental) |
+| `tools-telegram` | Telegram bot integration |
+
+### Config File
+
+Volt reads `.volt/config.toml` for persistent settings (auto-generated by first-run wizard):
+
+```toml
+[agent]
+model = "llama-3.1-8b-instant"
+provider = "groq"
+max_iterations = 25
+temperature = 0.3
+
+[embedding]
+model = "Xenova/bge-large-en-v1.5"
+provider = "local"
+
+[database]
+url = "postgres://volt:volt@localhost:5432/volt"
+```
+
 ## Testing
 
 ```bash
@@ -153,9 +294,6 @@ cargo test --test professional_workflows --features testutils
 
 # Real-world benchmarks (11)
 cargo test --test real_world_benchmarks --features testutils
-
-# Benchmarks
-python volt-bfcl/volt_bench.py --distractors 200 --model llama-3.1-8b-instant
 ```
 
 ## Downloads
