@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package volt.mcp.v1;
+
+// MCP tool definition exchanged between Volt agents over gRPC.
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  string input_schema_json = 3; // JSON-serialized JSON Schema
+}
+
+message ListToolsRequest {}
+
+message ListToolsResponse {
+  repeated ToolDefinition tools = 1;
+}
+
+message CallToolRequest {
+  string name = 1;
+  string arguments_json = 2; // JSON-serialized arguments
+}
+
+message CallToolResponse {
+  bool success = 1;
+  string output = 2;
+  string error = 3;
+  uint64 duration_ms = 4;
+}
+
+// Bidirectional streaming allows agents to stream partial results
+// for long-running tool calls (e.g. multi-step research).
+message ToolStreamChunk {
+  oneof payload {
+    CallToolResponse final_result = 1;
+    string partial = 2;
+  }
+}
+
+service MCP {
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  rpc CallTool(CallToolRequest) returns (CallToolResponse);
+  rpc CallToolStream(CallToolRequest) returns (stream ToolStreamChunk);
+}

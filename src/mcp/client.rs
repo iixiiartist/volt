@@ -77,7 +77,7 @@ impl MCPClient {
         );
 
         match &self.transport {
-            MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } => {
+            MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } | MCPTransport::Grpc { url, headers } => {
                 let client = reqwest::Client::builder()
                     .pool_max_idle_per_host(100)
                     .pool_idle_timeout(std::time::Duration::from_secs(90))
@@ -135,7 +135,7 @@ impl MCPClient {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 Ok(serde_json::from_str(&stdout)?)
             }
-            MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } => {
+            MCPTransport::Http { url, headers } | MCPTransport::WebSocket { url, headers } | MCPTransport::Grpc { url, headers } => {
                 let client = reqwest::Client::builder()
                     .pool_max_idle_per_host(100)
                     .pool_idle_timeout(std::time::Duration::from_secs(90))

@@ -66,3 +66,13 @@ read*.py
 run.ps1
 paper/*.py
 paper/volt_arxiv_v3.html
+
+# Binary build artifacts
+volt-*.tar.gz
+volt-*.zip
+
+# Temp scripts
+tmp.py
+find_fns.py
+append_tests.py
+test*.txt

@@ -3,6 +3,7 @@ pub mod bash;
 #[cfg(feature = "tools-browser")]
 pub mod browser_tool;
 pub mod chart_tool;
+pub mod cli_tools;
 pub mod csv_tool;
 pub mod delegate;
 #[cfg(feature = "tools-desktop")]

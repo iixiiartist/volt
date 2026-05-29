@@ -352,7 +352,7 @@ impl std::fmt::Debug for MCPServerConfig {
     }
 }
 
-/// Transport mechanism for an MCP server — HTTP with URL and optional headers, Stdio, or WebSocket.
+/// Transport mechanism for an MCP server — HTTP with URL and optional headers, Stdio, WebSocket, or gRPC.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum MCPTransport {
@@ -366,6 +366,16 @@ pub enum MCPTransport {
     #[serde(rename = "websocket")]
     WebSocket {
         url: String,
+        headers: Option<HashMap<String, String>>,
+    },
+    /// gRPC transport for high-frequency agent-to-agent coordination.
+    /// Requires the `tools-mcp-grpc` feature flag.
+    /// Uses tonic + prost for bidirectional streaming between Volt agents.
+    #[serde(rename = "grpc")]
+    Grpc {
+        /// gRPC server endpoint URL (e.g. http://[::1]:50051)
+        url: String,
+        /// Optional metadata headers to attach to each gRPC call
         headers: Option<HashMap<String, String>>,
     },
 }
@@ -396,6 +406,17 @@ impl std::fmt::Debug for MCPTransport {
                         .collect::<HashMap<_, _>>()
                 });
                 f.debug_struct("WebSocket")
+                    .field("url", url)
+                    .field("headers", &redacted)
+                    .finish()
+            }
+            MCPTransport::Grpc { url, headers } => {
+                let redacted = headers.as_ref().map(|h| {
+                    h.keys()
+                        .map(|k| (k.clone(), "***".to_string()))
+                        .collect::<HashMap<_, _>>()
+                });
+                f.debug_struct("Grpc")
                     .field("url", url)
                     .field("headers", &redacted)
                     .finish()

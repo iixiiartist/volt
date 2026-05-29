@@ -939,5 +939,12 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         crate::tools::sequential_thinking::sequentialthinking(thought, next, branch_id, branch_from).await
     }))).await;
 
+    // ── CLI Gateway: generic bridge to terminal-native business tools ────────
+    // Users install CLIs natively (npm, brew, cargo, pip). Volt provides a
+    // whitelisted subprocess gateway (cli_exec) and structured query helper
+    // (cli_query) instead of registering N subcommands per CLI.
+    // For CLIs with MCP servers (himalaya-mcp, qsvmcp), prefer StdioTransport.
+    crate::tools::cli_tools::register_cli_tools(&registry).await;
+
     registry
 }
