@@ -458,8 +458,18 @@ impl Agent {
                 }
                 // Re-acquire lock to record tool outputs in conversation state
                 let mut state = self.state.lock().await;
+                let mut had_data_tool = false;
                 for (tool_name, call_id, output, result) in tool_results {
                     self.seed_artifact_if_applicable(&tool_name, &result).await;
+                    let is_data_tool = matches!(
+                        tool_name.as_str(),
+                        "web_search" | "web_fetch" | "web_scrape" | "web_scrape_all"
+                            | "you_research" | "you_contents"
+                            | "bash" | "read" | "csv_read" | "grep" | "browser_extract"
+                    );
+                    if is_data_tool && result.success && !output.trim().is_empty() {
+                        had_data_tool = true;
+                    }
                     let msg_content = if output.len() > MAX_TOOL_OUTPUT_CHARS {
                         // Deterministic reference based on tool name + iteration
                         // so the prompt prefix stays identical across retries (KV-cache friendly).
@@ -493,6 +503,21 @@ impl Agent {
                         tool_calls: None,
                         tool_result: Some(output),
                         tool_name: Some(call_id),
+                        created_at: chrono::Utc::now(),
+                    });
+                }
+                if had_data_tool {
+                    let parent_id = crate::models::Message::last_id(&state.messages);
+                    state.messages.push(Message {
+                        id: Uuid::new_v4(),
+                        parent_message_id: parent_id,
+                        role: "system".into(),
+                        content: Arc::new(
+                            "You just received data from a tool. If this data is worth keeping or the user asked you to save it, call `write(path, content)` now with the data as content and the destination file path. You have a `write` tool for this purpose.".into(),
+                        ),
+                        tool_calls: None,
+                        tool_result: None,
+                        tool_name: None,
                         created_at: chrono::Utc::now(),
                     });
                 }
