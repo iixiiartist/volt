@@ -71,6 +71,9 @@ paper/volt_arxiv_v3.html
 volt-*.tar.gz
 volt-*.zip
 
+# Runtime cache (tool embeddings)
+.volt_tool_cache.json
+
 # Temp scripts
 tmp.py
 find_fns.py

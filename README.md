@@ -127,6 +127,10 @@ Full 17-category BFCL v4 sweep pending. All failures were Groq API schema valida
 
 Local ONNX inference via tract-onnx with `Xenova/bge-large-en-v1.5` (1024d, ~337MB). Configure via `VOLT_ONNX_MODEL_DIR` or `EMBEDDING_MODEL`. Falls back to deterministic SHA-256 placeholder embeddings when no network or local model is available.
 
+### gRPC MCP Transport (Experimental)
+
+The `tools-mcp-grpc` feature flag enables a gRPC MCP transport (`MCPTransport::Grpc`) with bidirectional streaming for agent-to-agent coordination. The server side (`list_tools`, `call_tool`, `call_tool_stream`) is fully implemented via tonic + prost. The client side is scaffolded but requires generated tonic stubs — use `MCPTransport::Http` for remote agent connections.
+
 ### Multi-Agent Orchestration
 
 Parallel, pipeline, supervisor, and DAG-based multi-agent patterns with topological scheduling and parallel level execution.
