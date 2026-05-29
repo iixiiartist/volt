@@ -1,17 +1,27 @@
+# Build artifacts
 /target
 /target_corrupted
-.env
+/dist
 *.db
 *.sqlite
-.DS_Store
-/tmp
-script*.py
-tmp*.py
-/dist
-.volt_tasks.md
-MEMORY.md
+volt-*.tar.gz
+volt-*.zip
+volt-*.log
+
+# Environment & config
+.env
 .volt/
+.volt_tool_cache.json
+
+# Node / frontend (legacy)
+node_modules/
+package-lock.json
+package.json
+.netlify/
+netlify.toml
 public/
+
+# Python
 __pycache__/
 *.pyc
 volt-bfcl/__pycache__/
@@ -19,64 +29,48 @@ volt-bfcl/results/*.json
 volt-bfcl/results/*.jsonl
 volt-bfcl/*.txt
 
-# Competitive intelligence (external analysis docs)
-VOLT_IRONCLAW_PLAN.md
-
-# Netlify / frontend deployment artifacts (Rust binary only — no web UI)
-.netlify/
-netlify.toml
-
-# Temp scripts and artifacts
+# Temp scripts and scratch files
 script*.py
+tmp*.py
 search*.py
+read*.py
+audit*.py
+check*.py
+patch*.py
+inspect*.py
+append_tests.py
+find_fns.py
+b64.txt
+groq_test.json
+temp_*
+test*.txt
 test*.json
 test*.js
 test*.rs
 test*.png
-temp_*
-groq_test.json
-audit*.py
-b64.txt
-check*.py
-count.py
 echo_test.txt
-extract.py
-find.py
-inspect*.py
 orig_*.rs
-patch*.py
-read*.py
 run.ps1
 chk.py
-node_modules/
-package-lock.json
-package.json
-volt-*.log
-audit*.py
-b64.txt
-check*.py
-chk.py
 count.py
-echo_test.txt
 extract.py
+find.py
 file
-find.py
-inspect*.py
-orig_*.rs
-patch*.py
-read*.py
-run.ps1
+
+# Competitive / gap analysis (external docs)
+VOLT_IRONCLAW_PLAN.md
+GAP_ANALYSIS.md
+ADVERSARIAL_INTEGRITY_REPORT.md
+
+# Working files (user-managed, not committed)
+MEMORY.md
+.volt_tasks.md
+
+# Paper drafts (work-in-progress, not publish quality)
 paper/
 
-# Binary build artifacts
-volt-*.tar.gz
-volt-*.zip
+# OS
+.DS_Store
 
-# Runtime cache (tool embeddings)
-.volt_tool_cache.json
-
-# Temp scripts
-tmp.py
-find_fns.py
-append_tests.py
-test*.txt
+# Misc
+/tmp

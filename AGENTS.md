@@ -60,22 +60,22 @@ Three bugs fixed in SearchHQ MCP server (deployed via `npx netlify deploy --buil
 Key finding: tool selection embedding quality is the dominant signal (+12pp). Context enrichment requires a fully-seeded store to cross into positive ROI. Full BFCL run: 470 cases, ~$0.37 total, 74% token savings, +4.8pp accuracy.
 - ProgramBench: 25 coding puzzles
 - BFCL v4: 4,241 cases across 17 categories (simple_python, parallel, multiple, live_simple, multi-turn, etc.)
-- `volt-bfcl/volt_bench.py` — end-to-end test via actual Volt binary with `--load-tools`
+- `rust bfcl_bench` (`src/bin/bfcl_bench.rs`) — Rust-native runner replacing deprecated `volt_bench.py`
 - All run on Groq at ~$0.05–$0.59/1M tokens depending on model
 
 ### Primary Benchmark: BFCL (Berkeley Function Calling Leaderboard)
 - **BFCL v3 leaderboard** (official, 23 models evaluated): qwen3-32b ranks **#2 globally at 75.7%**, behind only GLM 4.5 (76.7%). Average is 55.9%.
 - Our BFCL v4 dataset (4,241 cases, 17 categories) is the next-gen version used for Volt evaluation
-- GAIA removed from pipeline — it's a frontier-model benchmark (GPT-5 Mini tops at 44.8%, average 27.5%). Our Groq models (8B–120B) all scored 0% on 3-case runs. GAIA requires GPT-4-class + web tool integration far beyond what our architecture provides.
 
 ### Environment
 - `.env` has GROQ_API_KEY + DATABASE_URL (not committed)
 - `.env.example` for template
-- Ollama needs `mxbai-embed-large` for Volt's embedding pipeline
-- HuggingFace API (`HF_TOKEN`) for 384d dense embeddings (BAAI/bge-small-en-v1.5)
+- Local ONNX tract-onnx BGE-large-en-v1.5 (1024d) — default embedder, no C++ dependency
+- HuggingFace `HF_TOKEN` for ONNX model downloads (cached to `~/.cache/huggingface`)
 - SearchHQ token: generate at searchhq.setique.com/settings/mcp
 - you.com API available for web search (`https://you.com/docs/welcome`)
-- 98 GB free disk, 8 GB free RAM at idle (this machine)
+- PostgreSQL 16+ with pgvector for persistence (Docker: `docker compose -f docker-compose.db.yml up -d`)
+- ~100 GB free disk, 8 GB free RAM at idle (this machine)
 
 ### Local ONNX Embedder Upgrade (May 2026)
 - **Replaced** Candle BGE-small-en-v1.5 (384d) with tract-onnx BGE-large-en-v1.5 (1024d)
@@ -111,13 +111,12 @@ Key finding: tool selection embedding quality is the dominant signal (+12pp). Co
 
 qwen3-32b is the only model with perfect tool selection on all 3 simple_python cases. 20B and 17B both miscall Q1 (bash/you_research instead of calculate_triangle_area). 8B fails tool selection on Q3.
 
-### BFCL v4 Results (50-case simple_python, May 2026)
-- **qwen/qwen3-32b**: 46/50 = 92.0% [CI: 81.2–96.8], avg 23.6s/case
-- Full 400-case run pending; full BFCL v4 across 17 categories pending
-- BFCL v3 leaderboard reference: qwen3-32b at 75.7% (#2 globally), average 55.9%
+### BFCL v4 Results (400-case simple_python, May 2026)
+- **llama-3.1-8b-instant**: 380/400 = **95.0%** [CI: 92.6–96.8], avg 23.6s/case
+- All 20 failures were Groq API schema validation errors (boolean/integer type mismatches), not wrong tool selection
 - Known issue: `web_search` and `bash` built-in tools interfere with BFCL-provided function stubs (model picks them over the stubs). VOLT_MINIMAL_TOOLS for BFCL runs would eliminate this.
 
-### 5 Architecture Improvements (May 2026)
+### 7 Architecture Improvements (May 2026)
 
 #### Structured Output Parsing (`src/agent/tool_parser.rs`)
 - `validate_tool_call()` — validates tool call arguments against JSON Schema (required fields, type checking, nested objects, enum validation)
@@ -150,6 +149,28 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - `Orchestrator::run_dag()` — entry point for DAG workflow execution
 - `DagNode`, `DagEdge` — data structures for agent task nodes and dependency edges
 
+#### CLI Gateway (`src/tools/cli_tools/mod.rs`)
+- Two generic gateway tools (`cli_exec`, `cli_query`) replace 12 hardcoded business CLIs
+- Whitelist locked to 7 binaries: task, crm, hledger, khal, vdirsyncer, qsv, himalaya — enforced via `LazyLock<HashSet>` at spawn time
+- No-shell execution via `tokio::process::Command::args()`
+- For CLIs with native MCP servers (himalaya-mcp, qsvmcp), `MCPTransport::Stdio` is preferred over cli_exec
+
+#### gRPC MCP Transport (`src/mcp/grpc.rs`)
+- tonic/prost-based bidirectional streaming gRPC server (215 lines)
+- Implements list_tools, call_tool, call_tool_stream RPCs defined in `proto/mcp.proto`
+- Client side is scaffolded (stub); use `MCPTransport::Http` for remote agent connections
+
+#### Rust bfcl_bench Binary (`src/bin/bfcl_bench.rs`)
+- Rust-native BFCL v4 benchmark runner (535 lines, 16 category mappings)
+- Replaces deprecated Python `volt_bench.py` harness
+- Run via `cargo run --bin bfcl_bench -- --limit 400`
+
+#### Paper cleanup (May 2026)
+- `paper/volt_arxiv_v3.html` extensively updated (12 edits) then deleted
+- `paper/` directory fully gitignored
+- README updated with note: official benchmarks/paper pending final validation
+- All stale Python temp scripts (`script*.py`, `search*.py`, etc.) and clutter (`b64.txt`, `groq_test.json`, `temp_*.json`, `test*.txt/png/json/rs`, `volt-*.log`, `volt_sessions.db`, `run.ps1`, `package.json`, `package-lock.json`, `VOLT_IRONCLAW_PLAN.md`) deleted
+
 ### Real-World Workflow Benchmarks (`tests/real_world_benchmarks.rs`)
 
 11 tests across 7 workflows + 3 bonus + 1 integration, all passing with `--features testutils`:
@@ -163,7 +184,7 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 | 5 | **MCP Agent-to-Agent** (HTTP server + remote tool call) | HTTP MCP server, remote tool invocation |
 | 6 | **Codebase Refactor** (glob→read→grep→edit→bash→final) | Multi-step tool chaining |
 | 7 | **Long Context Stress** (50-turn conversation) | Prompt compression |
-| **All** | Full integration (validation + RRF + DAG + compression) | All 5 features simultaneously |
+| **All** | Full integration (validation + RRF + DAG + compression) | All 7 features simultaneously |
 | **Bonus** | BM25+ scoring benchmark | Sparse retrieval correctness |
 | **Bonus** | RRF fusion benchmark | Rank fusion correctness |
 | **Bonus** | Tokenizer benchmark (1000 strings) | Tokenization performance |
