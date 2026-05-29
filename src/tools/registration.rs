@@ -124,7 +124,7 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
     registry
         .register_with_permission(
             "write",
-            "Write content to a file at a given path. Creates the file if it does not exist, overwrites if it does.",
+            "Write content to a file at any path on the filesystem. This is the ONLY way to save text to a file. Use this after web_search, web_fetch, bash, or any other data-gathering tool to persist results. Creates the file if it does not exist, overwrites if it does.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
