@@ -48,6 +48,7 @@ volt.exe agent-run --input "Analyze this codebase" --allow
 
 ### Option B: Build from source
 
+**Linux:**
 ```bash
 git clone https://github.com/iixiiartist/volt.git
 cd volt
@@ -56,15 +57,24 @@ cargo build --release
 # Initialize, then run
 ./volt init-db
 ./volt agent-run --input "Analyze this codebase" --allow
-
-# Interactive TUI session
-./volt agent-tui
-
-# Multi-agent workflow
-./volt workflow --pattern parallel \
-  --agents '[{"name":"analyst"},{"name":"reviewer"}]' \
-  --tasks '["Analyze code","Review security"]'
 ```
+
+**Windows (MSVC — 49 MB binary, no extra DLLs):**
+```powershell
+# Requires Visual Studio 2022 Build Tools with "Desktop development with C++"
+# Install: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
+
+git clone https://github.com/iixiiartist/volt.git
+cd volt
+
+# Build using the MSVC toolchain (default after v0.5.1):
+cargo build --release
+
+# The resulting volt.exe depends only on standard Windows DLLs + VCRUNTIME140.dll
+# No MinGW or other runtime needed.
+```
+
+> **Note for MinGW users:** If you use the GNU toolchain (`x86_64-pc-windows-gnu`), the binary will depend on `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, and `libwinpthread-1.dll`. Use the MSVC toolchain instead for a fully standalone binary.
 
 ## Architecture
 
@@ -301,9 +311,9 @@ cargo test --test real_world_benchmarks --features testutils
 Pre-built binaries for Linux and Windows are available on the [Releases page](https://github.com/iixiiartist/volt/releases).
 
 | Platform | Binary Size (compressed) |
-|---|---|
+|---|---|---|
 | Linux (x86_64) | ~17 MB `.tar.gz` |
-| Windows (x86_64) | ~27 MB `.zip` |
+| Windows (x86_64, MSVC) | ~17 MB `.zip` (49 MB uncompressed) |
 
 ## Paper & Benchmarks
 
@@ -313,7 +323,7 @@ Official benchmarks and the accompanying paper are undergoing final validation a
 
 | Metric | Value |
 |---|---|---|
-| Binary size | ~52 MB Linux (17 MB gzipped), ~78 MB Windows (27 MB zipped) |
+| Binary size | ~52 MB Linux (17 MB gzipped), ~49 MB Windows (17 MB zipped, MSVC) |
 | Cold start | <100ms |
 | Tool search | <5µs (in-memory cosine, DashMap single-pass) |
 | Memory search | <5ms (pgvector HNSW) |
