@@ -1,8 +1,8 @@
 # Volt — The Autonomous Systems Engine
 
-> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, and 39+ built-in tools. 100% accuracy at 200 distractors (BFCL-verified). [Paper.](paper/draft.md)**
+> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, CLI gateway, and 43+ built-in tools. 100% accuracy at 200 distractors (BFCL-verified).**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20371211.svg)](https://doi.org/10.5281/zenodo.20371211)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
 ## Why Volt?
 
@@ -18,7 +18,7 @@ Key design decisions:
 - **Everything-as-RAG**: 12 context kinds dynamically retrievable from unified vector store
 - **Background Auto-Seeding Worker**: MPSC channel daemon maintains context autonomously via Tokio
 - **Four-Pillar Eviction**: Semantic dedup, per-kind quotas, composite scores, episodic merging
-- **39+ Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser
+- **43+ Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser, CLI gateway
 - **Multi-Agent Orchestration**: Parallel, pipeline, supervisor, and DAG patterns
 - **pgvector Persistence**: PostgreSQL with HNSW indexes, context survives restarts
 - **Local ONNX Embeddings**: BGE-large-en-v1.5 (1024d) via tract-onnx, no C++ dependency
@@ -27,27 +27,31 @@ Key design decisions:
 ## Quick Start
 
 ```bash
+# Download pre-built binary (latest release):
+#   https://github.com/iixiiartist/volt/releases
+
+# Or build from source:
 # Prerequisites: Rust 1.85+, PostgreSQL 16+ with pgvector (optional)
 git clone https://github.com/iixiiartist/volt.git
 cd volt
 cargo build --release
 
 # Initialize database schema
-./target/release/volt init-db
+./volt init-db
 
 # Single-shot execution
-./target/release/volt agent-run --input "Analyze this codebase" --allow
+./volt agent-run --input "Analyze this codebase" --allow
 
 # Multi-agent parallel workflow (use --agents-file to avoid shell quoting issues)
 cat > agents.json << 'EOF'
 [{"name":"analyst"},{"name":"reviewer"}]
 EOF
-./target/release/volt workflow --pattern parallel \
+./volt workflow --pattern parallel \
   --agents-file agents.json \
   --tasks '["Analyze code","Review security"]'
 
 # Interactive TUI session
-./target/release/volt agent-tui
+./volt agent-tui
 
 # End-to-end benchmark with argument validation
 python volt-bfcl/volt_bench.py --category simple_python --distractors 200
@@ -102,7 +106,7 @@ python volt-bfcl/volt_bench.py --category simple_python --distractors 200
 
 **Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200 distractors.
 
-### Built-in Tools (39+)
+### Built-in Tools (43+)
 
 | Category | Tools | Feature Flag |
 |---|---|---|
@@ -117,6 +121,7 @@ python volt-bfcl/volt_bench.py --category simple_python --distractors 200
 | **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
 | **Screenshot/PDF/Desktop/Browser** | Feature-gated (12 tools) | opt-in features |
 | **Delegation** | `delegate`, `run_workflow`, `final_answer` | built-in |
+| **CLI Gateway** | `cli_exec`, `cli_query` (task, crm, hledger, khal, vdirsyncer, qsv, himalaya) | built-in |
 | **MCP** | SearchHQ (19 tools), extensible via `volt mcp-serve` | built-in |
 
 ### Embedding
@@ -150,19 +155,20 @@ cargo test --test real_world_benchmarks --features testutils
 python volt-bfcl/volt_bench.py --distractors 200 --model llama-3.1-8b-instant
 ```
 
-## CI/CD
+## Downloads
 
-Volt uses **GitLab CI** with automated testing and cross-platform builds.
+Pre-built binaries for Linux and Windows are available on the [Releases page](https://github.com/iixiiartist/volt/releases).
 
-**Required CI/CD variables:**
-- `DATABASE_URL` — Postgres connection string
-- `GITHUB_TOKEN` — GitHub personal access token (for release syncing)
+| Platform | Binary Size (compressed) |
+|---|---|
+| Linux (x86_64) | ~17 MB `.tar.gz` |
+| Windows (x86_64) | ~27 MB `.zip` |
 
 ## Performance
 
 | Metric | Value |
-|---|---|
-| Binary size | ~10 MB Linux, ~20 MB Windows |
+|---|---|---|
+| Binary size | ~52 MB Linux (17 MB gzipped), ~78 MB Windows (27 MB zipped) |
 | Cold start | <100ms |
 | Tool search | <5µs (in-memory cosine, DashMap single-pass) |
 | Memory search | <5ms (pgvector HNSW) |
