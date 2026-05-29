@@ -5,6 +5,8 @@
 *.sqlite
 .DS_Store
 /tmp
+script*.py
+tmp*.py
 /dist
 .volt_tasks.md
 MEMORY.md
