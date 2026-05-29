@@ -167,6 +167,10 @@ Pre-built binaries for Linux and Windows are available on the [Releases page](ht
 | Linux (x86_64) | ~17 MB `.tar.gz` |
 | Windows (x86_64) | ~27 MB `.zip` |
 
+## Paper & Benchmarks
+
+Official benchmarks and the accompanying paper are undergoing final validation and will be released at a later date. The `paper/` directory contains work-in-progress drafts.
+
 ## Performance
 
 | Metric | Value |

@@ -64,8 +64,7 @@ orig_*.rs
 patch*.py
 read*.py
 run.ps1
-paper/*.py
-paper/volt_arxiv_v3.html
+paper/
 
 # Binary build artifacts
 volt-*.tar.gz
