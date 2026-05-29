@@ -1,6 +1,6 @@
 # Volt — The Autonomous Systems Engine
 
-> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, CLI gateway, and 43+ built-in tools. 100% accuracy at 200 distractors (BFCL-verified).**
+> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, CLI gateway, and 43+ built-in tools. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
@@ -8,8 +8,8 @@
 
 Most agent frameworks inject every available tool into every LLM call. Volt replaces static injection with **unified dynamic RAG** — tools, skills, memories, conversation history, artifacts, MCP configs, permissions, and security policies are all retrieved via vector similarity, so the model only sees what's relevant.
 
-**Verified results (BFCL V4, 200 distractors, argument-aware evaluation):**
-- **100% accuracy** on llama-3.1-8b-instant — matching 70b-class performance
+**Verified results (BFCL V4, 400 cases, argument-aware evaluation):**
+- **95.0% accuracy** on llama-3.1-8b-instant (380/400) — all failures are Groq API schema validation errors (boolean/integer types passed as strings)
 - **Flat tool-count scaling curve** — accuracy invariant from 1 to 200+ tools
 - **74% token savings** vs static injection (470 cases, ~$0.37 total)
 
@@ -95,16 +95,15 @@ python volt-bfcl/volt_bench.py --category simple_python --distractors 200
 | Security | 30 | Sandbox limits, oversight |
 | MCPConfig | 100 | MCP server schema distillation |
 
-### Benchmark Results
+### BFCL v4 Results (llama-3.1-8b-instant, 400 cases)
 
-| Configuration | Accuracy | Latency | n |
+| Suite | Cases | Accuracy | Avg Latency |
 |---|---|---|---|
-| 8B + 200 distractors | **100%** | 53s/case | 20 |
-| 70B + 200 distractors | 90% | 48s/case | 10 |
-| 8B + 0 distractors | 100% | 31s/case | 5 |
-| 8B + 100 distractors | 100% | 43s/case | 5 |
+| `simple_python` | 400 | **95.0%** | 234ms |
 
-**Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200 distractors.
+Full 17-category BFCL v4 sweep pending. All failures were Groq API schema validation (model passes `"true"` as string instead of boolean `true`, or `"null"` for optional integer). No cases failed due to wrong function selection.
+
+**Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200+ distractors (Volt RAG benchmark, 50-case ablation verified).
 
 ### Built-in Tools (43+)
 
@@ -173,7 +172,7 @@ Pre-built binaries for Linux and Windows are available on the [Releases page](ht
 | Tool search | <5µs (in-memory cosine, DashMap single-pass) |
 | Memory search | <5ms (pgvector HNSW) |
 | Token savings | 74% vs static injection |
-| Accuracy (200 distractors) | 100% (argument-validated) |
+| BFCL accuracy (400 cases) | 95.0% (llama-3.1-8b-instant) |
 
 ## License
 

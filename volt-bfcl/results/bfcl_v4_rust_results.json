@@ -1,0 +1,20 @@
+{
+  "categories": [
+    "simple_python"
+  ],
+  "models": [
+    "llama-3.1-8b-instant"
+  ],
+  "results": [
+    {
+      "accuracy_pct": "95.0",
+      "avg_latency_ms": "234",
+      "category": "simple_python",
+      "completion_tokens": 12661,
+      "model": "llama-3.1-8b-instant",
+      "passed": 380,
+      "prompt_tokens": 109610,
+      "total": 400
+    }
+  ]
+}
