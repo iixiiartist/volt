@@ -199,3 +199,11 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 ### Source Changes for Test Support
 - `src/orchestrator.rs`: `topological_sort()` and `execution_levels()` made `pub` (were `fn`)
 - `src/mcp/server.rs`: `McpAppState` struct + fields made `pub`
+
+### Windows Build (MSVC, May 2026)
+- **Root cause:** Default toolchain was `x86_64-pc-windows-gnu` (MinGW/GCC), which links against `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, `libwinpthread-1.dll`. These MinGW DLLs are not present on vanilla Windows systems.
+- **Fix:** Switched default toolchain to `x86_64-pc-windows-msvc` (MSVC). Requires Visual Studio Build Tools with "Desktop development with C++" workload.
+- **Effect on this machine:** VS 2022 Build Tools installed via Scoop; Rustc can now use `link.exe` for MSVC builds.
+- **Binary:** MSVC-built `volt.exe` is **49 MB** (vs 84.5 MB GNU), depends only on standard Windows DLLs + `VCRUNTIME140.dll` (MSVC Redistributable, pre-installed on most Windows).
+- **CI:** `.gitlab-ci.yml` Windows build job updated with vcvars64.bat setup. Requires self-hosted Windows runner with VS Build Tools.
+- **GNU fallback:** `.cargo/config.toml` includes `-static -static-libstdc++` link args for `x86_64-pc-windows-gnu` target (partial static linking — gcc_s and winpthread are statically linked, but libstdc++ still resolves to DLL). GNU users should prefer MSVC instead.

@@ -190,6 +190,9 @@ build_linux_musl:
 #   tags: [windows]
 #   before_script:
 #     - rustup target add x86_64-pc-windows-msvc
+#     # Requires Visual Studio Build Tools with "Desktop development with C++" workload.
+#     # On GitLab Windows runners, set VS160COMNTOOLS or use vcvars64.bat:
+#     - cmd.exe /c "`"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat`" > nul 2>&1 && setx PATH `"%PATH%`""
 #   script:
 #     - cargo build --release --target x86_64-pc-windows-msvc --all-features
 #     - Compress-Archive -Path target\x86_64-pc-windows-msvc\release\volt.exe -DestinationPath volt-windows-x86_64.zip
