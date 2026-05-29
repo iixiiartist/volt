@@ -122,6 +122,58 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         .await;
 
     registry
+        .register_with_permission(
+            "write",
+            "Write content to a file at a given path. Creates the file if it does not exist, overwrites if it does.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "file path to write to" },
+                    "content": { "type": "string", "description": "content to write to the file" }
+                },
+                "required": ["path", "content"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let path = args["path"].as_str().unwrap_or("");
+                    let content = args["content"].as_str().unwrap_or("");
+                    crate::tools::write_tool::write_file(path, content).await
+                })
+            }),
+            PermissionLevel::Prompt,
+            TrustLevel::Builtin,
+        )
+        .await;
+
+    registry
+        .register_with_permission(
+            "edit",
+            "Edit a file by replacing the first occurrence of old_string with new_string. Use for surgical text replacements in existing files.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "file path to edit" },
+                    "old_string": { "type": "string", "description": "text to search for" },
+                    "new_string": { "type": "string", "description": "replacement text" }
+                },
+                "required": ["path", "old_string", "new_string"]
+            }),
+            "builtin",
+            Arc::new(|args| {
+                Box::pin(async move {
+                    let path = args["path"].as_str().unwrap_or("");
+                    let old_string = args["old_string"].as_str().unwrap_or("");
+                    let new_string = args["new_string"].as_str().unwrap_or("");
+                    crate::tools::edit::edit_file(path, old_string, new_string).await
+                })
+            }),
+            PermissionLevel::Prompt,
+            TrustLevel::Builtin,
+        )
+        .await;
+
+    registry
         .register(
             "glob",
             "Find files matching a glob pattern",
