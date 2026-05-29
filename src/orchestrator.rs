@@ -254,7 +254,17 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // ── 3. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
+    // ── 3. LLM_BASE_URL override (Ollama, vLLM, LM Studio, etc.) ──
+    if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
+        let api_key = std::env::var("LLM_API_KEY").unwrap_or_default();
+        return ProviderRoute {
+            kind: ProviderKind::OpenAI,
+            base_url,
+            api_key,
+        };
+    }
+
+    // ── 4. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
     let default_provider = std::env::var("LLM_DEFAULT_PROVIDER")
         .unwrap_or_else(|_| "groq".into())
         .to_lowercase();
