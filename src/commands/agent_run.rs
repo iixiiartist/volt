@@ -19,6 +19,12 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         session_id,
         max_iterations,
         settings,
+        use_mtp: _,
+        use_cot: _,
+        allow_write: _,
+        framework: _,
+        model_variant: _,
+        quantization: _,
     } = options;
 
     let (provider, provider_kind) = orchestrator::build_provider(&model, "volt-agent");
@@ -63,6 +69,12 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         enabled_context_kinds: enabled_kinds,
         essential_tools: crate::models::default_essential_tools(),
         context_kind_quotas: Default::default(),
+        use_mtp: options.use_mtp || settings.use_mtp,
+        use_cot: options.use_cot || settings.use_cot,
+        allow_write: options.allow_write || settings.allow_write,
+        framework: options.framework.clone().or(settings.framework.clone()),
+        model_variant: options.model_variant.clone().or(settings.model_variant.clone()),
+        quantization: options.quantization.clone().or(settings.quantization.clone()),
     };
     let config_quotas = config.context_kind_quotas.clone();
     let mut agent = Agent::new(config, provider, tools_for_agent)
@@ -286,6 +298,12 @@ pub struct AgentRunOptions {
     pub session_id: Option<String>,
     pub max_iterations: Option<u32>,
     pub settings: crate::config::Settings,
+    pub use_mtp: bool,
+    pub use_cot: bool,
+    pub allow_write: bool,
+    pub framework: Option<String>,
+    pub model_variant: Option<String>,
+    pub quantization: Option<String>,
 }
 
 impl AgentRunOptions {

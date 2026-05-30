@@ -1,0 +1,10 @@
+# Volt agent preset for Gemma 4 E2B (7B) via Ollama
+[agent]
+model = "gemma4:e2b"
+provider = "ollama"
+base_url = "http://localhost:11434/v1"
+temperature = 0.3
+max_iterations = 25
+
+[env]
+LLM_API_KEY = "ollama"

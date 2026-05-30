@@ -2,9 +2,14 @@ use crate::cosine_similarity;
 use crate::embedding::EmbeddingClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(feature = "tools-turbovec")]
+use crate::turbovec_index::TurbovecIndex;
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+#[cfg(feature = "tools-turbovec")]
+use std::sync::RwLock as SyncRwLock;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -133,10 +138,12 @@ impl ContextEntry {
 /// four-pillar eviction, episodic merging, and optional pgvector persistence.
 pub struct ContextStore {
     entries: RwLock<Vec<StoredEntry>>,
-    insert_count: RwLock<usize>,
+    insert_count: AtomicUsize,
     db: std::sync::OnceLock<sqlx::PgPool>,
     quota_overrides: RwLock<std::collections::HashMap<ContextKind, usize>>,
     evict_every: RwLock<usize>,
+    #[cfg(feature = "tools-turbovec")]
+    turbovec: SyncRwLock<Option<TurbovecIndex>>,
 }
 
 pub struct StoredEntry {
@@ -147,10 +154,12 @@ impl ContextStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(Vec::new()),
-            insert_count: RwLock::new(0),
+            insert_count: AtomicUsize::new(0),
             db: std::sync::OnceLock::new(),
             quota_overrides: RwLock::new(std::collections::HashMap::new()),
             evict_every: RwLock::new(100),
+            #[cfg(feature = "tools-turbovec")]
+            turbovec: SyncRwLock::new(None),
         })
     }
 
@@ -159,11 +168,29 @@ impl ContextStore {
         let _ = db.set(pool);
         Arc::new(Self {
             entries: RwLock::new(Vec::new()),
-            insert_count: RwLock::new(0),
+            insert_count: AtomicUsize::new(0),
             db,
             quota_overrides: RwLock::new(std::collections::HashMap::new()),
             evict_every: RwLock::new(100),
+            #[cfg(feature = "tools-turbovec")]
+            turbovec: SyncRwLock::new(None),
         })
+    }
+
+    /// Enable turbovec-backed vector search for the in-memory fallback path.
+    /// Creates a 1024-dim 4-bit TurboQuant index with file-backed persistence.
+    #[cfg(feature = "tools-turbovec")]
+    pub fn with_turbovec(self: Arc<Self>) -> Arc<Self> {
+        match TurbovecIndex::new() {
+            Ok(idx) => {
+                *self.turbovec.write().unwrap() = Some(idx);
+                tracing::info!("turbovec accelerated index enabled");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to create turbovec index, falling back to brute-force");
+            }
+        }
+        self
     }
 
     pub fn set_db(&self, pool: sqlx::PgPool) {
@@ -299,10 +326,32 @@ impl ContextStore {
             }))
             .await;
 
+        let mut newly_embedded: Vec<(usize, Vec<f32>)> = Vec::new();
         let mut entries = self.entries.write().await;
         for (id, emb) in results {
-            if let Some(s) = entries.iter_mut().find(|s| s.entry.id == id) {
-                s.entry.embedding = emb;
+            if let Some(emb_vec) = emb {
+                if let Some(pos) = entries.iter().position(|e| e.entry.id == id) {
+                    entries[pos].entry.embedding = Some(emb_vec.clone());
+                    newly_embedded.push((pos, emb_vec));
+                }
+            }
+        }
+
+        // Populate turbovec index with newly computed embeddings only,
+        // then train IVF centroids so subsequent search queries are fast.
+        #[cfg(feature = "tools-turbovec")]
+        if let Some(ref tv) = *self.turbovec.read().unwrap() {
+            if !newly_embedded.is_empty() {
+                let flat_vecs: Vec<f32> = newly_embedded
+                    .iter()
+                    .flat_map(|(_, v)| v.clone())
+                    .collect();
+                let entry_positions: Vec<usize> = newly_embedded
+                    .iter()
+                    .map(|(idx, _)| *idx)
+                    .collect();
+                tv.add(&flat_vecs, &entry_positions);
+                tv.prepare();
             }
         }
     }
@@ -359,7 +408,7 @@ impl ContextStore {
             }
         }
 
-        // 2. Fallback: in-memory brute-force scan with hybrid BM25 + dense fusion
+        // 2. Fallback: in-memory search with optional turbovec acceleration
         let entries = self.entries.read().await;
 
         // Filter candidates by kind and embedding existence
@@ -375,7 +424,42 @@ impl ContextStore {
             return Vec::new();
         }
 
-        // Compute cosine similarity scores
+        // 2a. Try turbovec accelerated search when available.
+        //     Turbovec returns squared L2 distance (lower = more similar).
+        //     Convert to similarity: sim = 1/(1 + sqrt(l2)) before mixing.
+        #[cfg(feature = "tools-turbovec")]
+        if let Some(ref tv) = *self.turbovec.read().unwrap() {
+            if tv.len() > 0 {
+                let mask: Vec<bool> = entries
+                    .iter()
+                    .map(|s| {
+                        s.entry.embedding.is_some()
+                            && kind_filter.as_ref().is_none_or(|k| s.entry.kind == *k)
+                    })
+                    .collect();
+                let tv_results = tv.search_with_mask(query_embedding, limit * 2, &mask);
+                if !tv_results.is_empty() {
+                    let mut scored: Vec<(f32, ContextEntry)> = tv_results
+                        .into_iter()
+                        .filter_map(|(l2_dist, entry_idx)| {
+                            let entry = entries.get(entry_idx)?.entry.clone();
+                            let composite = entry.composite_score();
+                            let sim = 1.0 / (1.0 + l2_dist.sqrt());
+                            Some((0.6 * sim + 0.4 * composite, entry))
+                        })
+                        .collect();
+                    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                    return scored
+                        .into_iter()
+                        .filter(|(score, _)| *score >= min_score)
+                        .take(limit)
+                        .map(|(_, e)| e)
+                        .collect();
+                }
+            }
+        }
+
+        // 2b. Standard brute-force scan with hybrid BM25 + dense fusion
         let mut cosine_ranked: Vec<(f32, usize)> = candidates
             .iter()
             .enumerate()
@@ -506,25 +590,64 @@ impl ContextStore {
 
     /// Seed batch of entries into the context store with semantic dedup and quota eviction.
     ///
-    /// **Performance:** Entries without embeddings use content-hash dedup to prevent
-    /// silent duplicates when compression cycles produce identical conversation summaries.
-    /// Embedded entries use cosine similarity (≥ DEDUP_THRESHOLD = 0.92).
-    /// **Time Complexity:** O(N * M) where N = batch size, M = store size per kind.
+    /// ## Lock Strategy (Staging Buffer)
+    /// 1. **Phase 1 — I/O:** All database writes happen concurrently with zero store locks.
+    /// 2. **Phase 2 — Commit:** A brief write lock covers in-memory dedup, push, and eviction.
+    ///    Zero `.await` calls inside the lock — durations and quotas are pre-snapped.
+    /// 3. **Phase 3 — Post-commit:** Turbovec reindex/prepare runs after the lock drops.
     pub async fn seed_batch(&self, entries: Vec<ContextEntry>) {
-        let mut store = self.entries.write().await;
-        let mut inserted = 0usize;
+        // ── Phase 1: I/O — No store locks ─────────────────────────────────────
+        let staged: Vec<ContextEntry> = if let Some(db) = self.db() {
+            futures::future::join_all(entries.into_iter().map(|entry| {
+                let db = db.clone();
+                async move {
+                    let _ = crate::db::insert_context_entry(&db, &entry).await;
+                    entry
+                }
+            }))
+            .await
+        } else {
+            entries
+        };
 
-        for entry in entries {
-            // 1. Semantic dedup: content-hash for non-embedded, cosine for embedded
-            let mut merged = false;
-            if let Some(ref emb) = entry.embedding {
-                for existing in store.iter_mut() {
-                    if existing.entry.kind != entry.kind {
-                        continue;
+        // Pre-snapshot quotas and eviction threshold so Phase 2 has zero .await.
+        let mut quota_snapshot: HashMap<ContextKind, usize> = HashMap::new();
+        for entry in &staged {
+            if !quota_snapshot.contains_key(&entry.kind) {
+                quota_snapshot.insert(entry.kind, self.quota_for(entry.kind).await);
+            }
+        }
+        let evict_every = *self.evict_every.read().await;
+
+        // ── Phase 2: Commit — brief write lock, zero .await ──────────────────
+        #[cfg_attr(not(feature = "tools-turbovec"), allow(unused_variables))]
+        let evicted = {
+            let mut store = self.entries.write().await;
+            let mut inserted = 0usize;
+
+            for entry in staged {
+                let mut merged = false;
+                if let Some(ref emb) = entry.embedding {
+                    for existing in store.iter_mut() {
+                        if existing.entry.kind != entry.kind {
+                            continue;
+                        }
+                        if let Some(ref existing_emb) = existing.entry.embedding {
+                            let sim = cosine_similarity(emb, existing_emb);
+                            if sim >= Self::DEDUP_THRESHOLD {
+                                existing.entry.frequency += 1;
+                                existing.entry.last_used_at = chrono::Utc::now();
+                                merged = true;
+                                break;
+                            }
+                        }
                     }
-                    if let Some(ref existing_emb) = existing.entry.embedding {
-                        let sim = cosine_similarity(emb, existing_emb);
-                        if sim >= Self::DEDUP_THRESHOLD {
+                } else {
+                    for existing in store.iter_mut() {
+                        if existing.entry.kind != entry.kind {
+                            continue;
+                        }
+                        if existing.entry.content == entry.content {
                             existing.entry.frequency += 1;
                             existing.entry.last_used_at = chrono::Utc::now();
                             merged = true;
@@ -532,75 +655,69 @@ impl ContextStore {
                         }
                     }
                 }
-            } else {
-                // Content-hash dedup for entries without embeddings
-                for existing in store.iter_mut() {
-                    if existing.entry.kind != entry.kind {
-                        continue;
-                    }
-                    if existing.entry.content == entry.content {
-                        existing.entry.frequency += 1;
-                        existing.entry.last_used_at = chrono::Utc::now();
-                        merged = true;
-                        break;
-                    }
-                }
-            }
-            if merged {
-                continue;
-            }
-
-            store.push(StoredEntry {
-                entry: entry.clone(),
-            });
-            inserted += 1;
-
-            // Persist to PostgreSQL if available
-            if let Some(db) = self.db() {
-                let _ = crate::db::insert_context_entry(db, &entry).await;
-            }
-        }
-
-        if inserted > 0 && self.db().is_some() {
-            // Persistence complete — background write handled above
-        }
-
-        // 2. Track insert count; evict periodically
-        let mut count = self.insert_count.write().await;
-        *count += inserted;
-        if *count >= *self.evict_every.read().await {
-            *count = 0;
-            drop(count);
-
-            // 3. Per-kind quota enforcement
-            let mut kind_counts: HashMap<ContextKind, Vec<usize>> = HashMap::new();
-            for (i, s) in store.iter().enumerate() {
-                kind_counts.entry(s.entry.kind).or_default().push(i);
-            }
-
-            let mut indices_to_remove: Vec<usize> = Vec::new();
-            for (kind, indices) in &kind_counts {
-                let quota = self.quota_for(*kind).await;
-                if indices.len() <= quota {
+                if merged {
                     continue;
                 }
-                let excess = indices.len() - quota;
-                let mut scored: Vec<(f32, usize)> = indices
-                    .iter()
-                    .map(|&idx| (store[idx].entry.composite_score(), idx))
-                    .collect();
-                scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                for (_score, idx) in scored.iter().take(excess) {
-                    indices_to_remove.push(*idx);
-                }
+
+                store.push(StoredEntry { entry });
+                inserted += 1;
             }
 
-            if !indices_to_remove.is_empty() {
-                indices_to_remove.sort_unstable();
-                indices_to_remove.reverse();
-                for idx in indices_to_remove {
-                    store.remove(idx);
+            // Lock-free atomic insert counter; evict when threshold crossed
+            let total = self.insert_count.fetch_add(inserted, Ordering::SeqCst) + inserted;
+            if total >= evict_every {
+                self.insert_count.store(0, Ordering::SeqCst);
+
+                let mut kind_counts: HashMap<ContextKind, Vec<usize>> = HashMap::new();
+                for (i, s) in store.iter().enumerate() {
+                    kind_counts.entry(s.entry.kind).or_default().push(i);
                 }
+
+                let mut indices_to_remove: Vec<usize> = Vec::new();
+                for (kind, indices) in &kind_counts {
+                    let quota = quota_snapshot
+                        .get(kind)
+                        .copied()
+                        .unwrap_or_else(|| kind.quota());
+                    if indices.len() <= quota {
+                        continue;
+                    }
+                    let excess = indices.len() - quota;
+                    let mut scored: Vec<(f32, usize)> = indices
+                        .iter()
+                        .map(|&idx| (store[idx].entry.composite_score(), idx))
+                        .collect();
+                    scored.sort_by(|a, b| {
+                        a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    for (_score, idx) in scored.iter().take(excess) {
+                        indices_to_remove.push(*idx);
+                    }
+                }
+
+                if !indices_to_remove.is_empty() {
+                    indices_to_remove.sort_unstable();
+                    indices_to_remove.reverse();
+                    for idx in indices_to_remove {
+                        store.remove(idx);
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }; // ⬅ entries write lock released — no .await crossed this boundary
+
+        // ── Phase 3: Post-commit — turbovec sync (no store locks) ────────────
+        #[cfg(feature = "tools-turbovec")]
+        if evicted {
+            let count = self.entries.read().await.len();
+            if let Some(ref tv) = *self.turbovec.read().unwrap() {
+                let positions: Vec<usize> = (0..count).collect();
+                tv.reindex(&positions);
+                tv.prepare();
             }
         }
     }

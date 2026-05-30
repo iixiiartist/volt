@@ -238,6 +238,26 @@ fn extract_kv_pairs(input: &str) -> serde_json::Map<String, serde_json::Value> {
     map
 }
 
+/// Strip <function> and </function> tags from input string.
+pub fn strip_function_tags(input: &str) -> String {
+    input
+        .replace("<function>", "")
+        .replace("</function>", "")
+}
+
+/// Wrap the input string in <function> tags.
+pub fn wrap_function_tags(input: &str) -> String {
+    format!("<function>\n{}\n</function>", input)
+}
+
+/// Extract the content between <function> and </function> tags, if present.
+pub fn extract_function_block(input: &str) -> Option<String> {
+    let start = input.find("<function>")?;
+    let after = &input[start + "<function>".len()..];
+    let end = after.find("</function>")?;
+    Some(after[..end].trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +440,47 @@ mod tests {
             arguments: serde_json::json!({"mode": "invalid_mode"}),
         };
         assert!(validate_tool_call(&tc_bad, &def).is_err());
+    }
+
+    #[test]
+    fn test_strip_function_tags() {
+        let input = "<function>\n{\"name\": \"web_search\"}\n</function>";
+        let stripped = super::strip_function_tags(input);
+        assert!(!stripped.contains("<function>"));
+        assert!(!stripped.contains("</function>"));
+        assert!(stripped.contains("web_search"));
+    }
+
+    #[test]
+    fn test_wrap_function_tags() {
+        let input = "{\"name\": \"web_search\"}";
+        let wrapped = super::wrap_function_tags(input);
+        assert!(wrapped.starts_with("<function>"));
+        assert!(wrapped.ends_with("</function>"));
+        assert!(wrapped.contains("web_search"));
+    }
+
+    #[test]
+    fn test_extract_function_block() {
+        let input = "prefix\n<function>\n{\"name\": \"test\"}\n</function>\nsuffix";
+        let extracted = super::extract_function_block(input);
+        assert_eq!(extracted, Some("{\"name\": \"test\"}".to_string()));
+    }
+
+    #[test]
+    fn test_extract_function_block_no_tags() {
+        let input = "no function tags here";
+        assert!(super::extract_function_block(input).is_none());
+    }
+
+    #[test]
+    fn test_strip_and_extract_roundtrip() {
+        let inner = "{\"name\": \"search\", \"arguments\": {\"mode\": \"fast\"}}";
+        let wrapped = super::wrap_function_tags(inner);
+        let extracted = super::extract_function_block(&wrapped).unwrap();
+        assert_eq!(extracted, inner);
+        let stripped = super::strip_function_tags(&wrapped);
+        assert!(!stripped.contains("<function>"));
+        assert!(stripped.trim() == inner);
     }
 }

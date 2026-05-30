@@ -13,6 +13,12 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         max_iterations,
         mode,
         settings,
+        use_mtp,
+        use_cot,
+        allow_write,
+        framework,
+        model_variant,
+        quantization,
     } = options;
 
     let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "volt-agent");
@@ -34,6 +40,12 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         enabled_context_kinds: mode_profile.context_kinds(),
         essential_tools: crate::models::default_essential_tools(),
         context_kind_quotas: Default::default(),
+        use_mtp,
+        use_cot,
+        allow_write,
+        framework,
+        model_variant,
+        quantization,
     };
     let mut agent = Agent::new(config, provider, tools.clone())
         .await
@@ -118,6 +130,12 @@ pub struct AgentTuiOptions {
     pub max_iterations: Option<u32>,
     pub mode: String,
     pub settings: crate::config::Settings,
+    pub use_mtp: bool,
+    pub use_cot: bool,
+    pub allow_write: bool,
+    pub framework: Option<String>,
+    pub model_variant: Option<String>,
+    pub quantization: Option<String>,
 }
 
 impl AgentTuiOptions {

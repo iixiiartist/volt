@@ -19,6 +19,12 @@ pub struct AgentConfigSection {
     pub system_prompt: Option<String>,
     pub max_iterations: Option<u32>,
     pub temperature: Option<f32>,
+    pub use_mtp: Option<bool>,
+    pub use_cot: Option<bool>,
+    pub allow_write: Option<bool>,
+    pub framework: Option<String>,
+    pub model_variant: Option<String>,
+    pub quantization: Option<String>,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -295,6 +301,9 @@ pub fn first_run_wizard() -> bool {
     lines.push(format!("provider = \"{}\"", provider));
     lines.push("max_iterations = 25".to_string());
     lines.push("temperature = 0.3".to_string());
+    lines.push("use_mtp = false".to_string());
+    lines.push("use_cot = false".to_string());
+    lines.push("allow_write = false".to_string());
     lines.push(String::new());
 
     // Embedding section
@@ -376,6 +385,12 @@ pub struct Settings {
     pub embedding_provider: EmbeddingProvider,
     pub embedding_endpoint: String,
     pub sandbox_policy: SandboxPolicy,
+    pub use_mtp: bool,
+    pub use_cot: bool,
+    pub allow_write: bool,
+    pub framework: Option<String>,
+    pub model_variant: Option<String>,
+    pub quantization: Option<String>,
 }
 
 impl std::fmt::Debug for Settings {
@@ -500,6 +515,66 @@ impl Settings {
             })
             .unwrap_or(262_144);
 
+        let use_mtp = env::var("VOLT_USE_MTP")
+            .ok()
+            .and_then(|v| v.parse::<bool>().ok())
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.agent.as_ref())
+                    .and_then(|a| a.use_mtp)
+            })
+            .unwrap_or(false);
+
+        let use_cot = env::var("VOLT_USE_COT")
+            .ok()
+            .and_then(|v| v.parse::<bool>().ok())
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.agent.as_ref())
+                    .and_then(|a| a.use_cot)
+            })
+            .unwrap_or(false);
+
+        let allow_write = env::var("VOLT_ALLOW_WRITE")
+            .ok()
+            .and_then(|v| v.parse::<bool>().ok())
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.agent.as_ref())
+                    .and_then(|a| a.allow_write)
+            })
+            .unwrap_or(false);
+
+        let framework = env::var("VOLT_FRAMEWORK")
+            .ok()
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.agent.as_ref())
+                    .and_then(|a| a.framework.clone())
+            });
+
+        let model_variant = env::var("VOLT_MODEL_VARIANT")
+            .ok()
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.agent.as_ref())
+                    .and_then(|a| a.model_variant.clone())
+            });
+
+        let quantization = env::var("VOLT_QUANTIZATION")
+            .ok()
+            .or_else(|| {
+                project
+                    .as_ref()
+                    .and_then(|p| p.agent.as_ref())
+                    .and_then(|a| a.quantization.clone())
+            });
+
         Ok(Self {
             database_url,
             registry_base_url,
@@ -513,6 +588,12 @@ impl Settings {
                 max_stdout_bytes,
                 working_dir: None,
             },
+            use_mtp,
+            use_cot,
+            allow_write,
+            framework,
+            model_variant,
+            quantization,
         })
     }
 }

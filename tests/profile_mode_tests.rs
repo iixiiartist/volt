@@ -94,6 +94,12 @@ fn precision_config() -> AgentConfig {
         enabled_context_kinds: AgentMode::Precision.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 
@@ -111,6 +117,12 @@ fn balanced_config() -> AgentConfig {
         enabled_context_kinds: AgentMode::Balanced.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 

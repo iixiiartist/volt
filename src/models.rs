@@ -33,6 +33,15 @@ pub struct AgentConfig {
     /// Keys not present fall back to defaults. Set to experiment with retrieval budgets.
     #[serde(default)]
     pub context_kind_quotas: std::collections::HashMap<crate::context::ContextKind, usize>,
+    #[serde(default)]
+    pub use_mtp: bool,
+    #[serde(default)]
+    pub use_cot: bool,
+    #[serde(default)]
+    pub allow_write: bool,
+    pub framework: Option<String>,
+    pub model_variant: Option<String>,
+    pub quantization: Option<String>,
 }
 
 pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {

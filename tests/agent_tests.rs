@@ -16,6 +16,12 @@ fn agent_config() -> AgentConfig {
         enabled_context_kinds: volt::models::default_context_kinds(),
         essential_tools: volt::models::default_essential_tools(),
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 

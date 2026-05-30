@@ -1,0 +1,11 @@
+# Volt agent preset for Gemma 4 E4B via Ollama
+[agent]
+model = "gemma4:e4b"
+provider = "ollama"
+base_url = "http://localhost:11434/v1"
+temperature = 0.3
+max_iterations = 25
+system_prompt = "You are Volt, running on Gemma 4 E4B via Ollama. You have tools for web search, file I/O, shell commands, and more. When you receive data from a tool, always call write(path, content) to save it if the user requested it."
+
+[env]
+LLM_API_KEY = "ollama"

@@ -67,6 +67,26 @@ enum Commands {
         max_iterations: Option<u32>,
         #[arg(long, default_value = "balanced")]
         mode: String,
+        #[arg(long)]
+        preset: Option<String>,
+        #[arg(long)]
+        agent_file: Option<PathBuf>,
+        #[arg(long)]
+        use_mtp: bool,
+        #[arg(long)]
+        use_cot: bool,
+        #[arg(long)]
+        allow_write: bool,
+        #[arg(long)]
+        framework: Option<String>,
+        #[arg(long)]
+        model_variant: Option<String>,
+        #[arg(long)]
+        quantization: Option<String>,
+    },
+    Agent {
+        #[command(subcommand)]
+        subcommand: AgentSubcommand,
     },
     #[command(hide = true)]
     AgentChat {
@@ -84,6 +104,18 @@ enum Commands {
         max_iterations: Option<u32>,
         #[arg(long, default_value = "balanced")]
         mode: String,
+        #[arg(long)]
+        use_mtp: bool,
+        #[arg(long)]
+        use_cot: bool,
+        #[arg(long)]
+        allow_write: bool,
+        #[arg(long)]
+        framework: Option<String>,
+        #[arg(long)]
+        model_variant: Option<String>,
+        #[arg(long)]
+        quantization: Option<String>,
     },
     McpServe,
     Workflow {
@@ -158,6 +190,17 @@ enum RoutinesSubcommand {
     List,
 }
 
+#[derive(Subcommand, Debug)]
+enum AgentSubcommand {
+    List,
+    Run {
+        #[arg(long)]
+        preset: Option<String>,
+        #[arg(long)]
+        input: Option<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -201,10 +244,52 @@ async fn main() -> anyhow::Result<()> {
             session_id,
             max_iterations,
             mode,
+            preset,
+            agent_file,
+            use_mtp,
+            use_cot,
+            allow_write,
+            framework,
+            model_variant,
+            quantization,
         } => {
+            let model = commands::agent_run::AgentRunOptions::model_or_default(model);
+
+            // Load from preset or agent file
+            let model = if let Some(ref name) = preset {
+                volt::agent::preset::load_preset(name)
+                    .and_then(|(_, p)| p.agent?.model)
+                    .unwrap_or(model)
+            } else if let Some(ref path) = agent_file {
+                volt::agent::preset::load_agent_file(path)
+                    .and_then(|p| p.agent?.model)
+                    .unwrap_or(model)
+            } else {
+                model
+            };
+
+            // Apply env vars from preset
+            if let Some(ref name) = preset {
+                if let Some((_, p)) = volt::agent::preset::load_preset(name) {
+                    if let Some(ref env) = p.env {
+                        for (k, v) in env {
+                            std::env::set_var(k, v);
+                        }
+                    }
+                }
+            } else if let Some(ref path) = agent_file {
+                if let Some(p) = volt::agent::preset::load_agent_file(path) {
+                    if let Some(ref env) = p.env {
+                        for (k, v) in env {
+                            std::env::set_var(k, v);
+                        }
+                    }
+                }
+            }
+
             commands::agent_run::run(commands::agent_run::AgentRunOptions {
                 input,
-                model: commands::agent_run::AgentRunOptions::model_or_default(model),
+                model,
                 allow,
                 load_tools,
                 context_kinds,
@@ -212,14 +297,75 @@ async fn main() -> anyhow::Result<()> {
                 session_id,
                 max_iterations,
                 settings,
+                use_mtp,
+                use_cot,
+                allow_write,
+                framework,
+                model_variant,
+                quantization,
             })
             .await?
+        }
+        Commands::Agent {
+            subcommand: AgentSubcommand::List,
+        } => commands::agent::cmd_list().await,
+        Commands::Agent {
+            subcommand: AgentSubcommand::Run { preset, input },
+        } => {
+            if let Some(input) = input {
+                // Non-interactive: load preset and run
+                let (model_name, allow, max_iter, env) = if let Some(ref name) = preset {
+                    volt::agent::preset::load_preset(name)
+                        .map(|(_, p)| {
+                            let m = p.agent.as_ref().and_then(|a| a.model.clone());
+                            let a = p.agent.as_ref().and_then(|a| a.allow).unwrap_or(true);
+                            let i = p.agent.as_ref().and_then(|a| a.max_iterations);
+                            let e = p.env.clone();
+                            (m, a, i, e)
+                        })
+                        .unwrap_or((None, true, None, None))
+                } else {
+                    (None, true, None, None)
+                };
+                if let Some(ref env) = env {
+                    for (k, v) in env {
+                        std::env::set_var(k, v);
+                    }
+                }
+                let settings = volt::config::Settings::from_env()?;
+                commands::agent_run::run(commands::agent_run::AgentRunOptions {
+                    input,
+                    model: model_name.unwrap_or_else(|| "gemma4:e4b".into()),
+                    allow,
+                    load_tools: None,
+                    context_kinds: Vec::new(),
+                    mode: "balanced".into(),
+                    session_id: None,
+                    max_iterations: max_iter,
+                    settings,
+                    use_mtp: false,
+                    use_cot: false,
+                    allow_write: false,
+                    framework: None,
+                    model_variant: None,
+                    quantization: None,
+                })
+                .await?
+            } else {
+                commands::agent::cmd_run_interactive().await?
+            }
         }
         Commands::AgentTui {
             model,
             allow,
             max_iterations,
             mode,
+            use_mtp,
+            use_cot,
+            allow_write,
+            framework,
+            model_variant,
+            quantization,
         } => {
             commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
                 model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
@@ -227,6 +373,12 @@ async fn main() -> anyhow::Result<()> {
                 max_iterations,
                 mode,
                 settings,
+                use_mtp,
+                use_cot,
+                allow_write,
+                framework,
+                model_variant,
+                quantization,
             })
             .await?
         }

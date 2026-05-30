@@ -23,6 +23,12 @@ pub async fn run(suite: PathBuf, model: Option<String>) -> anyhow::Result<()> {
         enabled_context_kinds: crate::models::default_context_kinds(),
         essential_tools: crate::models::default_essential_tools(),
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     };
     let agent = Agent::new(config, provider, tools)
         .await

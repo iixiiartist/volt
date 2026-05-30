@@ -1,0 +1,10 @@
+# Volt agent preset for Qwen 3.5 9B via Ollama
+[agent]
+model = "qwen3.5:9b"
+provider = "ollama"
+base_url = "http://localhost:11434/v1"
+temperature = 0.3
+max_iterations = 25
+
+[env]
+LLM_API_KEY = "ollama"

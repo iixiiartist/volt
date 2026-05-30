@@ -1,4 +1,6 @@
+use crate::agent::cot;
 use crate::agent::prompt::build_system_prompt;
+use crate::agent::prompt_builder;
 use crate::context::ContextStore;
 use crate::embedding::EmbeddingClient;
 use crate::llm::provider::TokenCallback;
@@ -248,14 +250,24 @@ impl Agent {
         }
 
         // Inject system prompt at the start of the conversation
+        // Build with prompt_builder for Gemma-4 native tags if framework is set
         {
             let mut state = self.state.lock().await;
-            let current_prompt = build_system_prompt(&self.config, self.workspace.as_deref());
+            let current_prompt = if self.config.framework.is_some() {
+                // Use prompt_builder for Gemma-4 style prompts
+                prompt_builder::build_prompt(
+                    &build_system_prompt(&self.config, self.workspace.as_deref()),
+                    input,
+                    None,
+                    None,
+                )
+            } else {
+                build_system_prompt(&self.config, self.workspace.as_deref())
+            };
             let existing_idx = state.messages.iter().position(|m| m.role == "system");
             match existing_idx {
                 Some(idx) => {
-                    // Replace stale system prompt if SOUL.md or config changed
-                    if !state.messages[idx].content.contains(&current_prompt) {
+                    if state.messages[idx].content.as_ref() != &current_prompt {
                         state.messages[idx].content = Arc::new(current_prompt);
                         tracing::info!("[system] replaced stale system prompt on session resume");
                     }
@@ -274,6 +286,48 @@ impl Agent {
                             created_at: chrono::Utc::now(),
                         },
                     );
+                }
+            }
+        }
+
+        // Chain-of-Thought planning phase
+        if self.config.use_cot {
+            let tool_names: Vec<String> = self.tools.get_definitions().await
+                .iter()
+                .map(|d| d.name.clone())
+                .collect();
+            let plan_prompt = cot::planning_prompt(input, &tool_names);
+            let planning_messages = vec![
+                LLMMessage {
+                    role: "user".to_string(),
+                    content: Arc::new(plan_prompt),
+                    tool_calls: None,
+                    tool_call_id: None,
+                }
+            ];
+            let _model_ctx = crate::models::ModelContext::for_model(&self.config.model);
+            let plan_request = LLMRequest {
+                model: self.config.model.clone(),
+                messages: planning_messages,
+                temperature: Some(0.2),
+                max_tokens: Some(512),
+                stop: None,
+                tools: None,
+                stream: false,
+            };
+            if let Ok(plan_response) = self.provider.complete(&plan_request).await {
+                let plan_text = plan_response.content.as_str();
+                let plan_steps = cot::parse_plan(plan_text);
+                if !plan_steps.is_empty() {
+                    let plan_summary = plan_steps.iter()
+                        .map(|(n, desc, _tool)| format!("{}. {}", n, desc))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    tracing::info!("[CoT] plan generated:\n{}", plan_summary);
+                    // Store the plan steps for potential use in tool selection
+                    let state = self.state.lock().await;
+                    crate::tools::memory_tool::memory_append("plan", &plan_summary).await;
+                    drop(state);
                 }
             }
         }

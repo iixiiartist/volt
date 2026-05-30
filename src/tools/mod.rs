@@ -13,9 +13,13 @@ pub mod final_answer;
 pub mod git_tool;
 pub mod glob_tool;
 pub mod grep_tool;
+pub mod groups;
 pub mod json_tool;
+pub mod litertlm;
+pub mod llamacpp;
 pub mod mcp_client;
 pub mod memory_tool;
+pub mod mtp;
 pub mod path;
 #[cfg(feature = "tools-pdf")]
 pub mod pdf_tool;

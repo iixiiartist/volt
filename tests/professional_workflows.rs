@@ -108,6 +108,12 @@ fn precision_config() -> AgentConfig {
         enabled_context_kinds: AgentMode::Precision.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 
@@ -125,6 +131,12 @@ fn balanced_config() -> AgentConfig {
         enabled_context_kinds: AgentMode::Balanced.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 
@@ -142,6 +154,12 @@ fn autonomous_config() -> AgentConfig {
         enabled_context_kinds: AgentMode::Autonomous.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 
@@ -288,6 +306,12 @@ async fn test_parallel_workflow_pattern() {
                     enabled_context_kinds: AgentMode::Precision.context_kinds(),
                     essential_tools: vec![],
                     context_kind_quotas: Default::default(),
+                    use_mtp: false,
+                    use_cot: false,
+                    allow_write: false,
+                    framework: None,
+                    model_variant: None,
+                    quantization: None,
                 };
                 let agent = Agent::new(config, provider, reg).await;
                 agent.run(task).await
@@ -326,6 +350,12 @@ async fn test_pipeline_workflow_with_output_chaining() {
             enabled_context_kinds: AgentMode::Precision.context_kinds(),
             essential_tools: vec![],
             context_kind_quotas: Default::default(),
+            use_mtp: false,
+            use_cot: false,
+            allow_write: false,
+            framework: None,
+            model_variant: None,
+            quantization: None,
         };
         let agent = Agent::new(config, provider, registry.clone()).await;
         agent
@@ -357,6 +387,12 @@ async fn test_pipeline_workflow_with_output_chaining() {
             enabled_context_kinds: AgentMode::Precision.context_kinds(),
             essential_tools: vec![],
             context_kind_quotas: Default::default(),
+            use_mtp: false,
+            use_cot: false,
+            allow_write: false,
+            framework: None,
+            model_variant: None,
+            quantization: None,
         };
         let agent = Agent::new(config, provider, registry).await;
         let output = agent.run(&stage2_task).await.expect("Stage 2 must succeed");
@@ -415,6 +451,12 @@ async fn test_supervisor_routes_task_to_worker_agents() {
         enabled_context_kinds: AgentMode::Balanced.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     };
     let agent = Agent::new(config, provider, registry).await;
     let result = agent.run("Run code analysis").await;
@@ -979,6 +1021,12 @@ async fn test_parallel_agents_with_mixed_modes() {
                     enabled_context_kinds: mode.context_kinds(),
                     essential_tools: vec![],
                     context_kind_quotas: Default::default(),
+                    use_mtp: false,
+                    use_cot: false,
+                    allow_write: false,
+                    framework: None,
+                    model_variant: None,
+                    quantization: None,
                 };
 
                 let ctx_kinds = config.enabled_context_kinds.clone();

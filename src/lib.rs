@@ -36,6 +36,8 @@ pub mod skills;
 pub mod telemetry;
 pub mod tool_failure_tracker;
 pub mod tools;
+#[cfg(feature = "tools-turbovec")]
+pub mod turbovec_index;
 pub mod tui;
 pub mod validation;
 pub mod vector_index;

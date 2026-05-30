@@ -40,6 +40,12 @@ fn mock_config(name: &str, max_iterations: u32) -> AgentConfig {
         enabled_context_kinds: AgentMode::Precision.context_kinds(),
         essential_tools: vec![],
         context_kind_quotas: Default::default(),
+        use_mtp: false,
+        use_cot: false,
+        allow_write: false,
+        framework: None,
+        model_variant: None,
+        quantization: None,
     }
 }
 
