@@ -82,14 +82,14 @@ pub async fn register_web_tools(registry: &Arc<ToolRegistry>) {
         registry
             .register(
                 "web_search",
-                "Search the web for real-time information using you.com Search API. Returns structured results with URLs, titles, snippets, and optional full-page content via livecrawl. Use this when you need current information from the internet.",
+                "Search the web for real-time information using you.com Search API. Returns structured results with titles, URLs, description, and full page content in Markdown. Use this when you need current information from the internet.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
                         "query": { "type": "string", "description": "The search query" },
                         "count": { "type": "integer", "description": "Number of results (1-100, default 10)", "default": 10 },
                         "freshness": { "type": "string", "description": "Recency filter: day, week, month, year, or YYYY-MM-DDtoYYYY-MM-DD", "enum": ["day", "week", "month", "year"], "default": null },
-                        "livecrawl": { "type": "string", "description": "Fetch full page content: web, news, or all", "enum": ["web", "news", "all"], "default": null }
+                        "livecrawl": { "type": "string", "description": "Fetch full page content: web, news, or all (default: all)", "enum": ["web", "news", "all"], "default": "all" }
                     },
                     "required": ["query"]
                 }),
