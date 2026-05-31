@@ -297,7 +297,7 @@ Use `--agents-file` / `--tasks-file` to pass from files instead of CLI args.
 | `EMBEDDING_MODEL` | No | `nvidia/llama-nemotron-embed-1b-v2` | Embedding model ID |
 | `EMBEDDING_ENDPOINT` | No | NVIDIA NIM endpoint | Embedding API URL |
 | `EMBEDDING_API_KEY` | No | — | Embedding API key (NVIDIA NIM) |
-| `HF_TOKEN` | No | — | HuggingFace token (downloads BGE-large-en-v1.5 ONNX model) |
+| `HF_TOKEN` | No | — | HuggingFace token (downloads BGE-small-en-v1.5 ONNX model) |
 | `YOUCOM_API_KEY` | No | — | you.com API key for web search/research tools |
 | `VOLT_REGISTRY_BASE_URL` | No | `https://registry.voltagents.com/v1` | Tool registry URL |
 | `VOLT_REGISTRY_TOKEN` | No | — | Tool registry auth token |

@@ -86,7 +86,7 @@ Generated from structural analysis of all 17 candidate files ≥300 lines (minus
 
 ### 4. `src/embedding.rs` (679 → 586 core lines)
 
-**Current structure:** `EmbeddingClient` struct with 6 provider configuration structs, fallback chain, local ONNX embedding via tract-onnx, remote HF API embedding, and deterministic zero-vector fallback.
+**Current structure:** `EmbeddingClient` struct with 6 provider configuration structs, fallback chain, local ONNX embedding via ort (ONNX Runtime) with DirectML/OpenVINO/CUDA fallback, remote HF API embedding, and deterministic zero-vector fallback.
 
 **Proposed split into `embedding/` module:**
 
@@ -94,7 +94,7 @@ Generated from structural analysis of all 17 candidate files ≥300 lines (minus
 |----------|----------------|------------|
 | `embedding/mod.rs` | `EmbeddingClient` struct, `EmbeddingProvider` enum, `embed()`/`embed_batch()` dispatch, `from_env()` builder | 150 |
 | `embedding/providers.rs` | `ProviderConfig` struct, `from_env()` per-provider init (Ollama, LlamaCpp, Nvidia, OpenAI, Moonshot, HuggingFace) | 120 |
-| `embedding/local.rs` | `LocalEmbeddingEngine` — tract-onnx model init, mean pooling, L2 normalization (feature-gated `#[cfg(feature = "tools-local-embeddings")]`) | 150 |
+| `embedding/local.rs` | `LocalEmbeddingEngine` — ort ONNX Runtime, BGE-small-en-v1.5 (384d), EP fallback chain, mean pooling, L2 normalization (feature-gated `#[cfg(feature = "tools-local-embeddings")]`) | 150 |
 | `embedding/hf.rs` | HF API embedding via `reqwest`, `embed_remote_batch()`, caching | 80 |
 | `embedding/fallback.rs` | Deterministic zero-vector placeholder, dimension constant | 30 |
 

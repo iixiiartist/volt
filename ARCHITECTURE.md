@@ -99,7 +99,7 @@ All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate
 | **Token counting** | tiktoken-rs cl100k_base (replaces chars/3) |
 | **OpenTelemetry** | tracing→OTel bridge with OTLP export support |
 | **GraphRAG** | petgraph ToolGraph with BFS traversal |
-| **Local ONNX** | tract-onnx BGE-large-en-v1.5 (tools-local-embeddings) |
+| **Local ONNX** | ort ONNX Runtime BGE-small-en-v1.5 (tools-local-embeddings, DirectML/OpenVINO/CUDA) |
 | **LSH index** | vector_index::LshIndex for approximate nearest neighbor |
 
 ### 7. Permission System

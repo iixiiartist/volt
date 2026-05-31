@@ -133,7 +133,7 @@ volt/
 │   ├── mcp/
 │   ├── context.rs          — ContextStore: 12-kind RAG with hybrid search
 │   ├── embedding.rs        — EmbeddingClient trait + HF API embedder
-│   ├── local_embed.rs      — Local ONNX embedder (tract-onnx, BGE-large)
+│   ├── local_embed.rs      — Local ONNX embedder (ort, BGE-small, DirectML/OpenVINO/CUDA)
 │   ├── vector_index.rs     — BM25+ scorer + RRF fusion
 │   ├── turbovec_index.rs   — TurboQuantIndex wrapper for ANN search
 │   ├── orchestrator.rs     — DAG multi-agent orchestration
@@ -197,7 +197,7 @@ volt/
 
 | File | Lines | Description |
 |---|---|---|
-| `Cargo.toml` | ~200 | Package manifest. 25+ feature flags (default: `tools-local-embeddings`). Key deps: tokio, serde, sqlx, tract-onnx, reqwest, axum, tonic. Two bins: `volt`, `bfcl_bench`. |
+| `Cargo.toml` | ~200 | Package manifest. 25+ feature flags (default: `tools-local-embeddings`). Key deps: tokio, serde, sqlx, ort (ONNX Runtime), reqwest, axum, tonic. Two bins: `volt`, `bfcl_bench`. |
 | `.env.example` | ~30 | Template: GROQ_API_KEY, DATABASE_URL, YOUCOM_API_KEY, model settings |
 | `AGENTS.md` | ~200 | Operating procedures for the agent. Commands, workspace structure, conventions |
 | `SOUL.md` | ~50 | Core identity prompt — agent's self-description |
@@ -320,7 +320,7 @@ volt/
 |---|---|---|---|
 | `context.rs` | ~970 | `ContextStore`, `ContextKind` (12 variants), `ContextEntry` | Unified RAG store. Hybrid BM25+dense search. Four-pillar eviction. Staging buffer pattern for deadlock-free writes. Turbovec integration |
 | `embedding.rs` | ~200 | `EmbeddingClient` trait, `HfEmbedder` | Embedding with fallback chain: HF Inference API → local ONNX → Ollama |
-| `local_embed.rs` | ~300 | `LocalEmbedder` | tract-onnx based BGE-large-en-v1.5 (1024d). Mean pooling + L2 norm. Pure Rust, no C++ dep |
+| `local_embed.rs` | ~320 | `LocalEmbedder` | ort ONNX Runtime BGE-small-en-v1.5 (384d). EP fallback: OpenVINO → DirectML → CUDA → CPU. Requires MSVC toolchain |
 | `vector_index.rs` | ~200 | `Bm25Scorer`, `reciprocal_rank_fusion()` | BM25+ with k1=1.2, b=0.75. RRF with k=60 constant |
 | `turbovec_index.rs` | ~360 | `TurbovecIndex` | TurboQuantIndex wrapper with position mapping, dimension validation, reindex support |
 | `orchestrator.rs` | ~300 | `Orchestrator`, `DagWorkflow`, `DagScheduler` | DAG parsing (JSON), topological sort (Kahn's), parallel execution levels, template substitution |
