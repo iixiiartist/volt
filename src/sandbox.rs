@@ -122,8 +122,12 @@ async fn run_spawned(
     use tokio::io::AsyncWriteExt;
     let started = Instant::now();
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(stdin_data.as_bytes()).await;
-        let _ = stdin.shutdown().await;
+        if let Err(e) = stdin.write_all(stdin_data.as_bytes()).await {
+            tracing::warn!("[sandbox] stdin write failed: {}", e);
+        }
+        if let Err(e) = stdin.shutdown().await {
+            tracing::warn!("[sandbox] stdin shutdown failed: {}", e);
+        }
     }
     let out_res = timeout(Duration::from_millis(timeout_ms), child.wait_with_output()).await;
     let duration_ms = started.elapsed().as_millis();

@@ -1,0 +1,19 @@
+id = "llama3_8b_local"
+name = "Llama 3 8B Local Assistant"
+description = "File management assistant using Llama 3 with AST coercion quirks"
+
+[model_card]
+model_name = "llama-3.1-8b-instant"
+provider = "groq"
+format_dialect = "LlamaChat"
+quirks = ["StringifiedBooleans", "StringifiedIntegers", "ChainOfThoughtLeak"]
+
+[scaffolding]
+max_tools_per_turn = 3
+strict_mode = false
+
+[tools]
+core_tools = ["bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are a local file management assistant. You may use dynamic tool discovery."

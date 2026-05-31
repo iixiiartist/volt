@@ -1,235 +1,15 @@
+use super::{Agent, MAX_TOOL_OUTPUT_CHARS};
 use crate::agent::cot;
 use crate::agent::prompt::build_system_prompt;
 use crate::agent::prompt_builder;
-use crate::context::ContextStore;
-use crate::embedding::EmbeddingClient;
-use crate::llm::provider::TokenCallback;
-use crate::llm::LLMProvider;
 use crate::models::{
-    AgentConfig, AgentState, CancelToken, LLMMessage, LLMRequest, LLMResponse, Message,
-    ModelContext, PermissionLevel, ToolCall, ToolResult,
+    LLMMessage, LLMRequest, LLMResponse, Message, PermissionLevel, ToolCall, ToolResult,
 };
-use crate::skills::SkillRegistry;
-use crate::tools::ToolRegistry;
-use crate::worker::SeedChannel;
-use sqlx::PgPool;
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::info;
 use uuid::Uuid;
 
-/// An autonomous agent — holds configuration, LLM provider, tool registry, and session state.
-/// Maximum tool output characters before truncation with a reference token.
-const MAX_TOOL_OUTPUT_CHARS: usize = 2000;
-
-/// Built via `Agent::new()` with chained `.with_*()` methods for context, skills, sessions, etc.
-pub struct Agent {
-    config: AgentConfig,
-    state: Arc<Mutex<AgentState>>,
-    provider: Box<dyn LLMProvider>,
-    tools: Arc<ToolRegistry>,
-    db: Option<PgPool>,
-    embedder: Option<EmbeddingClient>,
-    skills: Option<Arc<SkillRegistry>>,
-    context_store: Option<Arc<ContextStore>>,
-    seed_channel: Option<SeedChannel>,
-    cancel: Option<CancelToken>,
-    on_token: Option<TokenCallback>,
-    session_id: Option<uuid::Uuid>,
-    sqlite_pool: Option<sqlx::SqlitePool>,
-    workspace: Option<PathBuf>,
-    event_bus: Option<crate::events::EventBus>,
-    failure_tracker: Option<crate::tool_failure_tracker::ToolFailureTracker>,
-    tool_output_buffer: Arc<Mutex<HashMap<String, String>>>,
-    capability_manager: Arc<crate::capability::CapabilityManager>,
-    checkpoint_journal: Option<Arc<crate::checkpoint_journal::CheckpointJournal>>,
-}
-
 impl Agent {
-    pub fn config(&self) -> &AgentConfig {
-        &self.config
-    }
-    pub fn state(&self) -> &Arc<Mutex<AgentState>> {
-        &self.state
-    }
-}
-
-impl Agent {
-    pub async fn new(
-        config: AgentConfig,
-        provider: Box<dyn LLMProvider>,
-        tools: Arc<ToolRegistry>,
-    ) -> Self {
-        let state = AgentState {
-            id: uuid::Uuid::new_v4(),
-            name: config.name.clone(),
-            session_id: uuid::Uuid::new_v4(),
-            iteration: 0,
-            context_injected: false,
-            allow_session: false,
-            total_prompt_tokens: 0,
-            total_completion_tokens: 0,
-            last_saved_message_idx: 0,
-            messages: Vec::new(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        let mgr = Arc::new(crate::capability::CapabilityManager::new());
-        mgr.issue(
-            crate::capability::CapabilityScope::FsRead,
-            100,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::FsWrite,
-            50,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::System,
-            20,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::Network,
-            200,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::Database,
-            30,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::Memory,
-            50,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        Self {
-            config,
-            state: Arc::new(Mutex::new(state)),
-            provider,
-            tools,
-            db: None,
-            embedder: None,
-            skills: None,
-            context_store: None,
-            seed_channel: None,
-            cancel: None,
-            on_token: None,
-            session_id: None,
-            sqlite_pool: None,
-            workspace: None,
-            event_bus: None,
-            failure_tracker: None,
-            tool_output_buffer: Arc::new(Mutex::new(HashMap::new())),
-            checkpoint_journal: None,
-            capability_manager: mgr,
-        }
-    }
-
-    pub fn with_workspace(mut self, path: PathBuf) -> Self {
-        self.workspace = Some(path);
-        self
-    }
-
-    pub fn with_memory(mut self, db: PgPool, embedder: EmbeddingClient) -> Self {
-        self.db = Some(db);
-        self.embedder = Some(embedder);
-        self
-    }
-
-    pub fn with_memory_embedder_only(mut self, embedder: EmbeddingClient) -> Self {
-        self.embedder = Some(embedder);
-        self
-    }
-
-    pub fn with_skills(mut self, skills: Arc<SkillRegistry>) -> Self {
-        self.skills = Some(skills);
-        self
-    }
-
-    pub fn with_context(mut self, context_store: Arc<ContextStore>) -> Self {
-        self.context_store = Some(context_store);
-        self
-    }
-
-    pub fn with_seed_channel(mut self, seed_channel: SeedChannel) -> Self {
-        self.seed_channel = Some(seed_channel);
-        self
-    }
-
-    pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
-        self.cancel = Some(cancel);
-        self
-    }
-
-    pub fn with_stream(mut self, on_token: TokenCallback) -> Self {
-        self.on_token = Some(on_token);
-        self
-    }
-
-    pub fn with_session(mut self, session_id: uuid::Uuid, sqlite_pool: sqlx::SqlitePool) -> Self {
-        self.session_id = Some(session_id);
-        self.sqlite_pool = Some(sqlite_pool);
-        self
-    }
-
-    pub fn with_event_bus(mut self, bus: crate::events::EventBus) -> Self {
-        self.event_bus = Some(bus);
-        self
-    }
-
-    pub fn with_failure_tracker(
-        mut self,
-        tracker: crate::tool_failure_tracker::ToolFailureTracker,
-    ) -> Self {
-        self.failure_tracker = Some(tracker);
-        self
-    }
-
-    /// Attach a batched checkpoint journal to avoid SQLite write-lock contention
-    /// in parallel multi-agent setups. When set, `save_checkpoint()` sends to
-    /// the journal's in-memory channel instead of writing directly to SQLite.
-    pub fn with_checkpoint_journal(
-        mut self,
-        journal: Arc<crate::checkpoint_journal::CheckpointJournal>,
-    ) -> Self {
-        self.checkpoint_journal = Some(journal);
-        self
-    }
-
-    /// Replace the default CapabilityManager with a shared one.
-    /// Use this for sub-agents that should share a parent's budget quotas
-    /// instead of getting fresh per-session budgets.
-    pub fn with_capability_manager(
-        mut self,
-        cap_mgr: Arc<crate::capability::CapabilityManager>,
-    ) -> Self {
-        self.capability_manager = cap_mgr;
-        self
-    }
-
-    /// Precision mode: only Tool + Artifact context kinds active.
-    /// Used for BFCL-style function calling, code tasks, structured output.
-    fn is_precision_mode(&self) -> bool {
-        let kinds = &self.config.enabled_context_kinds;
-        kinds.len() <= 2
-            && kinds.contains(&crate::context::ContextKind::Tool)
-            && kinds.contains(&crate::context::ContextKind::Artifact)
-    }
-
     pub async fn run(&self, input: &str) -> anyhow::Result<String> {
-        // Load previous session messages for episodic memory — skip in precision mode
-        // where conversation history adds noise to single-turn function calling
         let is_precision = self.is_precision_mode();
         if !is_precision {
             if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
@@ -249,12 +29,9 @@ impl Agent {
             }
         }
 
-        // Inject system prompt at the start of the conversation
-        // Build with prompt_builder for Gemma-4 native tags if framework is set
         {
             let mut state = self.state.lock().await;
             let current_prompt = if self.config.framework.is_some() {
-                // Use prompt_builder for Gemma-4 style prompts
                 prompt_builder::build_prompt(
                     &build_system_prompt(&self.config, self.workspace.as_deref()),
                     input,
@@ -290,21 +67,21 @@ impl Agent {
             }
         }
 
-        // Chain-of-Thought planning phase
         if self.config.use_cot {
-            let tool_names: Vec<String> = self.tools.get_definitions().await
+            let tool_names: Vec<String> = self
+                .tools
+                .get_definitions()
+                .await
                 .iter()
                 .map(|d| d.name.clone())
                 .collect();
             let plan_prompt = cot::planning_prompt(input, &tool_names);
-            let planning_messages = vec![
-                LLMMessage {
-                    role: "user".to_string(),
-                    content: Arc::new(plan_prompt),
-                    tool_calls: None,
-                    tool_call_id: None,
-                }
-            ];
+            let planning_messages = vec![LLMMessage {
+                role: "user".to_string(),
+                content: Arc::new(plan_prompt),
+                tool_calls: None,
+                tool_call_id: None,
+            }];
             let _model_ctx = crate::models::ModelContext::for_model(&self.config.model);
             let plan_request = LLMRequest {
                 model: self.config.model.clone(),
@@ -319,12 +96,12 @@ impl Agent {
                 let plan_text = plan_response.content.as_str();
                 let plan_steps = cot::parse_plan(plan_text);
                 if !plan_steps.is_empty() {
-                    let plan_summary = plan_steps.iter()
+                    let plan_summary = plan_steps
+                        .iter()
                         .map(|(n, desc, _tool)| format!("{}. {}", n, desc))
                         .collect::<Vec<_>>()
                         .join("\n");
                     tracing::info!("[CoT] plan generated:\n{}", plan_summary);
-                    // Store the plan steps for potential use in tool selection
                     let state = self.state.lock().await;
                     crate::tools::memory_tool::memory_append("plan", &plan_summary).await;
                     drop(state);
@@ -335,8 +112,6 @@ impl Agent {
         self.push_user_message(input).await;
 
         for _iteration in 0..self.config.max_iterations {
-            // Cooperative yield to prevent Tokio scheduler starvation
-            // in multi-agent or concurrent serving topologies.
             tokio::task::yield_now().await;
 
             if self.is_cancelled() {
@@ -359,8 +134,15 @@ impl Agent {
                     .iter()
                     .map(|s| s.as_str())
                     .collect();
+                let limit = if self.config.quirks.contains(&crate::agent::blueprint::ModelQuirk::SchemaLimitTen)
+                    && !self.config.strict_mode
+                {
+                    10
+                } else {
+                    8
+                };
                 self.tools
-                    .search_tools(emb, 8, &essential, query_text.as_deref())
+                    .search_tools(emb, limit, &essential, query_text.as_deref())
                     .await
             } else {
                 self.tools.get_definitions().await
@@ -392,23 +174,29 @@ impl Agent {
                     match result {
                         Ok(r) => break 'retry r,
                         Err(e) => {
-                            if attempt + 1 < max_retries {
-                                let delay =
-                                    std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
-                                eprintln!(
-                                    "\n\x1b[33m[API retry {}]\x1b[0m {} (retrying in {:?})",
-                                    attempt + 1,
-                                    e,
-                                    delay
-                                );
-                                tokio::time::sleep(delay).await;
-                            } else {
-                                if self.is_cancelled() {
-                                    return Err(anyhow::anyhow!("cancelled by user"));
+                            let err_str = e.to_string();
+                            // Fast-fail on auth errors — retrying will never succeed
+                            let is_auth_err = err_str.contains("401") || err_str.contains("403") || err_str.contains("Unauthorized") || err_str.contains("Forbidden");
+                            if is_auth_err || attempt + 1 >= max_retries {
+                                if !is_auth_err {
+                                    if self.is_cancelled() {
+                                        return Err(anyhow::anyhow!("cancelled by user"));
+                                    }
+                                    eprintln!("\n\x1b[31m[API Error]\x1b[0m {}", e);
+                                    return Err(e);
                                 }
-                                eprintln!("\n\x1b[31m[API Error]\x1b[0m {}", e);
+                                eprintln!("\n\x1b[31m[API Auth Error]\x1b[0m {} — aborting (retrying would not help)", e);
                                 return Err(e);
                             }
+                            let delay =
+                                std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                            eprintln!(
+                                "\n\x1b[33m[API retry {}]\x1b[0m {} (retrying in {:?})",
+                                attempt + 1,
+                                e,
+                                delay
+                            );
+                            tokio::time::sleep(delay).await;
                         }
                     }
                 }
@@ -426,7 +214,6 @@ impl Agent {
                 state.total_completion_tokens += usage.completion_tokens;
             }
 
-            // Checkpoint after each iteration so crashes can rehydrate
             self.save_checkpoint(
                 state.iteration,
                 &state.messages,
@@ -435,13 +222,47 @@ impl Agent {
             )
             .await;
 
-            // Audit log: record this complete LLM turn (request + response) in ContextStore
             self.audit_turn(&request, &response, &state).await;
 
             if let Some(tool_calls) = &response.tool_calls {
-                // Validate all tool calls against their schemas before executing.
-                // If any call has invalid arguments, push assistant + error messages
-                // and let the loop retry instead of wasting a real tool execution.
+                // ── Quirk pre-processing ────────────────────────────────
+                for tc in tool_calls.iter() {
+                    let mut args = tc.arguments.clone();
+                    crate::agent::tool_parser::coerce_quirks(&mut args, &self.config.quirks);
+                }
+
+                // ── max_tools_per_turn enforcement ─────────────────────
+                if let Some(max) = self.config.max_tools_per_turn {
+                    if tool_calls.len() > max
+                        && !tool_calls.iter().any(|tc| tc.name == "final_answer")
+                    {
+                        let overflow: Vec<_> = tool_calls
+                            .iter()
+                            .skip(max)
+                            .map(|tc| tc.name.clone())
+                            .collect();
+                        let err_msg = format!(
+                            "Only {} tool call(s) allowed per turn. You sent {}: {}. Please retry with at most {} call(s).",
+                            max, tool_calls.len(), overflow.join(", "), max
+                        );
+                        self.push_assistant_message(&mut state, &response, Some(tool_calls))
+                            .await;
+                        let parent_id = crate::models::Message::last_id(&state.messages);
+                        state.messages.push(Message {
+                            id: Uuid::new_v4(),
+                            parent_message_id: parent_id,
+                            role: "tool".into(),
+                            content: Arc::new(err_msg.clone()),
+                            tool_calls: None,
+                            tool_result: Some(err_msg),
+                            tool_name: Some("max_tools_per_turn".into()),
+                            created_at: chrono::Utc::now(),
+                        });
+                        drop(state);
+                        continue;
+                    }
+                }
+
                 {
                     let defs = self.tools.get_definitions().await;
                     let def_map: std::collections::HashMap<&str, &crate::models::ToolDefinition> =
@@ -471,8 +292,6 @@ impl Agent {
                                 created_at: chrono::Utc::now(),
                             });
                         }
-                        // Save checkpoint so rehydration sees validation errors
-                        // — otherwise the loop retries with the same state forever.
                         self.save_checkpoint(
                             state.iteration,
                             &state.messages,
@@ -485,10 +304,11 @@ impl Agent {
                     }
                 }
 
-                // Check if any tool call is final_answer — extract answer and exit
                 if let Some(final_call) = tool_calls.iter().find(|tc| tc.name == "final_answer") {
-                    let answer = final_call.arguments["answer"]
-                        .as_str()
+                    let answer = final_call
+                        .arguments
+                        .get("answer")
+                        .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
                     self.push_assistant_message(&mut state, &response, Some(tool_calls))
@@ -500,33 +320,35 @@ impl Agent {
 
                 self.push_assistant_message(&mut state, &response, Some(tool_calls))
                     .await;
-                // Release the lock before tool execution — tools can take up to 300s,
-                // and holding the MutexGuard blocks all other state access
                 let allow_session = state.allow_session;
                 drop(state);
                 let tool_results = self.execute_tool_calls(tool_calls, allow_session).await;
-                // Build co-occurrence edges in ToolGraph for future retrieval
                 if tool_calls.len() > 1 {
                     let names: Vec<String> = tool_calls.iter().map(|tc| tc.name.clone()).collect();
                     self.tools.record_co_occurrence(&names);
                 }
-                // Re-acquire lock to record tool outputs in conversation state
                 let mut state = self.state.lock().await;
                 let mut had_data_tool = false;
                 for (tool_name, call_id, output, result) in tool_results {
                     self.seed_artifact_if_applicable(&tool_name, &result).await;
                     let is_data_tool = matches!(
                         tool_name.as_str(),
-                        "web_search" | "web_fetch" | "web_scrape" | "web_scrape_all"
-                            | "you_research" | "you_contents"
-                            | "bash" | "read" | "csv_read" | "grep" | "browser_extract"
+                        "web_search"
+                            | "web_fetch"
+                            | "web_scrape"
+                            | "web_scrape_all"
+                            | "you_research"
+                            | "you_contents"
+                            | "bash"
+                            | "read"
+                            | "csv_read"
+                            | "grep"
+                            | "browser_extract"
                     );
                     if is_data_tool && result.success && !output.trim().is_empty() {
                         had_data_tool = true;
                     }
                     let msg_content = if output.len() > MAX_TOOL_OUTPUT_CHARS {
-                        // Deterministic reference based on tool name + iteration
-                        // so the prompt prefix stays identical across retries (KV-cache friendly).
                         let rid = format!("ref_{}_turn_{}", tool_name, state.iteration);
                         let snippet = if output.len() > 500 {
                             let mut idx = 500;
@@ -576,6 +398,26 @@ impl Agent {
                     });
                 }
             } else {
+                // ── MissingFinalAnswer quirk ──────────────────────────
+                let content = response.content.as_str();
+                if self.config.quirks.contains(&crate::agent::blueprint::ModelQuirk::MissingFinalAnswer)
+                    && !content.trim().is_empty()
+                {
+                    tracing::warn!("MissingFinalAnswer quirk triggered: wrapping text as final_answer");
+                    let answer = content.trim().to_string();
+                    let synthetic = ToolCall {
+                        id: Uuid::new_v4().to_string(),
+                        name: "final_answer".into(),
+                        arguments: serde_json::json!({"answer": answer}),
+                    };
+                    self.push_assistant_message(&mut state, &response, Some(&vec![synthetic]))
+                        .await;
+                    drop(state);
+                    self.save_session_messages_delta().await;
+                    return Ok(answer);
+                }
+
+                // ── Normal text-only return ──────────────────────────
                 self.push_assistant_message(&mut state, &response, None)
                     .await;
                 self.store_memory(
@@ -593,7 +435,6 @@ impl Agent {
             }
         }
 
-        // Max iterations exhausted — return last meaningful content
         self.save_session_messages_delta().await;
         let state = self.state.lock().await;
         let last_answer = state
@@ -619,10 +460,6 @@ impl Agent {
         }
     }
 
-    /// Persist only new messages since the last save (delta-based).
-    /// Uses a high-water mark (`last_saved_message_idx`) to avoid
-    /// re-writing the entire message history every turn — eliminating
-    /// the O(N) write-amplification bug under multi-agent load.
     async fn save_session_messages_delta(&self) {
         if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
             let mut state = self.state.lock().await;
@@ -631,7 +468,6 @@ impl Agent {
             if last >= current {
                 return;
             }
-            // Batch new messages in a single transaction
             let mut tx = match pool.begin().await {
                 Ok(tx) => tx,
                 Err(e) => {
@@ -639,11 +475,13 @@ impl Agent {
                     return;
                 }
             };
-            for msg in &state.messages[last..current] {
+            for (i, msg) in state.messages[last..current].iter().enumerate() {
+                let position = last + i;
                 if let Err(e) = sqlx::query(
-                    "INSERT OR REPLACE INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    "INSERT INTO messages (session_id, position_index, role, content, tool_calls, tool_result, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id, position_index) DO UPDATE SET content = excluded.content, tool_calls = excluded.tool_calls, tool_result = excluded.tool_result, tool_name = excluded.tool_name"
                 )
                 .bind(sid.to_string())
+                .bind(position as i64)
                 .bind(&msg.role)
                 .bind(msg.content.as_str())
                 .bind(msg.tool_calls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
@@ -680,14 +518,11 @@ impl Agent {
                 token_completion: completion_tokens,
             };
 
-            // If a checkpoint journal is configured, use it for batched async writes.
             if let Some(ref journal) = self.checkpoint_journal {
                 journal.push(data).await;
                 return;
             }
 
-            // Fallback: direct synchronous write (legacy path)
-            // Circuit breaker: check if we're about to re-enter a poisoned state
             let state_hash = crate::session::compute_state_hash(messages);
             if let Err(msg) =
                 crate::session::check_circuit_breaker(pool, sid, iteration, &state_hash).await
@@ -706,7 +541,7 @@ impl Agent {
         &self,
         request: &LLMRequest,
         response: &LLMResponse,
-        state: &tokio::sync::MutexGuard<'_, AgentState>,
+        state: &tokio::sync::MutexGuard<'_, crate::models::AgentState>,
     ) {
         if let Some(ref store) = self.context_store {
             let prompt_text: String = request
@@ -797,9 +632,20 @@ impl Agent {
             None
         };
 
-        // Retrieve relevant context per enabled kind for ablation control
         if let (Some(ref emb), Some(ref store)) = (&context_embedding, &self.context_store) {
-            let kinds = &self.config.enabled_context_kinds;
+            // strict_mode: exclude Tool and Skill from RAG retrieval
+            let kinds: Vec<_> = if self.config.strict_mode {
+                self.config
+                    .enabled_context_kinds
+                    .iter()
+                    .filter(|k| {
+                        **k != crate::context::ContextKind::Tool
+                            && **k != crate::context::ContextKind::Skill
+                    })
+                    .collect()
+            } else {
+                self.config.enabled_context_kinds.iter().collect()
+            };
             let per_kind_limit = 8_usize.div_ceil(kinds.len());
             let mut all_retrieved: Vec<crate::context::ContextEntry> = Vec::new();
             for kind in kinds {
@@ -808,7 +654,6 @@ impl Agent {
                     .await;
                 all_retrieved.append(&mut kind_results);
             }
-            // Re-rank globally by composite score and take top 8
             all_retrieved.sort_by(|a, b| {
                 b.composite_score()
                     .partial_cmp(&a.composite_score())
@@ -825,7 +670,6 @@ impl Agent {
                     })
                     .collect();
                 let mut state = self.state.lock().await;
-                // Remove stale context blocks from prior iterations
                 state.messages.retain(|m| {
                     !(m.role == "system"
                         && (m.content.starts_with("## Retrieved context")
@@ -833,7 +677,6 @@ impl Agent {
                             || m.content.starts_with("<retrieved_context>")
                             || m.content.starts_with("<retrieved_skills>")))
                 });
-                // Find position after system prompt (insert before first non-system message)
                 let insert_idx = state
                     .messages
                     .iter()
@@ -859,7 +702,6 @@ impl Agent {
             }
         }
 
-        // Also retrieve skills from the dedicated registry — skip in precision mode
         if !self.is_precision_mode() {
             if let (Some(ref emb), Some(ref skills)) = (&context_embedding, &self.skills) {
                 let matched = skills.search(emb, 3).await;
@@ -889,7 +731,6 @@ impl Agent {
             }
         }
 
-        // DB memories — skip in precision mode (redundant with context store)
         if !self.is_precision_mode() {
             if let (Some(ref emb), Some(ref db)) = (&context_embedding, &self.db) {
                 if let Ok(memories) = crate::db::search_memories(db, emb, 5, None).await {
@@ -919,12 +760,9 @@ impl Agent {
         context_embedding.map(|e| (e, context_query))
     }
 
-    /// Push a message with automatic id assignment and parent linkage.
-    /// This preserves the DAG topology so that `linearize_messages()` can
-    /// reconstruct the correct chronological order in branching conversations.
     #[expect(dead_code)]
     async fn push_message(
-        state: &mut tokio::sync::MutexGuard<'_, AgentState>,
+        state: &mut tokio::sync::MutexGuard<'_, crate::models::AgentState>,
         role: impl Into<String>,
         content: impl Into<String>,
     ) {
@@ -936,9 +774,6 @@ impl Agent {
     async fn build_llm_messages(&self) -> Vec<LLMMessage> {
         let state_snapshot = self.state.lock().await;
         let mut llm_messages: Vec<LLMMessage> = Vec::new();
-
-        // Linearize the message DAG into a topological order.
-        // In the common non-branching case this is identical to the push order.
         let linearized = crate::models::linearize_messages(&state_snapshot.messages);
 
         for m in linearized {
@@ -959,262 +794,9 @@ impl Agent {
         llm_messages
     }
 
-    async fn compress_if_needed(&self, llm_messages: Vec<LLMMessage>) -> Vec<LLMMessage> {
-        let model_ctx = ModelContext::for_model(&self.config.model);
-        let budget = (model_ctx.max_context_tokens as f64 * 0.80) as u32;
-        let before = llm_messages.len();
-
-        // Compute per-message token counts
-        let msg_tokens: Vec<u32> = llm_messages
-            .iter()
-            .map(|m| ModelContext::estimate_tokens(m.content.as_str()))
-            .collect();
-        let total_tokens: u32 = msg_tokens.iter().sum();
-
-        if total_tokens <= budget {
-            return llm_messages;
-        }
-
-        // Categorize messages: system (preserve all), conversation (compressible)
-        let mut system_total: u32 = 0;
-        let mut conversation_indices: Vec<usize> = Vec::new();
-        for (i, msg) in llm_messages.iter().enumerate() {
-            if msg.role == "system" {
-                system_total += msg_tokens[i];
-            } else {
-                conversation_indices.push(i);
-            }
-        }
-
-        // If just the system messages already exceed budget, fall back to
-        // rolling truncation that preserves the newest messages regardless of role.
-        if system_total >= budget.saturating_sub(512) {
-            let mut running: u32 = 0;
-            let mut keep_start = before;
-            for (i, tok) in msg_tokens.iter().rev().enumerate() {
-                if running + tok > budget {
-                    keep_start = before.saturating_sub(i);
-                    break;
-                }
-                running += tok;
-            }
-            let snapshot = self.state.lock().await;
-            let recent = if keep_start < snapshot.messages.len() {
-                snapshot.messages[keep_start..].to_vec()
-            } else {
-                snapshot.messages.clone()
-            };
-            let mut compressed: Vec<LLMMessage> = Vec::with_capacity(recent.len() + 1);
-            if keep_start > 0 {
-                // Seed truncated messages into context store for RAG retrievability
-                let truncated: Vec<&Message> = snapshot.messages
-                    [..keep_start.min(snapshot.messages.len())]
-                    .iter()
-                    .collect();
-                if let Some(ref store) = self.context_store {
-                    self.seed_truncated_context(store, &truncated).await;
-                }
-                compressed.push(LLMMessage {
-                    role: "system".into(),
-                    content: std::sync::Arc::new(format!(
-                        "[Earlier conversation compressed: {} messages, ~{} tokens truncated. Key context follows.]",
-                        keep_start,
-                        msg_tokens[..keep_start].iter().sum::<u32>()
-                    )),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
-            for m in recent {
-                compressed.push(LLMMessage {
-                    role: m.role,
-                    content: m.content,
-                    tool_calls: m.tool_calls,
-                    tool_call_id: m.tool_name,
-                });
-            }
-            info!(
-                "context compressed (fallback): {} messages -> {} (budget: {} tokens, keeping {} tokens)",
-                before, compressed.len(), budget, running
-            );
-            return compressed;
-        }
-
-        // Selective compression: keep all system messages, compress conversation history.
-        let conv_budget = budget.saturating_sub(system_total);
-
-        let mut conv_running: u32 = 0;
-        let mut conv_keep: Vec<(usize, u32)> = Vec::new();
-
-        for &idx in conversation_indices.iter().rev() {
-            let tok = msg_tokens[idx];
-            if conv_running + tok > conv_budget {
-                break;
-            }
-            conv_running += tok;
-            conv_keep.push((idx, tok));
-        }
-        conv_keep.reverse();
-
-        let total_conversation: u32 = conversation_indices.iter().map(|&i| msg_tokens[i]).sum();
-        let compressed_conv_count = conversation_indices.len().saturating_sub(conv_keep.len());
-
-        // Seed truncated conversation messages into context store
-        if compressed_conv_count > 0 {
-            if let Some(ref store) = self.context_store {
-                let truncated_indices: Vec<&usize> = conversation_indices
-                    .iter()
-                    .filter(|idx| !conv_keep.iter().any(|(ki, _)| ki == *idx))
-                    .collect();
-                let truncated_msgs: Vec<&LLMMessage> = truncated_indices
-                    .iter()
-                    .filter_map(|&&idx| llm_messages.get(idx))
-                    .collect();
-                self.seed_truncated_context_llm(store, &truncated_msgs)
-                    .await;
-            }
-        }
-
-        let mut compressed: Vec<LLMMessage> = Vec::with_capacity(before);
-        for msg in &llm_messages {
-            if msg.role == "system" {
-                compressed.push(msg.clone());
-            }
-        }
-        if compressed_conv_count > 0 {
-            compressed.push(LLMMessage {
-                role: "system".into(),
-                content: std::sync::Arc::new(format!(
-                    "[Conversation summary: {} conversation turns compressed (~{} tokens). Keeping the {} most recent turns ({}/{} tokens).]",
-                    compressed_conv_count,
-                    total_conversation.saturating_sub(conv_running),
-                    conv_keep.len(),
-                    conv_running,
-                    conv_budget,
-                )),
-                tool_calls: None,
-                tool_call_id: None,
-            });
-        }
-        for (idx, _) in &conv_keep {
-            let msg = &llm_messages[*idx];
-            compressed.push(msg.clone());
-        }
-
-        info!(
-            "context compressed (selective): {} messages -> {} (budget: {} tokens, system: {}, conv kept: {} tokens)",
-            before, compressed.len(), budget, system_total, conv_running
-        );
-        compressed
-    }
-
-    /// Seed truncated messages into the context store so they remain
-    /// retrievable via the existing RAG pipeline despite being removed
-    /// from the active message vector.
-    async fn seed_truncated_context(
-        &self,
-        store: &crate::context::ContextStore,
-        truncated: &[&Message],
-    ) {
-        if truncated.is_empty() {
-            return;
-        }
-        let topic_hint = truncated
-            .iter()
-            .take(3)
-            .filter_map(|m| {
-                let c = m.content.trim();
-                if !c.is_empty() && c.len() > 10 {
-                    Some(c.chars().take(120).collect::<String>())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" | ");
-        let summary = format!(
-            "[Compressed conversation segment: {} messages. Topics: {}]",
-            truncated.len(),
-            topic_hint
-        );
-        let session_id = self
-            .session_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unknown".into());
-        let truncated_text: String = truncated
-            .iter()
-            .map(|m| format!("[{}] {}", m.role, m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if let Some(ref pool) = self.db {
-            let _ = store
-                .seed_truncated_history_persistent(&session_id, truncated_text, summary, pool)
-                .await;
-        } else {
-            store
-                .add(
-                    crate::context::ContextKind::Conversation,
-                    &summary,
-                    serde_json::json!({}),
-                )
-                .await;
-        }
-    }
-
-    /// Same as seed_truncated_context but for LLMMessage slices (selective path).
-    async fn seed_truncated_context_llm(
-        &self,
-        store: &crate::context::ContextStore,
-        truncated: &[&LLMMessage],
-    ) {
-        if truncated.is_empty() {
-            return;
-        }
-        let topic_hint = truncated
-            .iter()
-            .take(3)
-            .filter_map(|m| {
-                let c = m.content.trim();
-                if !c.is_empty() && c.len() > 10 {
-                    Some(c.chars().take(120).collect::<String>())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" | ");
-        let summary = format!(
-            "[Compressed conversation segment: {} messages. Topics: {}]",
-            truncated.len(),
-            topic_hint
-        );
-        let session_id = self
-            .session_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unknown".into());
-        let truncated_text: String = truncated
-            .iter()
-            .map(|m| format!("[{}] {}", m.role, m.content))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if let Some(ref pool) = self.db {
-            let _ = store
-                .seed_truncated_history_persistent(&session_id, truncated_text, summary, pool)
-                .await;
-        } else {
-            store
-                .add(
-                    crate::context::ContextKind::Conversation,
-                    &summary,
-                    serde_json::json!({}),
-                )
-                .await;
-        }
-    }
-
     async fn push_assistant_message(
         &self,
-        state: &mut tokio::sync::MutexGuard<'_, AgentState>,
+        state: &mut tokio::sync::MutexGuard<'_, crate::models::AgentState>,
         response: &LLMResponse,
         tool_calls: Option<&Vec<ToolCall>>,
     ) {
@@ -1236,8 +818,6 @@ impl Agent {
         tool_calls: &[ToolCall],
         allow_session: bool,
     ) -> Vec<(String, String, String, ToolResult)> {
-        // (tool_name, call_id, output, ToolResult)
-        // Check permissions upfront
         let mut allow_session = allow_session;
         for tc in tool_calls {
             if self.is_cancelled() {
@@ -1272,9 +852,6 @@ impl Agent {
             return Vec::new();
         }
 
-        // Capability token pre-check (advisory — execute_gated enforces the real check)
-        // Uses the registry's `execute_gated` internally which handles verify + reserve
-        // + RefundGuard. We pre-check here to skip tools without budget upfront.
         let mut allowed = Vec::new();
         for tc in tool_calls {
             let scope = crate::capability::tool_required_scope(&tc.name);
@@ -1293,7 +870,6 @@ impl Agent {
             allowed.push(tc.clone());
         }
 
-        // Failure tracker advisory (blocking)
         let mut skipped = Vec::new();
         let mut failure_filtered = Vec::new();
         for tc in &allowed {
@@ -1306,8 +882,6 @@ impl Agent {
             failure_filtered.push(tc.clone());
         }
 
-        // Execute approved tools concurrently through the gated path.
-        // execute_gated handles verify + reserve + RefundGuard internally.
         let cap_mgr = self.capability_manager.clone();
         let futures: Vec<_> = failure_filtered
             .iter()
@@ -1319,11 +893,8 @@ impl Agent {
                 let id = tc.id.clone();
                 let store = self.context_store.clone();
                 let embedder = self.embedder.clone();
-                info!("executing tool: {} with {}", name, args);
+                tracing::debug!("executing tool: {} with {}", name, args);
                 async move {
-                    // All capability enforcement (verify + reserve + RefundGuard)
-                    // is handled inside execute_gated. The agent loop no longer
-                    // duplicates this logic.
                     let result = tools
                         .execute_gated(&name, &args, &cap_mgr)
                         .await
@@ -1374,7 +945,6 @@ impl Agent {
         let mut results: Vec<(String, String, String, ToolResult)> =
             futures::future::join_all(futures).await;
 
-        // Append skipped tools with failure results
         for (name, id, warning) in skipped {
             results.push((
                 name,
@@ -1389,7 +959,6 @@ impl Agent {
             ));
         }
 
-        // Publish tool execution events
         for (name, _, _, ref result) in &results {
             if let Some(ref bus) = self.event_bus {
                 bus.publish(crate::events::Event::ToolExecuted {
@@ -1399,7 +968,6 @@ impl Agent {
             }
         }
 
-        // Update allow_session before returning
         if allow_session {
             let mut state = self.state.lock().await;
             state.allow_session = true;
@@ -1412,7 +980,7 @@ impl Agent {
         &self,
         input: &str,
         content: &str,
-        state: &tokio::sync::MutexGuard<'_, AgentState>,
+        state: &tokio::sync::MutexGuard<'_, crate::models::AgentState>,
         existing_embedding: Option<&Vec<f32>>,
     ) {
         if let (Some(ref db), Some(ref embedder)) = (&self.db, &self.embedder) {
@@ -1422,14 +990,17 @@ impl Agent {
             };
             if let Ok(embedding) = embedding {
                 let summary = content.chars().take(500).collect::<String>();
-                let _ = crate::db::store_memory(
+                if let Err(e) = crate::db::store_memory(
                     db,
                     "conversation",
                     &summary,
                     &embedding,
                     Some(state.session_id),
                 )
-                .await;
+                .await
+                {
+                    tracing::warn!("[memory] store_memory failed: {}", e);
+                }
             }
         }
     }
@@ -1438,7 +1009,7 @@ impl Agent {
         &self,
         input: &str,
         content: &str,
-        state: &tokio::sync::MutexGuard<'_, AgentState>,
+        state: &tokio::sync::MutexGuard<'_, crate::models::AgentState>,
     ) {
         if let Some(ref ch) = self.seed_channel {
             let tools_used: Vec<String> = state
@@ -1526,7 +1097,6 @@ impl Agent {
                     ch.artifact_created("csv_data", &result.output, "csv", tool_name);
                 }
                 "create_pdf" => {
-                    // Truncate PDF binary output to first 500 chars of description
                     let desc = result.output.chars().take(500).collect::<String>();
                     ch.artifact_created("pdf_document", &desc, "pdf", tool_name);
                 }
@@ -1547,5 +1117,222 @@ impl Agent {
             .as_ref()
             .map(|c| c.is_cancelled())
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+    use crate::context::ContextKind;
+    use crate::models::AgentConfig;
+    use crate::test_utils::MockLLMProvider;
+    use crate::tools::ToolRegistry;
+    use std::sync::Arc;
+
+    fn test_config() -> AgentConfig {
+        AgentConfig {
+            name: "run-test".into(),
+            model: "test-model".into(),
+            provider: "mock".into(),
+            system_prompt: None,
+            max_iterations: 3,
+            temperature: 0.7,
+            toolsets: vec!["core".into()],
+            hidden: false,
+            allow_all: true,
+            enabled_context_kinds: vec![ContextKind::Tool, ContextKind::Artifact],
+            essential_tools: vec!["read".into()],
+            context_kind_quotas: std::collections::HashMap::new(),
+            use_mtp: false,
+            use_cot: false,
+            allow_write: true,
+            framework: None,
+            model_variant: None,
+            quantization: None,
+            format_dialect: Default::default(),
+            quirks: vec![],
+            strict_mode: false,
+            max_tools_per_turn: None,
+            blueprint_path: None,
+        }
+    }
+
+    async fn create_agent() -> Agent {
+        let provider = Box::new(MockLLMProvider::new(vec![]));
+        let tools = ToolRegistry::new();
+        Agent::new(test_config(), provider, tools).await
+    }
+
+    #[tokio::test]
+    async fn test_store_memory_no_db_graceful() {
+        let agent = create_agent().await;
+        let state = agent.state.lock().await;
+        // Should not panic when db and embedder are None
+        agent
+            .store_memory("test input", "test output", &state, None)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_save_checkpoint_no_session_graceful() {
+        let agent = create_agent().await;
+        let messages = vec![];
+        // Should not panic when session_id and sqlite_pool are None
+        agent.save_checkpoint(0, &messages, 0, 0).await;
+    }
+
+    #[tokio::test]
+    async fn test_is_cancelled_no_token() {
+        let agent = create_agent().await;
+        assert!(!agent.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_is_cancelled_with_token() {
+        let agent = create_agent().await;
+        let token = crate::models::CancelToken::new();
+        let agent = agent.with_cancel(token.clone());
+        assert!(!agent.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_is_cancelled_true_after_cancel() {
+        let agent = create_agent().await;
+        let token = crate::models::CancelToken::new();
+        let agent = agent.with_cancel(token.clone());
+        token.cancel();
+        assert!(agent.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_save_session_messages_delta_no_session() {
+        let agent = create_agent().await;
+        // Should not panic when no session configured
+        agent.save_session_messages_delta().await;
+    }
+
+    #[tokio::test]
+    async fn test_save_session_messages_delta_empty_state() {
+        let agent = create_agent().await;
+        // Push a message into state first
+        {
+            let mut state = agent.state.lock().await;
+            state.last_saved_message_idx = 0;
+        }
+        // last == current, should be no-op
+        agent.save_session_messages_delta().await;
+    }
+
+    #[tokio::test]
+    async fn test_build_llm_messages_empty() {
+        let agent = create_agent().await;
+        let messages = agent.build_llm_messages().await;
+        assert!(messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_build_llm_messages_with_state() {
+        let agent = create_agent().await;
+        {
+            let mut state = agent.state.lock().await;
+            state.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                parent_message_id: None,
+                role: "user".into(),
+                content: Arc::new("hello".into()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            });
+        }
+        let messages = agent.build_llm_messages().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content.as_str(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_audit_turn_no_context_store() {
+        let agent = create_agent().await;
+        let request = LLMRequest {
+            model: "test".into(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: None,
+            stop: None,
+            tools: None,
+            stream: false,
+        };
+        let response = LLMResponse {
+            content: Arc::new("test response".into()),
+            tool_calls: None,
+            finish_reason: Some("stop".into()),
+            usage: None,
+        };
+        let state = agent.state.lock().await;
+        // Should not panic when context_store is None
+        agent.audit_turn(&request, &response, &state).await;
+    }
+
+    #[tokio::test]
+    async fn test_seed_artifact_no_seed_channel() {
+        let agent = create_agent().await;
+        let result = ToolResult {
+            success: true,
+            output: "Wrote to /tmp/test.rs".into(),
+            error: None,
+            duration_ms: 0,
+        };
+        // Should not panic when seed_channel is None
+        agent.seed_artifact_if_applicable("write", &result).await;
+    }
+
+    #[tokio::test]
+    async fn test_seed_artifact_failed_result_skipped() {
+        let agent = create_agent().await;
+        let result = ToolResult {
+            success: false,
+            output: "error".into(),
+            error: Some("failed".into()),
+            duration_ms: 0,
+        };
+        // Should not panic - early return on !success
+        agent.seed_artifact_if_applicable("write", &result).await;
+    }
+
+    #[tokio::test]
+    async fn test_seed_episode_complete_no_channel() {
+        let agent = create_agent().await;
+        let state = agent.state.lock().await;
+        agent.seed_episode_complete("input", "output", &state).await;
+    }
+
+    #[tokio::test]
+    async fn test_push_user_message_leak_detector() {
+        let agent = create_agent().await;
+        // Temporarily enable leak detector
+        std::env::set_var("VOLT_LEAK_DETECTOR", "true");
+        agent.push_user_message("test input without secrets").await;
+        let state = agent.state.lock().await;
+        assert!(state
+            .messages
+            .iter()
+            .any(|m| m.role == "user" && m.content.as_str() == "test input without secrets"));
+    }
+
+    #[tokio::test]
+    async fn test_build_context_no_embedder() {
+        let agent = create_agent().await;
+        let result = agent.build_context("test input").await;
+        // Should return None when no embedder configured
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_execute_tool_calls_empty() {
+        let agent = create_agent().await;
+        let results = agent.execute_tool_calls(&[], false).await;
+        assert!(results.is_empty());
     }
 }

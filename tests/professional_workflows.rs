@@ -11,7 +11,7 @@
 //! Run with: `cargo test --test professional_workflows --features testutils`
 
 use std::sync::Arc;
-use volt::agent::loop_rs::Agent;
+use volt::agent::Agent;
 use volt::attenuation::TrustLevel;
 use volt::commands::AgentMode;
 use volt::context::{ContextEntry, ContextKind, ContextStore};
@@ -114,6 +114,11 @@ fn precision_config() -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 
@@ -137,6 +142,11 @@ fn balanced_config() -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 
@@ -160,6 +170,11 @@ fn autonomous_config() -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 
@@ -312,6 +327,11 @@ async fn test_parallel_workflow_pattern() {
                     framework: None,
                     model_variant: None,
                     quantization: None,
+                    format_dialect: Default::default(),
+                    quirks: vec![],
+                    strict_mode: false,
+                    max_tools_per_turn: None,
+                    blueprint_path: None,
                 };
                 let agent = Agent::new(config, provider, reg).await;
                 agent.run(task).await
@@ -356,6 +376,11 @@ async fn test_pipeline_workflow_with_output_chaining() {
             framework: None,
             model_variant: None,
             quantization: None,
+            format_dialect: Default::default(),
+            quirks: vec![],
+            strict_mode: false,
+            max_tools_per_turn: None,
+            blueprint_path: None,
         };
         let agent = Agent::new(config, provider, registry.clone()).await;
         agent
@@ -393,6 +418,11 @@ async fn test_pipeline_workflow_with_output_chaining() {
             framework: None,
             model_variant: None,
             quantization: None,
+            format_dialect: Default::default(),
+            quirks: vec![],
+            strict_mode: false,
+            max_tools_per_turn: None,
+            blueprint_path: None,
         };
         let agent = Agent::new(config, provider, registry).await;
         let output = agent.run(&stage2_task).await.expect("Stage 2 must succeed");
@@ -457,6 +487,11 @@ async fn test_supervisor_routes_task_to_worker_agents() {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     };
     let agent = Agent::new(config, provider, registry).await;
     let result = agent.run("Run code analysis").await;
@@ -1027,6 +1062,11 @@ async fn test_parallel_agents_with_mixed_modes() {
                     framework: None,
                     model_variant: None,
                     quantization: None,
+                    format_dialect: Default::default(),
+                    quirks: vec![],
+                    strict_mode: false,
+                    max_tools_per_turn: None,
+                    blueprint_path: None,
                 };
 
                 let ctx_kinds = config.enabled_context_kinds.clone();

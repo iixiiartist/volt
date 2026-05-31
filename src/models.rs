@@ -42,6 +42,22 @@ pub struct AgentConfig {
     pub framework: Option<String>,
     pub model_variant: Option<String>,
     pub quantization: Option<String>,
+    /// Format dialect for prompt building (defaults to GemmaNative).
+    #[serde(default)]
+    pub format_dialect: crate::agent::blueprint::FormatDialect,
+    /// Model quirks requiring compensation interceptors (StringifiedBooleans, ChainOfThoughtLeak).
+    #[serde(default)]
+    pub quirks: Vec<crate::agent::blueprint::ModelQuirk>,
+    /// When true, filter ContextKind::Tool and ContextKind::Skill from RAG retrieval,
+    /// only using the explicitly listed essential/core tools.
+    #[serde(default)]
+    pub strict_mode: bool,
+    /// Maximum tool calls allowed per LLM turn (None = unlimited).
+    #[serde(default)]
+    pub max_tools_per_turn: Option<usize>,
+    /// Path to the loaded blueprint file, if any.
+    #[serde(default)]
+    pub blueprint_path: Option<String>,
 }
 
 pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {

@@ -1,5 +1,5 @@
 use super::AgentMode;
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use crate::context::ContextStore;
 use crate::embedding::EmbeddingClient;
 use crate::models::*;
@@ -46,6 +46,11 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         framework,
         model_variant,
         quantization,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     };
     let mut agent = Agent::new(config, provider, tools.clone())
         .await

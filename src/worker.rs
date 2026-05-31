@@ -585,3 +585,108 @@ pub async fn seed_skills_from_db(
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ContextStore;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_seed_event_episode_complete_to_context_entry() {
+        let event = SeedEvent::EpisodeComplete {
+            session_id: Uuid::new_v4(),
+            task: "write docs".into(),
+            resolution: "wrote README".into(),
+            tools_used: vec!["write".into()],
+            success: true,
+            iteration_count: 3,
+        };
+        let entry = event.to_context_entry();
+        assert_eq!(entry.kind, ContextKind::Conversation);
+        assert!(entry.content.contains("Episodic Memory"));
+        assert!(entry.content.contains("write docs"));
+    }
+
+    #[test]
+    fn test_seed_event_artifact_to_context_entry() {
+        let event = SeedEvent::ArtifactCreated {
+            file_path: "src/main.rs".into(),
+            description: "entry point".into(),
+            language: "Rust".into(),
+            tool_used: "write".into(),
+        };
+        let entry = event.to_context_entry();
+        assert_eq!(entry.kind, ContextKind::Artifact);
+        assert!(entry.content.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_seed_event_mcp_to_context_entry() {
+        let event = SeedEvent::MCPRegistered {
+            server_name: "filesystem".into(),
+            tools: vec!["read".into(), "write".into()],
+            intent_descriptors: vec!["file ops".into()],
+        };
+        let entry = event.to_context_entry();
+        assert_eq!(entry.kind, ContextKind::MCPConfig);
+        assert!(entry.content.contains("filesystem"));
+    }
+
+    #[test]
+    fn test_seed_channel_send_receive() {
+        let (tx, mut rx) = create_seed_channel();
+        tx.send(SeedEvent::EpisodeComplete {
+            session_id: Uuid::new_v4(),
+            task: "test".into(),
+            resolution: "done".into(),
+            tools_used: vec![],
+            success: true,
+            iteration_count: 1,
+        });
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_seed_channel_dropped_receiver_no_panic() {
+        let (tx, _rx) = create_seed_channel();
+        tx.send(SeedEvent::EpisodeComplete {
+            session_id: Uuid::new_v4(),
+            task: "test".into(),
+            resolution: "done".into(),
+            tools_used: vec![],
+            success: true,
+            iteration_count: 1,
+        });
+    }
+
+    #[tokio::test]
+    async fn test_seed_batch_dedup() {
+        let store = ContextStore::new();
+        let entry = ContextEntry {
+            id: Uuid::new_v4(),
+            kind: ContextKind::Tool,
+            content: "echo tool".into(),
+            embedding: Some(vec![0.5, 0.5, 0.5, 0.5]),
+            metadata: serde_json::json!({}),
+            frequency: 1,
+            success_rate: 1.0,
+            usage_count: 1,
+            last_used_at: chrono::Utc::now(),
+            created_at: chrono::Utc::now(),
+        };
+        let dup = ContextEntry {
+            id: Uuid::new_v4(),
+            kind: ContextKind::Tool,
+            content: "echo tool".into(),
+            embedding: Some(vec![0.5, 0.5, 0.5, 0.5]),
+            metadata: serde_json::json!({}),
+            frequency: 1,
+            success_rate: 1.0,
+            usage_count: 1,
+            last_used_at: chrono::Utc::now(),
+            created_at: chrono::Utc::now(),
+        };
+        store.seed_batch(vec![entry, dup]).await;
+        assert_eq!(store.len().await, 1, "identical entries should be deduped");
+    }
+}

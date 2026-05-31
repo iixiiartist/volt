@@ -95,7 +95,7 @@ impl ToolRegistry {
         self.tools
             .get(name)
             .map(|r| effective_permission(r.trust, r.permission, name))
-            .unwrap_or(PermissionLevel::Allow)
+            .unwrap_or(PermissionLevel::Prompt)
     }
 
     /// Execute a tool with capability enforcement.
@@ -169,33 +169,6 @@ impl ToolRegistry {
         Ok(result)
     }
 
-    /// Legacy execute path — does NOT enforce capability checks.
-    /// Kept only for test backward compatibility.
-    #[deprecated(
-        since = "0.2.0",
-        note = "CRITICAL SECURITY RISK: Bypasses capability tracking. Use execute_gated() instead."
-    )]
-    pub async fn execute(&self, name: &str, args: &Value) -> anyhow::Result<ToolResult> {
-        let tool = self
-            .tools
-            .get(name)
-            .ok_or_else(|| anyhow::anyhow!("tool '{}' not found", name))?;
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(300),
-            (tool.exec)(args.clone()),
-        )
-        .await;
-        match result {
-            Ok(res) => Ok(res),
-            Err(_) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("tool '{}' timed out after 300s", name)),
-                duration_ms: 300_000,
-            }),
-        }
-    }
-
     pub async fn compute_embeddings(&self, embedder: &EmbeddingClient) {
         let items: Vec<(String, String)> = self
             .tools
@@ -207,7 +180,6 @@ impl ToolRegistry {
             })
             .collect();
 
-        // Build a content hash so we invalidate cache when tool definitions change
         let content_hash = embed_content_hash(&items);
         let cache_path = std::path::Path::new(".volt_tool_cache.json");
 
@@ -222,37 +194,33 @@ impl ToolRegistry {
             return;
         }
 
-        tracing::info!("computing embeddings for {} tools", items.len());
-        let sem = Arc::new(tokio::sync::Semaphore::new(3));
-        let total = items.len();
-        let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let results: Vec<(String, Option<Vec<f32>>)> =
-            futures::future::join_all(items.into_iter().map(|(name, text)| {
-                let sem = sem.clone();
-                let done = done.clone();
-                async move {
-                    let _permit = sem.acquire().await.ok();
-                    let emb = embedder.embed_description(&text).await.ok();
-                    let count = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    tracing::info!("embedded [{}/{}] {}", count, total, name);
-                    (name, emb)
-                }
-            }))
-            .await;
-        tracing::info!("tool embeddings computed");
+        let n = items.len();
+        tracing::info!("computing {} tool embeddings", n);
 
-        let mut cache = Vec::new();
-        for (name, emb) in results {
-            if let Some(emb) = emb.clone() {
-                cache.push((name.clone(), emb));
-            }
-            if let Some(mut tool) = self.tools.get_mut(&name) {
-                tool.embedding = emb;
+        // Use embed_description for each tool. When local ONNX is disabled and no remote
+        // providers are configured, this falls through to deterministic placeholder
+        // embeddings (SHA-256 hash → 1024d, instant). BM25 serves as the primary
+        // retrieval signal; dense scoring provides fallback.
+        for (name, text) in &items {
+            let emb = embedder.embed_description(text).await.unwrap_or_else(|_| {
+                crate::embedding::deterministic_placeholder_embedding(text)
+            });
+            if let Some(mut tool) = self.tools.get_mut(name) {
+                tool.embedding = Some(emb);
             }
         }
 
-        // Save to disk cache
-        save_embed_cache_async(cache_path, &content_hash, &cache).await;
+        let cache_entries: Vec<(String, Vec<f32>)> = items
+            .iter()
+            .filter_map(|(name, _)| {
+                self.tools
+                    .get(name)
+                    .and_then(|t| t.embedding.clone())
+                    .map(|emb| (name.clone(), emb))
+            })
+            .collect();
+        tracing::info!("caching {} tool embeddings to disk", cache_entries.len());
+        save_embed_cache_async(cache_path, &content_hash, &cache_entries).await;
     }
 
     /// Search tools by dense (cosine) + sparse (BM25) hybrid ranking with RRF fusion.
@@ -271,15 +239,22 @@ impl ToolRegistry {
     ) -> Vec<ToolDefinition> {
         // 1. First pass: collect owned lightweight tuples from a single iterator.
         //    Avoids holding DashMap RefMulti guards across boundaries.
-        //    Each entry: (name, description, opt_embedding)
-        let mut tool_entries: Vec<(String, String, String, Option<Vec<f32>>)> = Vec::new();
+        //    Each entry: (name, description, category, opt_embedding, opt_schema)
+        let mut tool_entries: Vec<(String, String, String, Option<Vec<f32>>, serde_json::Value)> =
+            Vec::new();
         for r in self.tools.iter() {
             let t = r.value();
+            let schema = if t.def.input_schema.is_null() {
+                serde_json::json!({"type": "object"})
+            } else {
+                t.def.input_schema.clone()
+            };
             tool_entries.push((
                 t.def.name.clone(),
                 t.def.description.clone(),
                 t.def.category.clone(),
                 t.embedding.clone(),
+                schema,
             ));
         }
         let _n = tool_entries.len();
@@ -288,7 +263,7 @@ impl ToolRegistry {
         let mut dense_scored: Vec<(f32, usize)> = tool_entries
             .iter()
             .enumerate()
-            .filter_map(|(i, (_, _, _, emb))| {
+            .filter_map(|(i, (_, _, _, emb, _))| {
                 emb.as_ref()
                     .map(|e| (cosine_similarity(e, query_embedding), i))
             })
@@ -302,7 +277,7 @@ impl ToolRegistry {
                 tool_entries
                     .iter()
                     .enumerate()
-                    .map(|(i, (name, desc, _, _))| (i, format!("{}: {}", name, desc))),
+                    .map(|(i, (name, desc, _, _, _))| (i, format!("{}: {}", name, desc))),
                 1.2,
                 0.75,
                 0.5,
@@ -326,10 +301,10 @@ impl ToolRegistry {
         let mut result: Vec<ToolDefinition> = fused_order
             .into_iter()
             .filter_map(|i| tool_entries.get(i))
-            .map(|(name, desc, cat, _)| ToolDefinition {
+            .map(|(name, desc, cat, _, schema)| ToolDefinition {
                 name: name.clone(),
                 description: desc.clone(),
-                input_schema: serde_json::Value::Null,
+                input_schema: schema.clone(),
                 category: cat.clone(),
             })
             .collect();
@@ -377,6 +352,160 @@ impl ToolRegistry {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::attenuation::TrustLevel;
+    use crate::capability::CapabilityManager;
+    use crate::models::PermissionLevel;
+
+    #[tokio::test]
+    async fn test_get_permission_unknown_tool_returns_prompt() {
+        let registry = ToolRegistry::new();
+        let perm = registry.get_permission("nonexistent_tool").await;
+        assert_eq!(
+            perm,
+            PermissionLevel::Prompt,
+            "unknown tool must default to Prompt, not Allow"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_definition_nonexistent() {
+        let registry = ToolRegistry::new();
+        let def = registry.get_definition("no_such_tool").await;
+        assert!(def.is_none(), "nonexistent tool should return None");
+    }
+
+    #[tokio::test]
+    async fn test_register_and_get_definition() {
+        let registry = ToolRegistry::new();
+        let exec: ToolFn = Arc::new(|_args| {
+            Box::pin(async move {
+                ToolResult {
+                    success: true,
+                    output: "done".into(),
+                    error: None,
+                    duration_ms: 0,
+                }
+            })
+        });
+        registry
+            .register(
+                "my_tool",
+                "My custom tool",
+                serde_json::json!({"type": "object"}),
+                "custom",
+                exec,
+            )
+            .await;
+
+        let def = registry.get_definition("my_tool").await;
+        assert!(def.is_some());
+        assert_eq!(def.unwrap().name, "my_tool");
+    }
+
+    #[tokio::test]
+    async fn test_execute_gated_unknown_tool() {
+        let registry = ToolRegistry::new();
+        let cap_mgr = Arc::new(CapabilityManager::new());
+        let result = registry
+            .execute_gated("unknown", &serde_json::json!({}), &cap_mgr)
+            .await;
+        assert!(result.is_err(), "executing unknown tool should error");
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("capability denied") || err.contains("not found"),
+            "error should mention capability denial: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_tools_empty() {
+        let registry = ToolRegistry::new();
+        let results = registry
+            .search_tools(&[1.0, 0.0, 0.0, 0.0], 10, &[], None)
+            .await;
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_tools_with_essential() {
+        let registry = ToolRegistry::new();
+        let exec: ToolFn = Arc::new(|_args| {
+            Box::pin(async move {
+                ToolResult {
+                    success: true,
+                    output: "ok".into(),
+                    error: None,
+                    duration_ms: 0,
+                }
+            })
+        });
+        registry
+            .register(
+                "required_tool",
+                "Required tool",
+                serde_json::json!({"type": "object"}),
+                "core",
+                exec,
+            )
+            .await;
+
+        let results = registry
+            .search_tools(&[1.0, 0.0, 0.0, 0.0], 10, &["required_tool"], None)
+            .await;
+        assert!(!results.is_empty());
+        assert_eq!(results[0].name, "required_tool");
+    }
+
+    #[tokio::test]
+    async fn test_register_with_permission_prompt() {
+        let registry = ToolRegistry::new();
+        let exec: ToolFn = Arc::new(|_args| {
+            Box::pin(async move {
+                ToolResult {
+                    success: true,
+                    output: "ok".into(),
+                    error: None,
+                    duration_ms: 0,
+                }
+            })
+        });
+        registry
+            .register_with_permission(
+                "prompt_tool",
+                "Needs approval",
+                serde_json::json!({"type": "object"}),
+                "custom",
+                exec,
+                PermissionLevel::Prompt,
+                TrustLevel::Builtin,
+            )
+            .await;
+
+        let perm = registry.get_permission("prompt_tool").await;
+        assert_eq!(perm, PermissionLevel::Prompt);
+    }
+
+    #[tokio::test]
+    async fn test_get_definitions_initially_empty() {
+        let registry = ToolRegistry::new();
+        let defs = registry.get_definitions().await;
+        assert!(
+            defs.is_empty(),
+            "new registry starts with no tools registered"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_record_co_occurrence_no_panic() {
+        let registry = ToolRegistry::new();
+        registry.record_co_occurrence(&["read".to_string(), "write".to_string()]);
+    }
+}
+
 // ─── Embedding cache ──────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -392,13 +521,15 @@ struct EmbedCacheEntry {
 }
 
 fn embed_content_hash(items: &[(String, String)]) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
     for (name, text) in items {
-        name.hash(&mut hasher);
-        text.hash(&mut hasher);
+        hasher.update(name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(text.as_bytes());
+        hasher.update(b"\0");
     }
-    format!("{:x}", hasher.finish())
+    hex::encode(hasher.finalize())
 }
 
 /// Asynchronously loads the embedding cache from disk to prevent Tokio worker starvation.
@@ -442,6 +573,8 @@ async fn save_embed_cache_async(
             .collect(),
     };
     if let Ok(json) = serde_json::to_string(&cache) {
-        let _ = tokio::fs::write(path, &json).await;
+        if let Err(e) = tokio::fs::write(path, &json).await {
+            tracing::warn!("[cache] failed to write tool embedding cache: {}", e);
+        }
     }
 }

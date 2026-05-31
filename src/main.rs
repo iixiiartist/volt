@@ -83,6 +83,10 @@ enum Commands {
         model_variant: Option<String>,
         #[arg(long)]
         quantization: Option<String>,
+        #[arg(long)]
+        blueprint: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        auto_blueprint: bool,
     },
     Agent {
         #[command(subcommand)]
@@ -252,6 +256,8 @@ async fn main() -> anyhow::Result<()> {
             framework,
             model_variant,
             quantization,
+            blueprint,
+            auto_blueprint,
         } => {
             let model = commands::agent_run::AgentRunOptions::model_or_default(model);
 
@@ -303,6 +309,8 @@ async fn main() -> anyhow::Result<()> {
                 framework,
                 model_variant,
                 quantization,
+                blueprint,
+                auto_blueprint,
             })
             .await?
         }
@@ -349,6 +357,8 @@ async fn main() -> anyhow::Result<()> {
                     framework: None,
                     model_variant: None,
                     quantization: None,
+                    blueprint: None,
+                    auto_blueprint: false,
                 })
                 .await?
             } else {

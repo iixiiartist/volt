@@ -1,4 +1,4 @@
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use crate::capability::CapabilityManager;
 use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai::OpenAIProvider;
@@ -90,6 +90,11 @@ pub async fn delegate_task_with_cap_mgr(
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     };
 
     let mut sub_agent = Agent::new(config, provider, tools).await;

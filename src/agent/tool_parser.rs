@@ -238,11 +238,91 @@ fn extract_kv_pairs(input: &str) -> serde_json::Map<String, serde_json::Value> {
     map
 }
 
+/// Coerce model quirk artifacts in tool call arguments **before** schema validation.
+/// Recursively walks the JSON value and applies fixes:
+/// - StringifiedBooleans: `"true"` / `"false"` strings → `true` / `false` booleans
+pub fn coerce_quirks(args: &mut serde_json::Value, quirks: &[crate::agent::blueprint::ModelQuirk]) {
+    if quirks.is_empty() {
+        return;
+    }
+    coerce_quirks_inner(args, quirks);
+}
+
+#[allow(clippy::collapsible_match)]
+fn coerce_quirks_inner(
+    value: &mut serde_json::Value,
+    quirks: &[crate::agent::blueprint::ModelQuirk],
+) {
+    match value {
+        serde_json::Value::String(s) => {
+            let s_clone = s.clone();
+            if quirks.contains(&crate::agent::blueprint::ModelQuirk::StringifiedBooleans) {
+                if s_clone == "true" {
+                    *value = serde_json::Value::Bool(true);
+                    return;
+                } else if s_clone == "false" {
+                    *value = serde_json::Value::Bool(false);
+                    return;
+                }
+            }
+            if quirks.contains(&crate::agent::blueprint::ModelQuirk::StringifiedIntegers) {
+                if let Ok(n) = s_clone.parse::<i64>() {
+                    *value = serde_json::Value::Number(n.into());
+                }
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values_mut() {
+                coerce_quirks_inner(val, quirks);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for val in arr.iter_mut() {
+                coerce_quirks_inner(val, quirks);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Strip conversational preamble/aftermath outside structured tool-call markers.
+/// Small models often emit: "I'll use the read tool...\n<function>...</function>\nThat should work."
+/// This extracts only the content between the first and last recognized markers.
+pub fn strip_cot_leakage(raw: &str) -> String {
+    let markers = ["<function>", "<tool_call>", "<invoke>", "{"];
+    let end_markers = ["</function>", "</tool_call>", "</invoke>"];
+
+    // Find the earliest start marker
+    let start_pos = markers.iter().filter_map(|m| raw.find(m)).min();
+    // Find the latest end marker position (position + marker length)
+    let end_pos = end_markers
+        .iter()
+        .filter_map(|m| {
+            let pos = raw.rfind(m)?;
+            Some(pos + m.len())
+        })
+        .max();
+
+    match (start_pos, end_pos) {
+        (Some(start), Some(end)) if end > start => raw[start..end].to_string(),
+        (Some(start), None) => raw[start..].to_string(),
+        _ => {
+            // Fallback: try extracting a JSON object
+            if let Some(brace_start) = raw.find('{') {
+                if let Some(brace_end) = raw.rfind('}') {
+                    if brace_end > brace_start {
+                        return raw[brace_start..=brace_end].to_string();
+                    }
+                }
+            }
+            raw.to_string()
+        }
+    }
+}
+
 /// Strip <function> and </function> tags from input string.
 pub fn strip_function_tags(input: &str) -> String {
-    input
-        .replace("<function>", "")
-        .replace("</function>", "")
+    input.replace("<function>", "").replace("</function>", "")
 }
 
 /// Wrap the input string in <function> tags.

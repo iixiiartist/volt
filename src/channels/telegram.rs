@@ -15,7 +15,7 @@ impl TelegramChannel {
 impl crate::channels::Channel for TelegramChannel {
     async fn start(
         &self,
-        _agent: std::sync::Arc<crate::agent::loop_rs::Agent>,
+        _agent: std::sync::Arc<crate::agent::Agent>,
         _shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         #[cfg(feature = "tools-telegram")]

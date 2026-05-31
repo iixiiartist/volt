@@ -1,4 +1,4 @@
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use crate::models::{CancelToken, Session};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{
@@ -182,8 +182,8 @@ impl TuiChat {
                     )
                     .await;
                     let _ = crate::session::delete_session_messages(sp, s.session_id).await;
-                    for msg in &s.messages {
-                        let _ = crate::session::save_message(sp, s.session_id, msg).await;
+                    for (i, msg) in s.messages.iter().enumerate() {
+                        let _ = crate::session::save_message(sp, s.session_id, i as i64, msg).await;
                     }
                 }
             }

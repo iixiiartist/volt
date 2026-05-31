@@ -59,7 +59,10 @@ mod tests {
 
     #[test]
     fn test_encode_video() {
-        let tmp = create_temp_file("test_video.mp4", &[0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
+        let tmp = create_temp_file(
+            "test_video.mp4",
+            &[0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70],
+        );
         let result = encode_video(&tmp);
         assert!(result.is_ok());
         let encoded = result.unwrap();

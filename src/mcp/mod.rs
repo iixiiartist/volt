@@ -1,5 +1,5 @@
 pub mod client;
-pub mod server;
 #[cfg(feature = "tools-mcp-grpc")]
 pub mod grpc;
+pub mod server;
 pub use server::MCPServer;

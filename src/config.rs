@@ -548,32 +548,26 @@ impl Settings {
             })
             .unwrap_or(false);
 
-        let framework = env::var("VOLT_FRAMEWORK")
-            .ok()
-            .or_else(|| {
-                project
-                    .as_ref()
-                    .and_then(|p| p.agent.as_ref())
-                    .and_then(|a| a.framework.clone())
-            });
+        let framework = env::var("VOLT_FRAMEWORK").ok().or_else(|| {
+            project
+                .as_ref()
+                .and_then(|p| p.agent.as_ref())
+                .and_then(|a| a.framework.clone())
+        });
 
-        let model_variant = env::var("VOLT_MODEL_VARIANT")
-            .ok()
-            .or_else(|| {
-                project
-                    .as_ref()
-                    .and_then(|p| p.agent.as_ref())
-                    .and_then(|a| a.model_variant.clone())
-            });
+        let model_variant = env::var("VOLT_MODEL_VARIANT").ok().or_else(|| {
+            project
+                .as_ref()
+                .and_then(|p| p.agent.as_ref())
+                .and_then(|a| a.model_variant.clone())
+        });
 
-        let quantization = env::var("VOLT_QUANTIZATION")
-            .ok()
-            .or_else(|| {
-                project
-                    .as_ref()
-                    .and_then(|p| p.agent.as_ref())
-                    .and_then(|a| a.quantization.clone())
-            });
+        let quantization = env::var("VOLT_QUANTIZATION").ok().or_else(|| {
+            project
+                .as_ref()
+                .and_then(|p| p.agent.as_ref())
+                .and_then(|a| a.quantization.clone())
+        });
 
         Ok(Self {
             database_url,

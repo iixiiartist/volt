@@ -21,14 +21,17 @@ impl ToolFailureTracker {
 
     pub async fn record_failure(&self, job_id: Uuid, tool_name: &str, error: &str) {
         if let Some(ref pool) = self.pool {
-            let _ = sqlx::query(
+            if let Err(e) = sqlx::query(
                 "INSERT INTO tool_failures (job_id, tool_name, error) VALUES ($1, $2, $3)",
             )
             .bind(job_id)
             .bind(tool_name)
             .bind(error)
             .execute(pool)
-            .await;
+            .await
+            {
+                tracing::warn!("[tool_failure] record_failure DB insert failed: {}", e);
+            }
         }
     }
 

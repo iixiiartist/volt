@@ -1,4 +1,4 @@
-﻿use crate::attenuation::TrustLevel;
+use crate::attenuation::TrustLevel;
 use crate::models::{PermissionLevel, ToolResult};
 use crate::tools::ToolRegistry;
 use std::collections::HashSet;
@@ -136,7 +136,11 @@ fn make_cli_exec_fn() -> crate::tools::ToolFn {
                     error: Some(format!(
                         "exit code {}: {}",
                         exit_code,
-                        if stderr.is_empty() { "no stderr" } else { &stderr }
+                        if stderr.is_empty() {
+                            "no stderr"
+                        } else {
+                            &stderr
+                        }
                     )),
                     duration_ms: started.elapsed().as_millis(),
                 };
@@ -220,7 +224,11 @@ fn make_cli_query_fn() -> crate::tools::ToolFn {
                     error: Some(format!(
                         "exit code {}: {}",
                         exit_code,
-                        if stderr.is_empty() { "no stderr" } else { &stderr }
+                        if stderr.is_empty() {
+                            "no stderr"
+                        } else {
+                            &stderr
+                        }
                     )),
                     duration_ms: started.elapsed().as_millis(),
                 };
@@ -228,9 +236,7 @@ fn make_cli_query_fn() -> crate::tools::ToolFn {
 
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
 
-            let payload = if let Ok(json_val) =
-                serde_json::from_str::<serde_json::Value>(&stdout)
-            {
+            let payload = if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout) {
                 json_val
             } else {
                 serde_json::json!({ "text_output": stdout })

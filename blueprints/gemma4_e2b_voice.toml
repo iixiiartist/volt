@@ -1,0 +1,19 @@
+id = "gemma4_e2b_voice"
+name = "Gemma 4 E2B Voice Assistant"
+description = "High-speed, audio-native local assistant optimized for edge models"
+
+[model_card]
+model_name = "gemma-4-e2b"
+provider = "litertlm"
+format_dialect = "ChatMlTools"
+quirks = ["SchemaLimitTen", "MissingFinalAnswer"]
+
+[scaffolding]
+max_tools_per_turn = 1
+strict_mode = true
+
+[tools]
+core_tools = ["desktop_find_window", "desktop_click", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are a fast, local voice assistant. Map the user's spoken intent directly to the provided tools. Take exactly ONE action at a time."

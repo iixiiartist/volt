@@ -9,7 +9,10 @@ pub struct LlamaCppTool {
 
 impl LlamaCppTool {
     pub fn new(binary_path: PathBuf) -> Self {
-        Self { binary_path, ngl: 0 }
+        Self {
+            binary_path,
+            ngl: 0,
+        }
     }
 
     pub fn with_gpu_layers(mut self, ngl: u32) -> Self {
@@ -18,7 +21,12 @@ impl LlamaCppTool {
     }
 
     /// Run inference via llama.cpp CLI (llama-cli or llama.exe).
-    pub async fn run(&self, model_path: &str, prompt: &str, context_size: u32) -> anyhow::Result<String> {
+    pub async fn run(
+        &self,
+        model_path: &str,
+        prompt: &str,
+        context_size: u32,
+    ) -> anyhow::Result<String> {
         let output = Command::new(&self.binary_path)
             .arg("-m")
             .arg(model_path)

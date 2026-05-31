@@ -1,5 +1,11 @@
+# GNU fallback — static link libstdc++/libgcc for distribution
 [target.x86_64-pc-windows-gnu]
 rustflags = ["-C", "link-args=-static -static-libstdc++"]
 
 [target.i686-pc-windows-gnu]
 rustflags = ["-C", "link-args=-static -static-libstdc++"]
+
+# MSVC dynamic CRT — matches ort-sys prebuilt binaries (ort v2.0.0-rc.12)
+[env]
+CXXFLAGS = "/MD"
+CFLAGS = "/MD"

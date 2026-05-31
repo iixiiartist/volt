@@ -11,8 +11,8 @@
 //! Real models: requires GROQ_API_KEY in .env
 
 use std::sync::Arc;
-use volt::agent::loop_rs::Agent;
 use volt::agent::tool_parser::validate_tool_call;
+use volt::agent::Agent;
 use volt::commands::AgentMode;
 use volt::context::{ContextEntry, ContextKind, ContextStore};
 use volt::embedding::{deterministic_placeholder_embedding, EmbeddingClient};
@@ -46,6 +46,11 @@ fn mock_config(name: &str, max_iterations: u32) -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 

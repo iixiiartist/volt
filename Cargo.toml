@@ -12,7 +12,7 @@ tools-pdf = []
 tools-desktop = ["enigo"]
 tools-browser = ["headless_chrome"]
 tools-ast = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "tree-sitter-typescript"]
-tools-local-embeddings = ["tract-onnx", "hf-hub", "tokenizers", "ndarray"]
+tools-local-embeddings = ["ort", "hf-hub", "tokenizers", "ndarray"]
 tools-telegram = ["teloxide"]
 tools-mcp-grpc = ["tonic", "prost"]
 tools-turbovec = ["dep:turbovec"]
@@ -85,10 +85,12 @@ tree-sitter = { version = "0.24", optional = true }
 tree-sitter-rust = { version = "0.23", optional = true }
 tree-sitter-python = { version = "0.23", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
-tract-onnx = { version = "0.22", optional = true }
+ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "download-binaries", "ndarray", "half", "tls-native", "copy-dylibs", "api-20", "directml", "openvino", "cuda"] }
 hf-hub = { version = "0.4", optional = true }
 tokenizers = { version = "0.21", optional = true }
-ndarray = { version = "0.16", optional = true }
+
+# Pin ndarray to 0.17.1 — 0.17.2 removed the NdFloat trait that ort 2.0.0-rc.12 depends on
+ndarray = { version = "=0.17.1", optional = true }
 
 # Phase 3: Jobs, routines, channels
 cron-parser = "0.5"  
@@ -101,3 +103,5 @@ turbovec = { version = "0.7", optional = true }
 tempfile = "3"
 mockall = "0.13"
 wiremock = "0.6"
+assert_cmd = "2"
+predicates = "3"

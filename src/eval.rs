@@ -1,4 +1,4 @@
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use std::time::Instant;
 
 #[derive(Debug, Clone, serde::Deserialize)]

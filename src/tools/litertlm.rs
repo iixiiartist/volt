@@ -12,7 +12,12 @@ impl LiteRTTool {
     }
 
     /// Run inference using LiteRT-LM CLI.
-    pub async fn run(&self, model_path: &str, prompt: &str, max_tokens: u32) -> anyhow::Result<String> {
+    pub async fn run(
+        &self,
+        model_path: &str,
+        prompt: &str,
+        max_tokens: u32,
+    ) -> anyhow::Result<String> {
         let output = Command::new(&self.binary_path)
             .arg("run")
             .arg("--model")

@@ -1,4 +1,4 @@
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai::OpenAIProvider;
 use crate::llm::LLMProvider;
@@ -164,6 +164,11 @@ async fn create_agent(
             framework: None,
             model_variant: None,
             quantization: None,
+            format_dialect: Default::default(),
+            quirks: vec![],
+            strict_mode: false,
+            max_tools_per_turn: None,
+            blueprint_path: None,
         },
         llm_provider,
         tools,
@@ -176,22 +181,19 @@ async fn create_agent(
 }
 
 fn kind_from_str(s: &str) -> ProviderKind {
-    if s.eq_ignore_ascii_case("anthropic") {
-        ProviderKind::Anthropic
-    } else {
-        ProviderKind::OpenAI
+    match s.to_lowercase().as_str() {
+        "openai" => ProviderKind::OpenAI,
+        "anthropic" => ProviderKind::Anthropic,
+        _ => ProviderKind::OpenAI,
     }
 }
 
-/// Resolve model name to a provider route.
-///
-/// Routing order:
-///   1. User-defined routes from `LLM_MODEL_ROUTES` env var (JSON array)
-///   2. Built-in model family detection (Anthropic, OpenAI, Nvidia)
-///   3. Default: Groq (set `LLM_DEFAULT_PROVIDER` env var to override)
-///
-/// NOTE: Ollama is NOT routed here. Ollama is used exclusively for
-/// embeddings via `src/embedding.rs` and is separate from text generation.
+/// Escape curly braces in user-provided values to prevent template injection
+/// into subsequent placeholder substitutions.
+fn escape_braces(s: &str) -> String {
+    s.replace('{', "{{").replace('}', "}}")
+}
+
 pub fn resolve_provider(model: &str) -> ProviderRoute {
     let m = model.to_lowercase();
 
@@ -388,7 +390,7 @@ impl Orchestrator {
 
         for (spec, task_template) in stages {
             let step_started = Instant::now();
-            let task = task_template.replace("{prev}", &prev_output);
+            let task = task_template.replace("{prev}", &escape_braces(&prev_output));
             let agent_name = spec.name.clone();
 
             let agent = create_agent(spec, self.tools.clone(), Some(self.cap_mgr.clone())).await;
@@ -834,17 +836,18 @@ impl<'a> DagScheduler<'a> {
                 let mut task = node.task_template.clone();
 
                 if predecesors.is_empty() {
-                    task = task.replace("{input}", initial_input);
+                    task = task.replace("{input}", &escape_braces(initial_input));
                 }
 
                 for pred_id in &predecesors {
                     if let Some(pred_output) = outputs.get(pred_id) {
-                        task = task.replace(&format!("{{{}}}", pred_id), pred_output);
+                        task =
+                            task.replace(&format!("{{{}}}", pred_id), &escape_braces(pred_output));
                     }
                 }
 
                 for (oid, ooutput) in &outputs {
-                    task = task.replace(&format!("{{{}}}", oid), ooutput);
+                    task = task.replace(&format!("{{{}}}", oid), &escape_braces(ooutput));
                 }
 
                 payloads.push((node_id.clone(), node.agent.clone(), task));

@@ -68,12 +68,10 @@ fn extract_tool_name(description: &str) -> Option<String> {
 pub fn plan_to_tool_calls(plan: &[(usize, String, Option<String>)]) -> Vec<ToolCall> {
     plan.iter()
         .filter_map(|(step, desc, tool_name)| {
-            tool_name.as_ref().map(|name| {
-                ToolCall {
-                    id: format!("plan-{}", step),
-                    name: name.clone(),
-                    arguments: serde_json::json!({"description": desc.clone()}),
-                }
+            tool_name.as_ref().map(|name| ToolCall {
+                id: format!("plan-{}", step),
+                name: name.clone(),
+                arguments: serde_json::json!({"description": desc.clone()}),
             })
         })
         .collect()
@@ -96,7 +94,7 @@ mod tests {
         let plan_text = r#"1. Search the web for Rust tutorials using web_search
         2. Read the first result using read_file
         3. Summarize the findings"#;
-        
+
         let steps = parse_plan(plan_text);
         assert_eq!(steps.len(), 3);
         assert_eq!(steps[0].0, 1);
@@ -110,7 +108,11 @@ mod tests {
     #[test]
     fn test_plan_to_tool_calls() {
         let plan = vec![
-            (1, "Search the web".to_string(), Some("web_search".to_string())),
+            (
+                1,
+                "Search the web".to_string(),
+                Some("web_search".to_string()),
+            ),
             (2, "Read file".to_string(), Some("read_file".to_string())),
         ];
         let calls = plan_to_tool_calls(&plan);

@@ -207,3 +207,24 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - **Binary:** MSVC-built `volt.exe` is **49 MB** (vs 84.5 MB GNU), depends only on standard Windows DLLs + `VCRUNTIME140.dll` (MSVC Redistributable, pre-installed on most Windows).
 - **CI:** `.gitlab-ci.yml` Windows build job updated with vcvars64.bat setup. Requires self-hosted Windows runner with VS Build Tools.
 - **GNU fallback:** `.cargo/config.toml` includes `-static -static-libstdc++` link args for `x86_64-pc-windows-gnu` target (partial static linking — gcc_s and winpthread are statically linked, but libstdc++ still resolves to DLL). GNU users should prefer MSVC instead.
+
+### ONNX Runtime (ort) Migration (May 2026)
+- **Replaced** tract-onnx (CPU-only) with ort v2.0.0-rc.12 behind `tools-local-embeddings`
+- **Execution Provider chain:** OpenVINO → DirectML → CUDA → CPU — automatically selects best available hardware
+- **EP detection:** DirectML=YES on Intel Core Ultra 5 135U (Arc Graphics iGPU, `DirectML.dll` loaded); OpenVINO failed (missing `onnxruntime_providers_shared.dll`); CUDA not available
+- **Benchmark (BGE-small-en-v1.5, release):** Load 376ms, first inference 131ms, steady-state ~130ms per call, batch-of-5 166ms
+- **MSVC CRT fix:** Added `CXXFLAGS=/MD` / `CFLAGS=/MD` to `.cargo/config.toml` — matches ort-sys prebuilt binaries (dynamic CRT `MD_DynamicRelease`); fixes `LNK2038` linker errors with `esaxx-rs` (tokenizers dep)
+- **ndarray pinned** to `=0.17.1` — ort 2.0.0-rc.12 depends on `NdFloat` trait removed in 0.17.2
+- **`ort::tracing` feature removed** — added ~300ms inference overhead on Windows
+- **Session wrapped in `Mutex`** — `ort::Session::run()` takes `&mut self`
+- **Tensor API:** `Tensor::from_array(array)` for input creation, `downcast_ref::<DynTensorValueType>()` + `try_extract_array::<f32>()` for output extraction
+- **No `ort::init()` call** — environment auto-creates on first session (library-safe per ort docs)
+- **`BuilderResult !Send + !Sync`** worked around via `ort_err()` helper that maps to `anyhow::Error`
+- **`commit_from_file` requires `feature = "std"`** — added `std` to ort features (was missing with `default-features = false`)
+
+### MCP Server Lifecycle (May 2026)
+- **MCP protocol compliance** added: `initialize` handshake with capability declaration, `notifications/initialized` silently consumed
+- **JSON-RPC 2.0 notification support:** `id` field made optional; no-response path for notifications
+- **Stdout safety:** all `tracing` output already routes to stderr (`with_writer(std::io::stderr)`); `tools/list` and `tools/call` write only JSON-RPC to stdout
+- **Capability declaration version:** `2024-11-05` (current MCP spec)
+- **Security:** `tools/call` routes through `execute_gated()` — same permission/approval layer as internal agents

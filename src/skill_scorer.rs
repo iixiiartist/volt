@@ -98,7 +98,6 @@ impl SkillScorer {
 }
 
 #[cfg(test)]
-
 mod tests {
 
     use super::*;

@@ -1,4 +1,4 @@
-use volt::agent::loop_rs::Agent;
+use volt::agent::Agent;
 use volt::models::*;
 use volt::test_utils::MockLLMProvider;
 
@@ -22,6 +22,11 @@ fn agent_config() -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 

@@ -5,15 +5,22 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-/// Typed JSON-RPC 2.0 request — eliminates Value-based double deserialization.
+/// Typed JSON-RPC 2.0 request — optional `id` supports notifications.
 #[derive(Deserialize)]
 pub(crate) struct JsonRpcRequest {
-    #[allow(dead_code)]
     jsonrpc: String,
     pub(crate) method: String,
-    pub(crate) id: serde_json::Value,
+    #[serde(default)]
+    pub(crate) id: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) params: Option<serde_json::Value>,
+}
+
+impl JsonRpcRequest {
+    fn is_notification(&self) -> bool {
+        self.id.is_none()
+            || self.id.as_ref().is_some_and(|v| v.is_null())
+    }
 }
 
 /// Typed JSON-RPC 2.0 response — zero runtime string matching for error codes.
@@ -24,11 +31,12 @@ pub(crate) struct JsonRpcResponse {
     result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<JsonRpcError>,
-    id: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<serde_json::Value>,
 }
 
 impl JsonRpcResponse {
-    fn success(result: serde_json::Value, id: serde_json::Value) -> Self {
+    fn success(result: serde_json::Value, id: Option<serde_json::Value>) -> Self {
         Self {
             jsonrpc: "2.0",
             result: Some(result),
@@ -37,7 +45,7 @@ impl JsonRpcResponse {
         }
     }
 
-    fn error(code: i64, message: &'static str, id: serde_json::Value) -> Self {
+    fn error(code: i64, message: &'static str, id: Option<serde_json::Value>) -> Self {
         Self {
             jsonrpc: "2.0",
             result: None,
@@ -88,6 +96,7 @@ impl MCPServer {
 
     /// Serve MCP over stdio (stdin/stdout JSON-RPC).
     /// Each line is a JSON-RPC 2.0 request; responses are written line-delimited.
+    /// Notifications (requests with no `id`) are silently consumed.
     pub async fn serve_stdio(&self) -> anyhow::Result<()> {
         let stdin = tokio::io::stdin();
         let reader = BufReader::new(stdin);
@@ -98,6 +107,20 @@ impl MCPServer {
                 continue;
             }
             let request: JsonRpcRequest = serde_json::from_str(&line)?;
+
+            // Notifications (no id) get no response per JSON-RPC 2.0 spec
+            if request.is_notification() {
+                match request.method.as_str() {
+                    "notifications/initialized" => {
+                        // MCP lifecycle: client confirms initialization — no-op
+                    }
+                    _ => {
+                        // Unknown notification — silently ignore
+                    }
+                }
+                continue;
+            }
+
             let response = self.handle_request(&request).await;
             let output = serde_json::to_string(&response)?;
             let mut stdout = tokio::io::stdout();
@@ -158,6 +181,22 @@ impl MCPServer {
         let id = request.id.clone();
 
         match request.method.as_str() {
+            "initialize" => {
+                // MCP lifecycle: declare capabilities
+                JsonRpcResponse::success(
+                    serde_json::json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "volt",
+                            "version": env!("CARGO_PKG_VERSION")
+                        }
+                    }),
+                    id,
+                )
+            }
             "tools/list" => {
                 let defs = self.tools.get_definitions().await;
                 let tools: Vec<serde_json::Value> = defs
@@ -187,28 +226,23 @@ impl MCPServer {
                     .tools
                     .execute_gated(name, args, &self.capability_manager)
                     .await;
-                match result {
-                    Ok(res) => JsonRpcResponse::success(
-                        serde_json::json!({
-                            "content": [{
-                                "type": "text",
-                                "text": res.output
-                            }],
-                            "isError": !res.success
-                        }),
-                        id,
-                    ),
-                    Err(e) => JsonRpcResponse::success(
-                        serde_json::json!({
-                            "content": [{
-                                "type": "text",
-                                "text": format!("error: {}", e)
-                            }],
-                            "isError": true
-                        }),
-                        id,
-                    ),
-                }
+                let response = match result {
+                    Ok(res) => serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": res.output
+                        }],
+                        "isError": !res.success
+                    }),
+                    Err(e) => serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("error: {}", e)
+                        }],
+                        "isError": true
+                    }),
+                };
+                JsonRpcResponse::success(response, id)
             }
             _ => JsonRpcResponse::error(-32601, "method not found", id),
         }
@@ -216,7 +250,6 @@ impl MCPServer {
 }
 
 /// Axum handler for generic JSON-RPC MCP requests.
-/// Uses typed `JsonRpcRequest` to eliminate Value-based double deserialization.
 async fn handle_mcp_request(
     State(state): State<Arc<McpAppState>>,
     Json(request): Json<JsonRpcRequest>,
@@ -244,7 +277,7 @@ async fn handle_tools_list(State(state): State<Arc<McpAppState>>) -> Json<JsonRp
         .collect();
     Json(JsonRpcResponse::success(
         serde_json::json!({ "tools": tools }),
-        serde_json::json!(1),
+        Some(serde_json::json!(1)),
     ))
 }
 
@@ -262,7 +295,7 @@ async fn handle_tools_call(
     let fake_request = JsonRpcRequest {
         jsonrpc: "2.0".into(),
         method: "tools/call".into(),
-        id: request.get("id").cloned().unwrap_or(serde_json::json!(1)),
+        id: request.get("id").cloned(),
         params: Some(serde_json::json!({ "name": name, "arguments": args })),
     };
     let response = server.handle_request(&fake_request).await;

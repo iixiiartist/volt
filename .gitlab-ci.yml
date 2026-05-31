@@ -40,12 +40,15 @@ test:
     - rustc --version && cargo --version
     - until pg_isready -h postgres -p 5432 -U volt; do echo "Waiting for PostgreSQL..."; sleep 2; done
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0001_core.sql
+    - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0002_jobs_and_routines.sql
   script:
-    # Unit tests + mock-based agent tests + validation tests (no external API keys required)
+    # Full test suite (lib + all integration tests that don't require external API keys)
     - cargo test --lib --release --features testutils
-    - cargo test --test agent_tests --release --features testutils
-    - cargo test --test validation_tests --release --features testutils
-    # To run full integration tests (bfcl_pipeline, gaia_bench, program_bench, workflow_bench, searchhq),
+    - cargo test --test cli_integration_tests --release --features testutils -- --skip heartbeat
+    - cargo test --test professional_workflows --release --features testutils
+    - cargo test --test real_world_benchmarks --release --features testutils
+    - cargo test --test program_bench --release --features testutils
+    # To run API-key-dependent tests (bfcl_pipeline, searchhq, heartbeat),
     # add GROQ_API_KEY, HF_TOKEN, and SEARCHHQ_API_TOKEN as GitLab CI/CD variables.
   cache:
     <<: *cargo_cache

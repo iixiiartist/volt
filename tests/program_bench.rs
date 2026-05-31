@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
-use volt::agent::loop_rs::Agent;
+use volt::agent::Agent;
 use volt::models::*;
 use volt::tools::ToolRegistry;
 
@@ -64,6 +64,11 @@ async fn test_program_bench() {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     };
     let agent = Agent::new(config, provider, tools).await;
 

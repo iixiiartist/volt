@@ -1,4 +1,4 @@
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use crate::models::*;
 use std::path::PathBuf;
 
@@ -29,6 +29,11 @@ pub async fn run(suite: PathBuf, model: Option<String>) -> anyhow::Result<()> {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     };
     let agent = Agent::new(config, provider, tools)
         .await

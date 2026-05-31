@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use crate::tools::litertlm::LiteRTTool;
 use crate::tools::llamacpp::LlamaCppTool;
+use std::path::PathBuf;
 
 /// Multimodal Token Prediction (MTP) tool using draft model + full model.
 pub struct MtpTool {
@@ -11,13 +11,17 @@ pub struct MtpTool {
 
 impl MtpTool {
     pub fn new(draft_binary: PathBuf, full_binary: PathBuf, framework: String) -> Self {
-        Self { draft_binary, full_binary, framework }
+        Self {
+            draft_binary,
+            full_binary,
+            framework,
+        }
     }
 
     /// Run MTP: draft model generates candidate tokens, full model verifies.
     pub async fn run_with_draft(&self, model_path: &str, prompt: &str) -> anyhow::Result<String> {
         let draft_model = format!("{}.draft", model_path);
-        
+
         // Run draft model to generate candidates
         let draft_output = match self.framework.as_str() {
             "litertlm" => {

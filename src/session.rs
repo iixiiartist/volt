@@ -51,6 +51,10 @@ pub async fn open_sessions(path: &Path) -> anyhow::Result<SqlitePool> {
         run_migration_v3(&pool).await?;
     }
 
+    if current < 4 {
+        run_migration_v4(&pool).await?;
+    }
+
     Ok(pool)
 }
 
@@ -150,6 +154,27 @@ async fn run_migration_v3(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await?;
 
+    Ok(())
+}
+
+async fn run_migration_v4(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query("ALTER TABLE messages ADD COLUMN position_index INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await
+        .ok();
+    // Drop old non-unique index first (safe even if it doesn't exist)
+    sqlx::query("DROP INDEX IF EXISTS idx_messages_session_position")
+        .execute(pool)
+        .await
+        .ok();
+    // Re-create as UNIQUE so ON CONFLICT(session_id, position_index) works for upserts
+    sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_position ON messages(session_id, position_index)")
+        .execute(pool)
+        .await?;
+    sqlx::query("INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (4, ?)")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -352,15 +377,22 @@ pub async fn create_session(pool: &SqlitePool, session: &Session) -> anyhow::Res
 pub async fn save_message(
     pool: &SqlitePool,
     session_id: Uuid,
+    position_index: i64,
     msg: &Message,
 ) -> anyhow::Result<()> {
     sqlx::query(
         r#"
-        INSERT OR REPLACE INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO messages (session_id, position_index, role, content, tool_calls, tool_result, tool_name, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, position_index) DO UPDATE SET
+            content = excluded.content,
+            tool_calls = excluded.tool_calls,
+            tool_result = excluded.tool_result,
+            tool_name = excluded.tool_name
         "#,
     )
     .bind(session_id.to_string())
+    .bind(position_index)
     .bind(&msg.role)
     .bind(msg.content.as_str())
     .bind(msg.tool_calls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
@@ -383,11 +415,12 @@ pub async fn save_session_messages_atomic(
         .bind(session_id.to_string())
         .execute(&mut *tx)
         .await?;
-    for msg in messages {
+    for (position, msg) in messages.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO messages (session_id, role, content, tool_calls, tool_result, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO messages (session_id, position_index, role, content, tool_calls, tool_result, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(session_id.to_string())
+        .bind(position as i64)
         .bind(&msg.role)
         .bind(msg.content.as_str())
         .bind(msg.tool_calls.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
@@ -407,7 +440,7 @@ pub async fn load_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Resul
         SELECT role, content, tool_calls, tool_result, tool_name, created_at
         FROM messages
         WHERE session_id = ?
-        ORDER BY id ASC
+        ORDER BY position_index ASC
         "#,
     )
     .bind(session_id.to_string())
@@ -446,6 +479,7 @@ pub async fn delete_session_messages(pool: &SqlitePool, session_id: Uuid) -> any
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{Message, Session};
     use std::sync::Arc;
 
     async fn test_pool() -> SqlitePool {
@@ -478,12 +512,35 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
+                position_index INTEGER NOT NULL DEFAULT 0,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL DEFAULT '',
                 tool_calls TEXT,
                 tool_result TEXT,
                 tool_name TEXT,
                 created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_position ON messages(session_id, position_index)"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // checkpoints table for circuit breaker and checkpoint tests
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS checkpoints (
+                session_id TEXT NOT NULL,
+                iteration INTEGER NOT NULL,
+                messages_json TEXT NOT NULL,
+                token_counts_json TEXT NOT NULL DEFAULT '{}',
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                state_hash TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, iteration)
             )",
         )
         .execute(&pool)
@@ -533,7 +590,7 @@ mod tests {
             tool_name: None,
             created_at: chrono::Utc::now(),
         };
-        save_message(&pool, session_id, &msg).await.unwrap();
+        save_message(&pool, session_id, 0, &msg).await.unwrap();
 
         let msgs = load_messages(&pool, session_id).await.unwrap();
         assert_eq!(msgs.len(), 1);
@@ -564,10 +621,252 @@ mod tests {
             tool_name: None,
             created_at: chrono::Utc::now(),
         };
-        save_message(&pool, session_id, &msg).await.unwrap();
+        save_message(&pool, session_id, 0, &msg).await.unwrap();
         delete_session_messages(&pool, session_id).await.unwrap();
 
         let msgs = load_messages(&pool, session_id).await.unwrap();
         assert_eq!(msgs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_save_message_dedup_same_position() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let session = Session {
+            id: session_id,
+            agent_name: "test-agent".into(),
+            title: "test".into(),
+            message_count: 2,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        let msg1 = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
+            role: "user".into(),
+            content: Arc::new("original".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        save_message(&pool, session_id, 0, &msg1).await.unwrap();
+
+        let msg2 = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
+            role: "user".into(),
+            content: Arc::new("updated".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        save_message(&pool, session_id, 0, &msg2).await.unwrap();
+
+        let msgs = load_messages(&pool, session_id).await.unwrap();
+        assert_eq!(msgs.len(), 1, "should NOT create duplicate rows");
+        assert_eq!(
+            msgs[0].content.as_str(),
+            "updated",
+            "should have updated content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_save_message_multiple_positions() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let session = Session {
+            id: session_id,
+            agent_name: "test-agent".into(),
+            title: "test".into(),
+            message_count: 3,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        for i in 0..3 {
+            let msg = Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "user".into(),
+                content: Arc::new(format!("msg {}", i)),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            };
+            save_message(&pool, session_id, i, &msg).await.unwrap();
+        }
+
+        let msgs = load_messages(&pool, session_id).await.unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content.as_str(), "msg 0");
+        assert_eq!(msgs[1].content.as_str(), "msg 1");
+        assert_eq!(msgs[2].content.as_str(), "msg 2");
+    }
+
+    #[tokio::test]
+    async fn test_compute_state_hash_consistency() {
+        let msg1 = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
+            role: "user".into(),
+            content: Arc::new("hello".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        let msg2 = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
+            role: "assistant".into(),
+            content: Arc::new("hi".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        let msgs = vec![msg1.clone(), msg2.clone()];
+        let hash1 = compute_state_hash(&msgs);
+        let hash2 = compute_state_hash(&msgs);
+        assert_eq!(hash1, hash2, "same messages should produce same hash");
+    }
+
+    #[tokio::test]
+    async fn test_compute_state_hash_different_messages_different_hash() {
+        let msg_a = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
+            role: "user".into(),
+            content: Arc::new("hello".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        let msg_b = Message {
+            id: uuid::Uuid::nil(),
+            parent_message_id: None,
+            role: "user".into(),
+            content: Arc::new("goodbye".to_string()),
+            tool_calls: None,
+            tool_result: None,
+            tool_name: None,
+            created_at: chrono::Utc::now(),
+        };
+        let hash_a = compute_state_hash(&[msg_a]);
+        let hash_b = compute_state_hash(&[msg_b]);
+        assert_ne!(
+            hash_a, hash_b,
+            "different messages should produce different hashes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_circuit_breaker_not_tripped() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let result = check_circuit_breaker(&pool, session_id, 0, "testhash").await;
+        assert!(result.is_ok(), "should not trip when no checkpoints exist");
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_roundtrip() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let session = Session {
+            id: session_id,
+            agent_name: "test-agent".into(),
+            title: "test".into(),
+            message_count: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        let data = CheckpointData {
+            session_id,
+            iteration: 1,
+            messages: vec![Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "user".into(),
+                content: Arc::new("checkpoint data".to_string()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            }],
+            token_prompt: 10,
+            token_completion: 20,
+        };
+        save_checkpoint(&pool, &data).await.unwrap();
+
+        let loaded = load_latest_checkpoint(&pool, session_id)
+            .await
+            .unwrap()
+            .expect("should find checkpoint");
+        assert_eq!(loaded.iteration, 1);
+        assert_eq!(loaded.token_prompt, 10);
+        assert_eq!(loaded.token_completion, 20);
+        assert_eq!(loaded.messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_save_session_messages_atomic_roundtrip() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        let session = Session {
+            id: session_id,
+            agent_name: "test-agent".into(),
+            title: "test".into(),
+            message_count: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        let msgs = vec![
+            Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "system".into(),
+                content: Arc::new("sys".to_string()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            },
+            Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "user".into(),
+                content: Arc::new("hi".to_string()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            },
+        ];
+        save_session_messages_atomic(&pool, session_id, &msgs)
+            .await
+            .unwrap();
+
+        let loaded = load_messages(&pool, session_id).await.unwrap();
+        assert_eq!(loaded.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_messages_idempotent() {
+        let pool = test_pool().await;
+        let session_id = Uuid::new_v4();
+        // Deleting non-existent session should not error
+        delete_session_messages(&pool, session_id).await.unwrap();
     }
 }

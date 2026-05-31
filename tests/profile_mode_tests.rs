@@ -3,7 +3,7 @@
 //! and the "Agent Tax" tradeoff documented in paper §4.5.
 
 use std::sync::Arc;
-use volt::agent::loop_rs::Agent;
+use volt::agent::Agent;
 use volt::commands::AgentMode;
 use volt::context::ContextKind;
 use volt::models::*;
@@ -100,6 +100,11 @@ fn precision_config() -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 
@@ -123,6 +128,11 @@ fn balanced_config() -> AgentConfig {
         framework: None,
         model_variant: None,
         quantization: None,
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     }
 }
 

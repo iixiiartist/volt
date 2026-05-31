@@ -1,5 +1,5 @@
 use super::AgentMode;
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use crate::context::ContextStore;
 use crate::embedding::EmbeddingClient;
 use crate::models::*;
@@ -25,6 +25,8 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         framework: _,
         model_variant: _,
         quantization: _,
+        blueprint,
+        auto_blueprint,
     } = options;
 
     let (provider, provider_kind) = orchestrator::build_provider(&model, "volt-agent");
@@ -73,10 +75,54 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         use_cot: options.use_cot || settings.use_cot,
         allow_write: options.allow_write || settings.allow_write,
         framework: options.framework.clone().or(settings.framework.clone()),
-        model_variant: options.model_variant.clone().or(settings.model_variant.clone()),
-        quantization: options.quantization.clone().or(settings.quantization.clone()),
+        model_variant: options
+            .model_variant
+            .clone()
+            .or(settings.model_variant.clone()),
+        quantization: options
+            .quantization
+            .clone()
+            .or(settings.quantization.clone()),
+        format_dialect: Default::default(),
+        quirks: vec![],
+        strict_mode: false,
+        max_tools_per_turn: None,
+        blueprint_path: None,
     };
     let config_quotas = config.context_kind_quotas.clone();
+    // ── Blueprint selection: explicit > LLM-routed > none ────────
+    let effective_blueprint = if let Some(ref bp) = blueprint {
+        Some(bp.clone())
+    } else if auto_blueprint {
+        let blueprints = crate::agent::router::load_all_blueprints();
+        if blueprints.is_empty() {
+            eprintln!("[router] no blueprints found in blueprints/ directory");
+            None
+        } else {
+            eprintln!(
+                "[router] routing task across {} blueprint(s)...",
+                blueprints.len()
+            );
+            match crate::agent::router::route_task(&input, &blueprints, &*provider).await {
+                Some(bp) => {
+                    eprintln!("[router] selected blueprint: {} ({})", bp.id, bp.name);
+                    let paths = crate::agent::router::discover_blueprints();
+                    paths.iter().find(|p| {
+                        p.file_stem()
+                            .map(|s| s == bp.id.as_str())
+                            .unwrap_or(false)
+                    }).cloned()
+                }
+                None => {
+                    eprintln!("[router] LLM could not determine best blueprint, using defaults");
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     let mut agent = Agent::new(config, provider, tools_for_agent)
         .await
         .with_workspace(std::env::current_dir().unwrap_or_default())
@@ -84,6 +130,11 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         .with_stream(Arc::new(|token| {
             print!("{}", token);
         }));
+
+    if let Some(ref bp_path) = effective_blueprint {
+        agent = agent.with_blueprint(bp_path.clone());
+        eprintln!("[blueprint] loaded {}", bp_path.display());
+    }
 
     let event_bus = crate::events::EventBus::new();
     agent = agent.with_event_bus(event_bus);
@@ -304,6 +355,8 @@ pub struct AgentRunOptions {
     pub framework: Option<String>,
     pub model_variant: Option<String>,
     pub quantization: Option<String>,
+    pub blueprint: Option<PathBuf>,
+    pub auto_blueprint: bool,
 }
 
 impl AgentRunOptions {

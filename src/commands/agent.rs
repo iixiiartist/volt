@@ -48,7 +48,12 @@ pub async fn cmd_run_interactive() -> anyhow::Result<()> {
     let (name, _) = presets.get(idx).unwrap_or(&presets[0]).clone();
 
     let (_, p) = preset::load_preset(&name).unwrap();
-    let model_s = p.agent.as_ref().and_then(|a| a.model.as_deref()).unwrap_or("?").to_string();
+    let model_s = p
+        .agent
+        .as_ref()
+        .and_then(|a| a.model.as_deref())
+        .unwrap_or("?")
+        .to_string();
     let max_iter = p.agent.as_ref().and_then(|a| a.max_iterations);
     let allow = p.agent.as_ref().and_then(|a| a.allow).unwrap_or(true);
 
@@ -86,6 +91,8 @@ pub async fn cmd_run_interactive() -> anyhow::Result<()> {
         framework: None,
         model_variant: None,
         quantization: None,
+        blueprint: None,
+        auto_blueprint: false,
     })
     .await
 }

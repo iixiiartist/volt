@@ -1,4 +1,4 @@
-use crate::agent::loop_rs::Agent;
+use crate::agent::Agent;
 use async_trait::async_trait;
 use std::sync::Arc;
 

@@ -142,9 +142,11 @@ fn format_search_results(raw_json: &str) -> String {
                             // Truncate long content to avoid token overflow
                             let max_len = 4000;
                             let truncated = if md.len() > max_len {
-                                format!("{}...\n[truncated {} chars]",
+                                format!(
+                                    "{}...\n[truncated {} chars]",
                                     &md[..max_len],
-                                    md.len() - max_len)
+                                    md.len() - max_len
+                                )
                             } else {
                                 md.to_string()
                             };

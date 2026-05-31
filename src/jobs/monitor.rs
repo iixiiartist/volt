@@ -47,10 +47,17 @@ impl SelfRepairMonitor {
                                         "[self-repair] job {} exhausted retries, marking Failed",
                                         id
                                     );
-                                    let _ = self
+                                    if let Err(e) = self
                                         .manager
                                         .fail_job(id, "exhausted retries after stuck detection")
-                                        .await;
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            "[self-repair] fail_job failed for {}: {}",
+                                            id,
+                                            e
+                                        );
+                                    }
                                 }
                                 Err(e) => tracing::error!(
                                     "[self-repair] retry failed for job {}: {}",

@@ -1,6 +1,6 @@
 # Volt — The Autonomous Systems Engine
 
-> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration, CLI gateway, and 43+ built-in tools. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
+> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 50+ built-in tools. ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
@@ -18,10 +18,11 @@ Key design decisions:
 - **Everything-as-RAG**: 12 context kinds dynamically retrievable from unified vector store
 - **Background Auto-Seeding Worker**: MPSC channel daemon maintains context autonomously via Tokio
 - **Four-Pillar Eviction**: Semantic dedup, per-kind quotas, composite scores, episodic merging
-- **43+ Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser, CLI gateway
-- **Multi-Agent Orchestration**: Parallel, pipeline, supervisor, and DAG patterns
+- **50+ Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser, MCP, CLI gateway
+- **Multi-Agent Orchestration**: Parallel, pipeline, supervisor, supervisor-agenda, and DAG patterns
 - **pgvector Persistence**: PostgreSQL with HNSW indexes, context survives restarts
-- **Local ONNX Embeddings**: BGE-large-en-v1.5 (1024d) via tract-onnx, no C++ dependency
+- **Hardware-Accelerated ONNX Runtime**: ort with DirectML/OpenVINO/CUDA fallback chain — auto-detects Intel NPU/GPU, NVIDIA GPU, or CPU
+- **MCP Protocol Server**: Expose 50+ tools to external clients (Claude Desktop, Cline, Goose) over stdio or HTTP with permission-gated execution
 - **Single Binary**: Rust-compiled, MIT license
 
 ## Quick Start
@@ -144,11 +145,53 @@ Full 17-category BFCL v4 sweep pending. All failures were Groq API schema valida
 
 ### Embedding
 
-Local ONNX inference via tract-onnx with `Xenova/bge-large-en-v1.5` (1024d, ~337MB). Configure via `VOLT_ONNX_MODEL_DIR` or `EMBEDDING_MODEL`. Falls back to deterministic SHA-256 placeholder embeddings when no network or local model is available.
+Hardware-accelerated ONNX Runtime (ort) with auto-detecting Execution Provider fallback chain: OpenVINO → DirectML → CUDA → CPU. Uses `Xenova/bge-small-en-v1.5` (384d, int8 quantized, ~60MB). Configure via `VOLT_ONNX_MODEL_DIR` or `EMBEDDING_MODEL`. Falls back to deterministic SHA-256 placeholder + BM25 hybrid retrieval when no network or local model is available.
+
+> **MSVC build required:** ort prebuilt binaries ship for `x86_64-pc-windows-msvc` only. Build from source with VS 2022 Build Tools and the MSVC Rust toolchain (`rustup default stable-x86_64-pc-windows-msvc`).
+
+### MCP Protocol Server
+
+Volt exposes its full 50+ tool registry over the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) — the open standard for AI tool integration. Run `volt mcp-serve` to start the stdio server, then connect any MCP-compatible client (Claude Desktop, Cline, Goose, etc.).
+
+- **Full lifecycle**: `initialize` handshake with capability declaration (`protocolVersion: 2024-11-05`), `notifications/initialized` support
+- **Stdout-safe**: All JSON-RPC messages go to stdout; tracing/logging routes to stderr — no protocol corruption
+- **Permission-gated**: Tool calls pass through Volt's `execute_gated()` approval layer — same safety rails as internal agents
+- **HTTP mode**: Use `MCPServer::serve_http()` for agent-to-agent tool sharing over TCP
 
 ### gRPC MCP Transport (Experimental)
 
 The `tools-mcp-grpc` feature flag enables a gRPC MCP transport (`MCPTransport::Grpc`) with bidirectional streaming for agent-to-agent coordination. The server side (`list_tools`, `call_tool`, `call_tool_stream`) is fully implemented via tonic + prost. The client side is scaffolded but requires generated tonic stubs — use `MCPTransport::Http` for remote agent connections.
+
+### Blueprint Scaffolding & Quirk Coercion ("Edge Model Exoskeleton")
+
+Agent Blueprints are TOML profiles that constrain the agent loop for small/edge models (<8B parameters). They compensate for common failure modes via **cognitive scaffolding** and **AST-level quirk coercion**.
+
+**Two production blueprints** ship in `blueprints/`:
+
+| Blueprint | Model | Dialect | Quirks | Mode |
+|---|---|---|---|---|
+| `gemma4_e2b_voice.toml` | gemma-4-e2b | ChatMlTools | SchemaLimitTen, MissingFinalAnswer | strict, 1 tool/turn |
+| `llama3_8b_local.toml` | llama-3.1-8b | LlamaChat | StringifiedBooleans, StringifiedIntegers, ChainOfThoughtLeak | relaxed, 3 tools/turn |
+
+**How it works:**
+- **`strict_mode`** — strips `Tool` and `Skill` from RAG retrieval, hard-binding only explicitly listed `core_tools`. Prevents small models from hallucinating under context overload.
+- **`max_tools_per_turn`** — truncates excess tool calls with a synthetic error message instructing the LLM to retry remaining tools.
+- **`FormatDialect`** routes prompt construction to model-native formats (ChatMlTools, LlamaChat, StandardXml, ClaudeXml, OpenAiJson).
+- **Quirk interceptors** run *before* JSON Schema validation in `tool_parser.rs`:
+  - `StringifiedBooleans` — coerces `"true"` → `true`
+  - `StringifiedIntegers` — coerces `"42"` → `42`
+  - `ChainOfThoughtLeak` — strips conversational preamble/aftermath outside structured tags
+  - `SchemaLimitTen` — caps tool retrieval to 10 items when not in strict mode
+  - `MissingFinalAnswer` — auto-wraps plain-text response as `final_answer(answer: ...)` tool call
+
+**Usage:**
+```bash
+# Explicit blueprint
+volt agent-run --input "Create hello.txt" --blueprint blueprints/gemma4_e2b_voice.toml
+
+# Auto-orchestrate: selects blueprint based on prompt heuristics
+volt agent-run --input "Create hello.txt" --auto-blueprint
+```
 
 ### Multi-Agent Orchestration
 
@@ -185,6 +228,8 @@ Common flags for both:
 | `--max-iterations <n>` | 8 (agent-run) / 25 (agent-tui) | Max agent loop iterations |
 | `--load-tools <file>` | — | Path to BFCL tool stubs JSONL (for benchmarks) |
 | `--context-kinds <list>` | mode-driven | Comma-delimited context kinds to enable |
+| `--blueprint <path>` | — | Load Agent Blueprint TOML (overrides dialect, quirks, strict mode, tools) |
+| `--auto-blueprint` | off | Auto-select blueprint from prompt heuristics (simple tasks → gemma4, complex → llama3) |
 
 **Context modes:**
 - `precision` — Tool + Artifact only (2 kinds, best for function-calling benchmarks)
@@ -267,7 +312,7 @@ Use `--agents-file` / `--tasks-file` to pass from files instead of CLI args.
 | `tools-pdf` | PDF generation tool |
 | `tools-desktop` | Desktop automation (click, type, key, find_window) |
 | `tools-browser` | Browser automation (navigate, extract, screenshot) |
-| `tools-local-embeddings` | Local ONNX embeddings via tract-onnx (**default**) |
+| `tools-local-embeddings` | Local ONNX embeddings via ort (DirectML/OpenVINO/CUDA) (**default**) |
 | `tools-mcp-grpc` | gRPC MCP transport (experimental) |
 | `tools-telegram` | Telegram bot integration |
 

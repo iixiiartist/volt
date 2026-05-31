@@ -1,11 +1,3 @@
-/// gRPC MCP transport for high-frequency agent-to-agent coordination.
-///
-/// **Performance:** Bidirectional streaming enables partial result forwarding
-/// for long-running tool calls without blocking the caller's agent loop.
-/// **Dependency:** Only compiled with `tools-mcp-grpc` feature flag.
-
-#![cfg(feature = "tools-mcp-grpc")]
-
 use crate::models::ToolResult;
 use serde_json::Value;
 use std::pin::Pin;
@@ -80,7 +72,10 @@ pub trait Mcp: Send + Sync + 'static {
     async fn call_tool_stream(
         &self,
         request: CallToolRequest,
-    ) -> Result<Response<Pin<Box<dyn tokio_stream::Stream<Item = Result<ToolStreamChunk, Status>> + Send>>>, Status>;
+    ) -> Result<
+        Response<Pin<Box<dyn tokio_stream::Stream<Item = Result<ToolStreamChunk, Status>> + Send>>>,
+        Status,
+    >;
 }
 
 // ─── Server implementation ──────────────────────────────────────
@@ -141,7 +136,10 @@ impl Mcp for McpGrpcServer {
     async fn call_tool_stream(
         &self,
         request: CallToolRequest,
-    ) -> Result<Response<Pin<Box<dyn tokio_stream::Stream<Item = Result<ToolStreamChunk, Status>> + Send>>>, Status> {
+    ) -> Result<
+        Response<Pin<Box<dyn tokio_stream::Stream<Item = Result<ToolStreamChunk, Status>> + Send>>>,
+        Status,
+    > {
         let (tx, rx) = mpsc::channel(64);
         let tools = self.tools.clone();
         let cap_mgr = self.cap_mgr.clone();
@@ -151,37 +149,49 @@ impl Mcp for McpGrpcServer {
 
         tokio::spawn(async move {
             // Send initial partial marker
-            let _ = tx.send(Ok(ToolStreamChunk {
-                payload: Some(tool_stream_chunk::Payload::Partial(
-                    "streaming started".into(),
-                )),
-            })).await;
+            let _ = tx
+                .send(Ok(ToolStreamChunk {
+                    payload: Some(tool_stream_chunk::Payload::Partial(
+                        "streaming started".into(),
+                    )),
+                }))
+                .await;
 
             match tools.execute_gated(&name, &args, &cap_mgr).await {
                 Ok(res) => {
-                    let _ = tx.send(Ok(ToolStreamChunk {
-                        payload: Some(tool_stream_chunk::Payload::FinalResult(CallToolResponse {
-                            success: res.success,
-                            output: res.output,
-                            error: res.error.unwrap_or_default(),
-                            duration_ms: res.duration_ms,
-                        })),
-                    })).await;
+                    let _ = tx
+                        .send(Ok(ToolStreamChunk {
+                            payload: Some(tool_stream_chunk::Payload::FinalResult(
+                                CallToolResponse {
+                                    success: res.success,
+                                    output: res.output,
+                                    error: res.error.unwrap_or_default(),
+                                    duration_ms: res.duration_ms,
+                                },
+                            )),
+                        }))
+                        .await;
                 }
                 Err(e) => {
-                    let _ = tx.send(Ok(ToolStreamChunk {
-                        payload: Some(tool_stream_chunk::Payload::FinalResult(CallToolResponse {
-                            success: false,
-                            output: String::new(),
-                            error: format!("{}", e),
-                            duration_ms: 0,
-                        })),
-                    })).await;
+                    let _ = tx
+                        .send(Ok(ToolStreamChunk {
+                            payload: Some(tool_stream_chunk::Payload::FinalResult(
+                                CallToolResponse {
+                                    success: false,
+                                    output: String::new(),
+                                    error: format!("{}", e),
+                                    duration_ms: 0,
+                                },
+                            )),
+                        }))
+                        .await;
                 }
             }
         });
 
-        Ok(Response::new(Box::pin(ReceiverStream::new(rx)) as Self::call_tool_stream::return_type))
+        Ok(Response::new(
+            Box::pin(ReceiverStream::new(rx)) as Self::call_tool_stream::return_type
+        ))
     }
 }
 

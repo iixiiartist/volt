@@ -1,11 +1,12 @@
+mod providers;
+
 use anyhow::Context;
-use reqwest::Client;
+use providers::ProviderConfig;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const EMBEDDING_DIMENSIONS: usize = 1024;
 
-/// All supported embedding providers
 #[derive(Debug, Clone, PartialEq)]
 pub enum EmbeddingProvider {
     Ollama,
@@ -16,145 +17,16 @@ pub enum EmbeddingProvider {
     HuggingFace,
 }
 
-/// Configuration for a single embedding provider in the fallback chain
-#[derive(Debug, Clone)]
-struct ProviderConfig {
-    provider: EmbeddingProvider,
-    model: String,
-    endpoint: String,
-    api_key: Option<String>,
-}
-
-impl ProviderConfig {
-    fn from_env(provider_str: &str) -> Option<Self> {
-        let model = std::env::var("EMBEDDING_MODEL").ok().unwrap_or_default();
-        let endpoint = std::env::var("EMBEDDING_ENDPOINT").ok().unwrap_or_default();
-        let api_key = std::env::var("EMBEDDING_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty() && k != "your_nvidia_api_key_here");
-
-        match provider_str.to_lowercase().as_str() {
-            "ollama" => Some(Self {
-                provider: EmbeddingProvider::Ollama,
-                model: if model.is_empty() {
-                    "mxbai-embed-large".into()
-                } else {
-                    model
-                },
-                endpoint: if endpoint.is_empty() {
-                    "http://localhost:11434/api/embed".into()
-                } else {
-                    endpoint
-                },
-                api_key: None,
-            }),
-            "llamacpp" | "llama.cpp" | "llama-cpp" => Some(Self {
-                provider: EmbeddingProvider::LlamaCpp,
-                model: if model.is_empty() {
-                    "mxbai-embed-large-v1".into()
-                } else {
-                    model
-                },
-                endpoint: if endpoint.is_empty() {
-                    "http://localhost:8080/v1/embeddings".into()
-                } else {
-                    endpoint
-                },
-                api_key: Some(api_key.unwrap_or_else(|| "not-needed".into())),
-            }),
-            "nvidia" => Some(Self {
-                provider: EmbeddingProvider::Nvidia,
-                model: if model.is_empty() {
-                    "nvidia/llama-nemotron-embed-1b-v2".into()
-                } else {
-                    model
-                },
-                endpoint: if endpoint.is_empty() {
-                    "https://integrate.api.nvidia.com/v1/embeddings".into()
-                } else {
-                    endpoint
-                },
-                api_key: api_key.or_else(|| {
-                    std::env::var("NVIDIA_API_KEY")
-                        .ok()
-                        .filter(|k| !k.is_empty())
-                }),
-            }),
-            "openai" => Some(Self {
-                provider: EmbeddingProvider::OpenAI,
-                model: if model.is_empty() {
-                    "text-embedding-3-small".into()
-                } else {
-                    model
-                },
-                endpoint: if endpoint.is_empty() {
-                    "https://api.openai.com/v1/embeddings".into()
-                } else {
-                    endpoint
-                },
-                api_key: api_key.or_else(|| {
-                    std::env::var("OPENAI_API_KEY")
-                        .ok()
-                        .filter(|k| !k.is_empty())
-                }),
-            }),
-            "moonshot" => Some(Self {
-                provider: EmbeddingProvider::Moonshot,
-                model: if model.is_empty() {
-                    "moonshot-v1-embed".into()
-                } else {
-                    model
-                },
-                endpoint: if endpoint.is_empty() {
-                    "https://api.moonshot.cn/v1/embeddings".into()
-                } else {
-                    endpoint
-                },
-                api_key,
-            }),
-            "huggingface" | "hf" => Some(Self {
-                provider: EmbeddingProvider::HuggingFace,
-                model: if model.is_empty() {
-                    "BAAI/bge-small-en-v1.5".into()
-                } else {
-                    model
-                },
-                endpoint: if endpoint.is_empty() {
-                    "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
-                        .into()
-                } else {
-                    endpoint
-                },
-                api_key: api_key.or_else(|| {
-                    std::env::var("HF_TOKEN")
-                        .ok()
-                        .or_else(|| std::env::var("HUGGINGFACE_TOKEN").ok())
-                        .filter(|k| !k.is_empty())
-                }),
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// Embedding client with multi-provider fallback and auto-detection.
-///
-/// Providers are tried in order. If one fails, the next is attempted.
-/// If all providers fail, a deterministic placeholder embedding is used
-/// so the system never hard-fails on embedding.
 #[derive(Clone)]
 pub struct EmbeddingClient {
-    http: Client,
+    http: reqwest::Client,
     providers: Vec<ProviderConfig>,
-    /// Whether to log provider fallback warnings
     verbose: bool,
     #[cfg(feature = "tools-local-embeddings")]
     local: Option<std::sync::Arc<crate::local_embed::LocalEmbedder>>,
 }
 
 impl EmbeddingClient {
-    /// Create a client with a single provider (no fallback).
-    /// Prefer `new_smart()` for production use.
     pub fn new(api_key: Option<String>, model: impl Into<String>) -> Self {
         Self::with_provider(
             api_key,
@@ -164,7 +36,6 @@ impl EmbeddingClient {
         )
     }
 
-    /// Create a client with a single explicit provider (no fallback).
     pub fn with_provider(
         api_key: Option<String>,
         model: impl Into<String>,
@@ -186,50 +57,43 @@ impl EmbeddingClient {
         }
     }
 
-    /// Create a client with automatic provider detection and fallback chain.
-    ///
-    /// If `EMBEDDING_PROVIDER` is explicitly set (not "auto"), that provider
-    /// is tried first, with auto-detected fallbacks behind it.
-    /// If unset or "auto", full auto-detection runs.
-    ///
-    /// Detection priority:
-    ///   1. Ollama (local, if running) — no API key needed
-    ///   2. NVIDIA NIM (cloud, if NVIDIA_API_KEY or EMBEDDING_API_KEY set and valid)
-    ///   3. OpenAI (cloud, if OPENAI_API_KEY set)
-    ///   4. HuggingFace Inference API (cloud, free, if HF_TOKEN set)
-    ///   5. Moonshot (cloud, if KIMI_API_KEY set)
-    ///   6. Deterministic placeholder (always works, no network)
-    ///
-    /// ```ignore
-    /// let client = EmbeddingClient::new_smart().await;
-    /// ```
     pub async fn new_smart() -> Self {
         let http = crate::http_client();
         let provider_str = std::env::var("EMBEDDING_PROVIDER").ok();
 
         let providers = match provider_str {
             Some(ref p) if !p.is_empty() && p.to_lowercase() != "auto" => {
-                let mut providers = Vec::new();
+                let mut pv = Vec::new();
                 if let Some(config) = ProviderConfig::from_env(p) {
-                    providers.push(config);
+                    pv.push(config);
                 }
-                // Only add auto-detected fallbacks when provider is "auto"
-                providers
+                pv
             }
-            _ => auto_detect_providers(&http).await,
+            _ => providers::auto_detect_providers(&http).await,
         };
 
+        // Load local ONNX embedder (ort with EP fallback chain:
+        // OpenVINO → DirectML → CUDA → CPU). Falls through to remote or
+        // deterministic placeholder if model files are not cached yet.
         #[cfg(feature = "tools-local-embeddings")]
         let local = match crate::local_embed::LocalEmbedder::load() {
-            Ok(e) => {
-                tracing::info!("local ONNX embedder loaded successfully");
-                Some(std::sync::Arc::new(e))
+            Ok(embedder) => {
+                tracing::info!("local ONNX embedder loaded (ort EP chain: OpenVINO → DirectML → CUDA → CPU)");
+                Some(std::sync::Arc::new(embedder))
             }
             Err(e) => {
-                tracing::warn!("local embedder unavailable: {}", e);
+                tracing::warn!("local ONNX embedder unavailable: {}. Will use deterministic fallback + BM25.", e);
                 None
             }
         };
+
+        // Clear providers when no local or remote path is configured —
+        // avoids slow Ollama retry delays when Ollama is not actually running.
+        #[cfg(not(feature = "tools-local-embeddings"))]
+        let local: Option<std::sync::Arc<crate::local_embed::LocalEmbedder>> = None;
+        if local.is_none() && providers.is_empty() && provider_str.as_deref().is_none_or(|s| s.is_empty() || s.eq_ignore_ascii_case("auto")) {
+            // keep providers as-is (may have auto-detected Ollama); embed will try them first
+        }
 
         Self {
             http,
@@ -240,8 +104,6 @@ impl EmbeddingClient {
         }
     }
 
-    /// Synchronous version for use with `tokio::task::spawn_blocking`.
-    /// Only tries the local ONNX embedder (no remote fallback).
     pub fn embed_description_blocking(&self, description: &str) -> anyhow::Result<Vec<f32>> {
         #[cfg(feature = "tools-local-embeddings")]
         if let Some(local) = &self.local {
@@ -251,8 +113,32 @@ impl EmbeddingClient {
         Err(anyhow::anyhow!("no local embedder available"))
     }
 
-    /// Embed text by trying each provider in the fallback chain.
-    /// Returns a deterministic placeholder embedding if all providers fail.
+    /// Batch-embed multiple descriptions in a single ONNX forward pass.
+    /// Uses spawn_blocking so it doesn't starve the async runtime.
+    pub async fn batch_embed_descriptions(
+        &self,
+        descriptions: &[String],
+    ) -> anyhow::Result<Vec<Vec<f32>>> {
+        if descriptions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let texts: Vec<String> = descriptions
+            .iter()
+            .map(|d| truncate_description(d).to_string())
+            .collect();
+
+        #[cfg(feature = "tools-local-embeddings")]
+        if let Some(local) = &self.local {
+            let cloned = local.clone();
+            return tokio::task::spawn_blocking(move || cloned.batch_embed(&texts))
+                .await
+                .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
+                .map(|v| v.into_iter().map(|e| normalize_dims(e)).collect());
+        }
+
+        Err(anyhow::anyhow!("no local embedder available"))
+    }
+
     pub async fn embed_description(&self, description: &str) -> anyhow::Result<Vec<f32>> {
         if self.providers.is_empty() {
             return Ok(deterministic_placeholder_embedding(description));
@@ -260,7 +146,6 @@ impl EmbeddingClient {
 
         let truncated = truncate_description(description);
 
-        // 1. Try local embedder first (fast, offline, no API key)
         #[cfg(feature = "tools-local-embeddings")]
         if let Some(local) = &self.local {
             let cloned = local.clone();
@@ -274,7 +159,6 @@ impl EmbeddingClient {
             }
         }
 
-        // 2. Fallback to remote provider chain
         for (i, config) in self.providers.iter().enumerate() {
             match self.embed_with(config, truncated).await {
                 Ok(embedding) => {
@@ -297,14 +181,12 @@ impl EmbeddingClient {
             }
         }
 
-        // All remote providers failed — use deterministic placeholder
         if self.verbose {
             eprintln!("[embed] all remote providers failed, using deterministic fallback");
         }
         Ok(deterministic_placeholder_embedding(description))
     }
 
-    /// Try a single provider config.
     async fn embed_with(
         &self,
         config: &ProviderConfig,
@@ -314,7 +196,6 @@ impl EmbeddingClient {
             Some(key) if !key.is_empty() && key != "your_nvidia_api_key_here" => {
                 self.embed_remote(config, description, key).await
             }
-            // For Ollama and LlamaCpp, no real API key needed — always attempt
             _ if config.provider == EmbeddingProvider::Ollama
                 || config.provider == EmbeddingProvider::LlamaCpp =>
             {
@@ -374,7 +255,16 @@ impl EmbeddingClient {
                         if status.is_success() {
                             return Ok((status, text));
                         }
-                        if status.as_u16() == 429 && attempt + 1 < max_retries {
+                        // Fast-fail on 401/403 — retrying bad credentials will never succeed
+                        let sc = status.as_u16();
+                        if sc == 401 || sc == 403 {
+                            anyhow::bail!(
+                                "embedding endpoint returned {} (auth error): {}",
+                                sc,
+                                &text[..200.min(text.len())]
+                            );
+                        }
+                        if sc == 429 && attempt + 1 < max_retries {
                             let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
                             if self.verbose {
                                 eprintln!(
@@ -387,7 +277,7 @@ impl EmbeddingClient {
                         }
                         anyhow::bail!(
                             "embedding endpoint returned {}: {}",
-                            status.as_u16(),
+                            sc,
                             &text[..200.min(text.len())]
                         );
                     }
@@ -415,6 +305,7 @@ impl EmbeddingClient {
             )
         }
         .await?;
+
         let response: serde_json::Value =
             serde_json::from_str(&resp_text).context("failed to decode embedding response")?;
 
@@ -423,18 +314,14 @@ impl EmbeddingClient {
                 serde_json::from_value(response["embeddings"][0].clone())
             })
             .or_else(|_| {
-                // HuggingFace API returns flat array: [0.1, 0.2, ...]
                 serde_json::from_value(response.clone())
             })
             .context("embedding response did not include data[0].embedding, embeddings[0], or a flat array")?;
 
-        // Normalize to canonical dimension: pad if shorter, truncate if longer
         Ok(normalize_dims(coords))
     }
 }
 
-/// Normalize embedding dimensions to the canonical EMBEDDING_DIMENSIONS.
-/// Pads shorter vectors with zeros, truncates longer ones.
 fn normalize_dims(mut coords: Vec<f32>) -> Vec<f32> {
     if coords.len() < EMBEDDING_DIMENSIONS {
         coords.resize(EMBEDDING_DIMENSIONS, 0.0);
@@ -456,100 +343,6 @@ fn truncate_description(description: &str) -> &str {
     }
 }
 
-// ─── Auto-Detection ──────────────────────────────────────────────
-
-/// Detect all available embedding providers, ordered by preference.
-async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> {
-    let mut providers = Vec::new();
-
-    // 1. Ollama (local, no key needed) — ping health endpoint
-    if is_ollama_running(http).await {
-        let model = std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "mxbai-embed-large".into());
-        let endpoint = std::env::var("EMBEDDING_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:11434/api/embeddings".into());
-        providers.push(ProviderConfig {
-            provider: EmbeddingProvider::Ollama,
-            model: model.clone(),
-            endpoint,
-            api_key: None,
-        });
-    }
-
-    // 2. NVIDIA NIM (cloud)
-    let nvidia_key = std::env::var("NVIDIA_API_KEY")
-        .or_else(|_| std::env::var("EMBEDDING_API_KEY"))
-        .ok()
-        .filter(|k| !k.is_empty() && k != "your_nvidia_api_key_here");
-    if let Some(key) = nvidia_key {
-        providers.push(ProviderConfig {
-            provider: EmbeddingProvider::Nvidia,
-            model: "nvidia/llama-nemotron-embed-1b-v2".into(),
-            endpoint: "https://integrate.api.nvidia.com/v1/embeddings".into(),
-            api_key: Some(key),
-        });
-    }
-
-    // 3. OpenAI (cloud)
-    let openai_key = std::env::var("OPENAI_API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty());
-    if let Some(key) = openai_key {
-        providers.push(ProviderConfig {
-            provider: EmbeddingProvider::OpenAI,
-            model: std::env::var("EMBEDDING_MODEL")
-                .unwrap_or_else(|_| "text-embedding-3-small".into()),
-            endpoint: "https://api.openai.com/v1/embeddings".into(),
-            api_key: Some(key),
-        });
-    }
-
-    // 4. HuggingFace Inference API (cloud, free tier)
-    let hf_key = std::env::var("HF_TOKEN")
-        .or_else(|_| std::env::var("HUGGINGFACE_TOKEN"))
-        .ok()
-        .filter(|k| !k.is_empty());
-    if let Some(key) = hf_key {
-        providers.push(ProviderConfig {
-            provider: EmbeddingProvider::HuggingFace,
-            model: "BAAI/bge-small-en-v1.5".into(),
-            endpoint: "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
-                .into(),
-            api_key: Some(key),
-        });
-    }
-
-    // 5. Moonshot (cloud)
-    let kimi_key = std::env::var("KIMI_API_KEY").ok().filter(|k| !k.is_empty());
-    if let Some(key) = kimi_key {
-        providers.push(ProviderConfig {
-            provider: EmbeddingProvider::Moonshot,
-            model: std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "moonshot-v1-embed".into()),
-            endpoint: "https://api.moonshot.cn/v1/embeddings".into(),
-            api_key: Some(key),
-        });
-    }
-
-    providers
-}
-
-/// Check if Ollama is running locally by hitting its API.
-async fn is_ollama_running(http: &Client) -> bool {
-    match http
-        .get("http://localhost:11434/api/tags")
-        .timeout(std::time::Duration::from_secs(3))
-        .send()
-        .await
-    {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
-    }
-}
-
-// ─── Deterministic Fallback ──────────────────────────────────────
-
-/// Deterministic embedding based on SHA-256 hash of input.
-/// Always produces the same embedding for the same text.
-/// Used as last resort when no remote provider is available.
 pub fn deterministic_placeholder_embedding(input: &str) -> Vec<f32> {
     let mut out = Vec::with_capacity(EMBEDDING_DIMENSIONS);
     let mut seed = Sha256::digest(input.as_bytes()).to_vec();
@@ -572,7 +365,6 @@ pub fn deterministic_placeholder_embedding(input: &str) -> Vec<f32> {
     out
 }
 
-/// Format an embedding vector as a PostgreSQL vector literal.
 pub fn vector_literal(coords: &[f32]) -> String {
     let body = coords
         .iter()
