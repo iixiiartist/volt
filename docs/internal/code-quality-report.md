@@ -30,7 +30,7 @@ Volt is a cautiously production-ready codebase with strong architectural foundat
 
 **PASS** — No remaining Rust source references to `loop_rs`.
 
-The `Agent` struct is defined directly in `src/agent/mod.rs` (no re-export needed). All 14 call sites that previously imported `crate::agent::loop_rs::Agent` or `volt::agent::loop_rs::Agent` (in tests) were updated to `crate::agent::Agent` / `volt::agent::Agent`. The only remaining `loop_rs` references are in documentation files (`REFACTOR_AUDIT.md`, `CODEBASE_MAP.md`, `AGENTS.md`) — these are stale docs but not runtime issues.
+The `Agent` struct is defined directly in `src/agent/mod.rs` (no re-export needed). All 14 call sites that previously imported `crate::agent::loop_rs::Agent` or `volt::agent::loop_rs::Agent` (in tests) were updated to `crate::agent::Agent` / `volt::agent::Agent`. The only remaining `loop_rs` references are in documentation files (`docs/internal/refactor-audit.md`, `docs/internal/codebase-map.md`, `AGENTS.md`) — these are stale docs but not runtime issues.
 
 ### 1.3 Logic Equivalence Check
 
