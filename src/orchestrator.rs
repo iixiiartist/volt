@@ -310,9 +310,8 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // Nvidia NIM — catches native nvidia models + partner models hosted on NIM
-    // Also catches any unknown vendor-prefixed model as a fallback when NVIDIA_API_KEY is available.
-    if m.starts_with("nvlm") || m.contains("nvidia") || is_nim_hosted_model(&m) || is_nim_catchall_candidate(&m) {
+    // Nvidia NIM — catches native nvidia models + explicitly known partner prefixes
+    if m.starts_with("nvlm") || m.contains("nvidia") || is_nim_hosted_model(&m) {
         let api_key = std::env::var("NVIDIA_API_KEY")
             .or_else(|_| std::env::var("LLM_API_KEY"))
             .unwrap_or_default();
@@ -333,7 +332,20 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // ── 4. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
+    // ── 4. NIM catch-all: any unknown vendor-prefixed model routes to NVIDIA
+    //     only when LLM_BASE_URL is not set (Ollama/self-hosted takes priority).
+    if is_nim_catchall_candidate(&m) {
+        let api_key = std::env::var("NVIDIA_API_KEY")
+            .or_else(|_| std::env::var("LLM_API_KEY"))
+            .unwrap_or_default();
+        return ProviderRoute {
+            kind: ProviderKind::OpenAI,
+            base_url: "https://integrate.api.nvidia.com/v1".into(),
+            api_key,
+        };
+    }
+
+    // ── 5. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
     let default_provider = std::env::var("LLM_DEFAULT_PROVIDER")
         .unwrap_or_else(|_| "groq".into())
         .to_lowercase();
