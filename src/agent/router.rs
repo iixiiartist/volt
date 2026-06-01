@@ -59,6 +59,7 @@ Do NOT include any other text, explanation, or markdown."#,
         stop: None,
         tools: None,
         stream: false,
+        ..Default::default()
     };
 
     let response = match llm_client.complete(&request).await {

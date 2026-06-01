@@ -23,6 +23,10 @@ impl MockLLMProvider {
             tool_calls: None,
             finish_reason: Some("stop".into()),
             usage: None,
+            usage_breakdown: None,
+            executed_tools: None,
+            system_fingerprint: None,
+            x_groq: None,
         })
     }
 
@@ -32,6 +36,10 @@ impl MockLLMProvider {
             tool_calls: Some(tools),
             finish_reason: Some("tool_calls".into()),
             usage: None,
+            usage_breakdown: None,
+            executed_tools: None,
+            system_fingerprint: None,
+            x_groq: None,
         })
     }
 }
@@ -46,6 +54,10 @@ impl crate::llm::LLMProvider for MockLLMProvider {
                 tool_calls: None,
                 finish_reason: Some("stop".into()),
                 usage: None,
+                usage_breakdown: None,
+                executed_tools: None,
+                system_fingerprint: None,
+                x_groq: None,
             })
         })
     }

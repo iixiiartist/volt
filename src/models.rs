@@ -240,8 +240,39 @@ pub struct ToolDefinition {
 
 // ─── LLM types ────────────────────────────────────────────────
 
-/// Request payload sent to the LLM — model, messages, tools, temperature.
+/// Structured output mode for Groq/OpenAI response_format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResponseFormat {
+    JsonObject,
+    JsonSchema {
+        name: String,
+        #[serde(default)]
+        strict: bool,
+        schema: Value,
+    },
+    Text,
+}
+
+impl ResponseFormat {
+    pub fn to_request_value(&self) -> Value {
+        match self {
+            ResponseFormat::JsonObject => serde_json::json!({"type": "json_object"}),
+            ResponseFormat::JsonSchema { name, strict, schema } => serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "strict": strict,
+                    "schema": schema,
+                }
+            }),
+            ResponseFormat::Text => serde_json::json!({"type": "text"}),
+        }
+    }
+}
+
+/// Request payload sent to the LLM — model, messages, tools, temperature.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LLMRequest {
     pub model: String,
     pub messages: Vec<LLMMessage>,
@@ -250,6 +281,21 @@ pub struct LLMRequest {
     pub stop: Option<Vec<String>>,
     pub tools: Option<Vec<ToolDefinition>>,
     pub stream: bool,
+    // Groq-specific:
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub reasoning_format: Option<String>,
+    #[serde(default)]
+    pub include_reasoning: Option<bool>,
+    #[serde(default)]
+    pub response_format: Option<ResponseFormat>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
+    #[serde(default)]
+    pub search_settings: Option<Value>,
+    #[serde(default)]
+    pub compound_custom: Option<Value>,
 }
 
 /// A single message in the LLM request format (role + content + optional tool call info).
@@ -268,6 +314,15 @@ pub struct LLMResponse {
     pub tool_calls: Option<Vec<ToolCall>>,
     pub finish_reason: Option<String>,
     pub usage: Option<Usage>,
+    // Groq-specific
+    #[serde(default)]
+    pub usage_breakdown: Option<Vec<ModelUsage>>,
+    #[serde(default)]
+    pub executed_tools: Option<Vec<ExecutedTool>>,
+    #[serde(default)]
+    pub system_fingerprint: Option<String>,
+    #[serde(default)]
+    pub x_groq: Option<Value>,
 }
 
 /// Token usage stats for a single LLM call.
@@ -276,6 +331,44 @@ pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default)]
+    pub queue_time: Option<f64>,
+    #[serde(default)]
+    pub total_time: Option<f64>,
+    #[serde(default)]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+/// Details about prompt token usage (e.g. cached tokens).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u64>,
+}
+
+/// Per-model usage breakdown from Compound System responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelUsage {
+    pub model: String,
+    pub usage: Usage,
+}
+
+/// A tool executed by a Compound System — type, arguments, output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutedTool {
+    pub tool_type: String,
+    pub arguments: Value,
+    pub output: Value,
+    pub search_results: Option<Vec<SearchResult>>,
+}
+
+/// A search result from Groq's built-in web search tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub title: String,
+    pub url: String,
+    pub content: String,
+    pub score: f64,
 }
 
 /// Configuration for an LLM provider — name, API key, base URL, supported models.
@@ -378,7 +471,7 @@ impl std::fmt::Debug for MCPServerConfig {
 }
 
 /// Transport mechanism for an MCP server — HTTP with URL and optional headers, Stdio, WebSocket, or gRPC.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum MCPTransport {
     #[serde(rename = "stdio")]
@@ -405,52 +498,88 @@ pub enum MCPTransport {
     },
 }
 
-impl std::fmt::Debug for MCPTransport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MCPTransport::Stdio { command, args } => f
-                .debug_struct("Stdio")
-                .field("command", command)
-                .field("args", args)
-                .finish(),
-            MCPTransport::Http { url, headers } => {
-                let redacted = headers.as_ref().map(|h| {
-                    h.keys()
-                        .map(|k| (k.clone(), "***".to_string()))
-                        .collect::<HashMap<_, _>>()
-                });
-                f.debug_struct("Http")
-                    .field("url", url)
-                    .field("headers", &redacted)
-                    .finish()
-            }
-            MCPTransport::WebSocket { url, headers } => {
-                let redacted = headers.as_ref().map(|h| {
-                    h.keys()
-                        .map(|k| (k.clone(), "***".to_string()))
-                        .collect::<HashMap<_, _>>()
-                });
-                f.debug_struct("WebSocket")
-                    .field("url", url)
-                    .field("headers", &redacted)
-                    .finish()
-            }
-            MCPTransport::Grpc { url, headers } => {
-                let redacted = headers.as_ref().map(|h| {
-                    h.keys()
-                        .map(|k| (k.clone(), "***".to_string()))
-                        .collect::<HashMap<_, _>>()
-                });
-                f.debug_struct("Grpc")
-                    .field("url", url)
-                    .field("headers", &redacted)
-                    .finish()
-            }
-        }
-    }
+// ─── Groq Audio types ─────────────────────────────────────────
+
+/// Request for Groq's speech-to-text (transcription/translation) endpoints.
+#[derive(Debug, Clone)]
+pub struct AudioRequest {
+    pub file_data: Vec<u8>,
+    pub file_name: String,
+    pub model: String,
+    pub language: Option<String>,
+    pub prompt: Option<String>,
+    pub response_format: Option<String>,
+    pub temperature: Option<f32>,
+    pub timestamp_granularities: Option<Vec<String>>,
 }
 
-// ─── Existing types ───────────────────────────────────────────
+/// Response from Groq's speech-to-text endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioResponse {
+    pub text: String,
+    #[serde(default)]
+    pub x_groq: Option<Value>,
+    #[serde(default)]
+    pub segments: Option<Vec<AudioSegment>>,
+    #[serde(default)]
+    pub task: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+}
+
+/// Request for Groq's text-to-speech endpoint.
+#[derive(Debug, Clone)]
+pub struct TtsRequest {
+    pub model: String,
+    pub input: String,
+    pub voice: String,
+    pub response_format: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub speed: Option<f32>,
+}
+
+/// A segment from a verbose_json transcription response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioSegment {
+    #[serde(default)]
+    pub id: Option<u64>,
+    #[serde(default)]
+    pub seek: Option<u64>,
+    #[serde(default)]
+    pub start: Option<f64>,
+    #[serde(default)]
+    pub end: Option<f64>,
+    pub text: String,
+    #[serde(default)]
+    pub tokens: Option<Vec<u64>>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub avg_logprob: Option<f64>,
+    #[serde(default)]
+    pub compression_ratio: Option<f64>,
+    #[serde(default)]
+    pub no_speech_prob: Option<f64>,
+}
+
+/// Groq Remote MCP connector — maps Groq's MCP connector format to Volt tools.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroqMcpConnector {
+    pub server_label: String,
+    pub server_url: String,
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub connector_id: Option<String>,
+    #[serde(default)]
+    pub authorization: Option<String>,
+    #[serde(default)]
+    pub require_approval: String,
+    #[serde(default)]
+    pub allowed_tools: Option<Vec<String>>,
+}
 
 /// A manifest describing an agent registry entry — name, version, tools, dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize)]

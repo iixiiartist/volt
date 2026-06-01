@@ -91,6 +91,7 @@ impl Agent {
                 stop: None,
                 tools: None,
                 stream: false,
+                ..Default::default()
             };
             if let Ok(plan_response) = self.provider.complete(&plan_request).await {
                 let plan_text = plan_response.content.as_str();
@@ -157,6 +158,7 @@ impl Agent {
                 stop: None,
                 tools: Some(tool_defs),
                 stream: false,
+                ..Default::default()
             };
 
             let response = 'retry: loop {
@@ -1263,12 +1265,17 @@ mod run_tests {
             stop: None,
             tools: None,
             stream: false,
+            ..Default::default()
         };
         let response = LLMResponse {
             content: Arc::new("test response".into()),
             tool_calls: None,
             finish_reason: Some("stop".into()),
             usage: None,
+            usage_breakdown: None,
+            executed_tools: None,
+            system_fingerprint: None,
+            x_groq: None,
         };
         let state = agent.state.lock().await;
         // Should not panic when context_store is None

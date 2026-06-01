@@ -274,6 +274,7 @@ async fn run_category(
             stop: None,
             tools: Some(tool_defs.clone()),
             stream: false,
+            ..Default::default()
         };
 
         let started = Instant::now();

@@ -254,7 +254,14 @@ impl LLMProvider for AnthropicProvider {
                 prompt_tokens: input_tokens,
                 completion_tokens: output_tokens,
                 total_tokens: input_tokens + output_tokens,
+                queue_time: None,
+                total_time: None,
+                prompt_tokens_details: None,
             }),
+            usage_breakdown: None,
+            executed_tools: None,
+            system_fingerprint: None,
+            x_groq: None,
         })
     }
 }
@@ -283,6 +290,9 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
         completion_tokens: u["output_tokens"].as_u64().unwrap_or(0),
         total_tokens: (u["input_tokens"].as_u64().unwrap_or(0)
             + u["output_tokens"].as_u64().unwrap_or(0)),
+        queue_time: None,
+        total_time: None,
+        prompt_tokens_details: None,
     });
 
     Ok(LLMResponse {
@@ -294,5 +304,9 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
         },
         finish_reason: resp["stop_reason"].as_str().map(|s| s.to_string()),
         usage,
+        usage_breakdown: None,
+        executed_tools: None,
+        system_fingerprint: None,
+        x_groq: None,
     })
 }
