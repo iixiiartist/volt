@@ -332,7 +332,31 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // ── 4. NIM catch-all: any unknown vendor-prefixed model routes to NVIDIA
+    // ── 4. Ollama: models with Ollama-style naming (colon-separated tags like `gpt-oss:120b`)
+    //     route to Ollama when OLLAMA_API_KEY is set.
+    if m.contains(':') {
+        let api_key = std::env::var("OLLAMA_API_KEY")
+            .or_else(|_| std::env::var("LLM_API_KEY"))
+            .unwrap_or_default();
+        if !api_key.is_empty() {
+            return ProviderRoute {
+                kind: ProviderKind::OpenAI,
+                base_url: "https://api.ollama.com/v1".into(),
+                api_key,
+            };
+        }
+        // If no Ollama key but base URL is set, use that
+        if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
+            let api_key = std::env::var("LLM_API_KEY").unwrap_or_default();
+            return ProviderRoute {
+                kind: ProviderKind::OpenAI,
+                base_url,
+                api_key,
+            };
+        }
+    }
+
+    // ── 5. NIM catch-all: any unknown vendor-prefixed model routes to NVIDIA
     //     only when LLM_BASE_URL is not set (Ollama/self-hosted takes priority).
     if is_nim_catchall_candidate(&m) {
         let api_key = std::env::var("NVIDIA_API_KEY")
@@ -345,7 +369,7 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // ── 5. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
+    // ── 6. Default: Groq (or `LLM_DEFAULT_PROVIDER`) ──────────────
     let default_provider = std::env::var("LLM_DEFAULT_PROVIDER")
         .unwrap_or_else(|_| "groq".into())
         .to_lowercase();
@@ -365,6 +389,7 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
             let (base_url, key_env) = match default_provider.as_str() {
                 "openai" => ("https://api.openai.com/v1", "OPENAI_API_KEY"),
                 "nvidia" => ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
+                "ollama" => ("https://api.ollama.com/v1", "OLLAMA_API_KEY"),
                 _ => ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
             };
             let api_key = std::env::var(key_env)

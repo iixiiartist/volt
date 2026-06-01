@@ -127,12 +127,24 @@ pub(crate) async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> 
     if is_ollama_running(http).await {
         let model = std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "mxbai-embed-large".into());
         let endpoint = std::env::var("EMBEDDING_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:11434/api/embeddings".into());
+            .unwrap_or_else(|_| "http://localhost:11434/api/embed".into());
         providers.push(ProviderConfig {
             provider: EmbeddingProvider::Ollama,
             model: model.clone(),
             endpoint,
             api_key: None,
+        });
+    }
+
+    // Ollama Cloud embedding (via OLLAMA_API_KEY)
+    if std::env::var("OLLAMA_API_KEY").ok().filter(|k| !k.is_empty()).is_some() {
+        let model = "embeddinggemma".into();
+        let endpoint = "https://api.ollama.com/api/embed".into();
+        providers.push(ProviderConfig {
+            provider: EmbeddingProvider::Ollama,
+            model,
+            endpoint,
+            api_key: Some("ollama".into()), // auth via header, ignored for Ollama
         });
     }
 

@@ -19,6 +19,7 @@ pub mod litertlm;
 pub mod llamacpp;
 pub mod mcp_client;
 pub mod nvidia_cloud_functions;
+pub mod ollama_web_tools;
 pub mod memory_tool;
 pub mod mtp;
 pub mod path;

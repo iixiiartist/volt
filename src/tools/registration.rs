@@ -99,7 +99,12 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         crate::tools::nvidia_cloud_functions::register_nvidia_cloud_functions(&registry);
     }
 
-    // ── Phase 5: CLI gateway (always registered last) ────────────────────
+    // ── Phase 5: Ollama Cloud web tools (requires OLLAMA_API_KEY) ──────────
+    if std::env::var("OLLAMA_API_KEY").is_ok() {
+        crate::tools::ollama_web_tools::register_ollama_web_tools(&registry);
+    }
+
+    // ── Phase 6: CLI gateway (always registered last) ────────────────────
     crate::tools::cli_tools::register_cli_tools(&registry).await;
 
     registry

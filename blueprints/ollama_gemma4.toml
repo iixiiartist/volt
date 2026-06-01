@@ -1,0 +1,19 @@
+id = "ollama_gemma4"
+name = "Ollama Gemma 4"
+description = "Gemma 4 on Ollama Cloud with vision, tools, thinking, and audio"
+
+[model_card]
+model_name = "gemma4:31b"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = ["MissingFinalAnswer", "MultimodalInput"]
+
+[scaffolding]
+max_tools_per_turn = 3
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "ollama_web_fetch", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Gemma 4 on Ollama Cloud. You support vision, tools, thinking, and multimodal understanding."

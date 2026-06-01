@@ -1,0 +1,19 @@
+id = "ollama_gpt_oss"
+name = "Ollama GPT-OSS"
+description = "GPT-OSS hosted on Ollama Cloud with reasoning support"
+
+[model_card]
+model_name = "gpt-oss:120b"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = ["SchemaLimitTen"]
+
+[scaffolding]
+max_tools_per_turn = 5
+strict_mode = true
+
+[tools]
+core_tools = ["ollama_web_search", "ollama_web_fetch", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are GPT-OSS 120B on Ollama Cloud. You support tools, reasoning, and thinking. Use the built-in web search and fetch tools when needed."

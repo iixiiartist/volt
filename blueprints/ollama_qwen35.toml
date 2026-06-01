@@ -1,0 +1,19 @@
+id = "ollama_qwen35"
+name = "Ollama Qwen 3.5"
+description = "Qwen 3.5 on Ollama Cloud with vision, tools, and thinking"
+
+[model_card]
+model_name = "qwen3.5:122b"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = []
+
+[scaffolding]
+max_tools_per_turn = 4
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "ollama_web_fetch", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Qwen 3.5 on Ollama Cloud. You excel at vision-to-text, multi-step reasoning, and coding tasks."

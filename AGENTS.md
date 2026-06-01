@@ -251,6 +251,15 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - **API:** `https://api.nvcf.nvidia.com/v2/nvcf` using `NVIDIA_API_KEY` or `NVCF_API_KEY`
 - **Auto-registered** when key is present; async invocations polled automatically
 
+### Ollama Full Integration (June 2026)
+- **Native Ollama provider** `OllamaProvider` in `src/llm/ollama.rs` — uses Ollama's `/api/chat` format with native `think`/`thinking` support, tool calling, and streaming
+- **Ollama web tools** in `src/tools/ollama_web_tools.rs` — `ollama_web_search` and `ollama_web_fetch` using Ollama Cloud's built-in APIs
+- **Routing:** Models with Ollama's colon-tag naming (e.g., `gpt-oss:120b`, `gemma4:31b`) automatically route to Ollama Cloud when `OLLAMA_API_KEY` is set
+- **`LLM_DEFAULT_PROVIDER=ollama`** routes all unmatched models to `https://api.ollama.com/v1`
+- **Ollama Cloud embedding** auto-detected via `OLLAMA_API_KEY` using `embeddinggemma` at `api.ollama.com/api/embed`
+- **8 Ollama blueprints:** GPT-OSS, DeepSeek V4 Pro/Flash, Gemma 4, Qwen 3.5, Nemotron-3 Super, GLM 5.1, MiniMax M2.7
+- **Blueprint count: 37** (19 Groq + 8 NIM + 8 Ollama + 2 Edge)
+
 ### Full Test Suite: 198 Tests Passing
 - 198 unit tests (`cargo test --lib --features testutils`) — up from 99
 - 24 professional workflow tests (`tests/professional_workflows.rs`)

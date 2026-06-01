@@ -1,8 +1,10 @@
 pub mod anthropic;
+pub mod ollama;
 pub mod openai;
 pub mod provider;
 pub mod riva;
 pub use anthropic::AnthropicProvider;
+pub use ollama::OllamaProvider;
 pub use openai::OpenAIProvider;
 pub use provider::LLMProvider;
 pub use riva::RivaProvider;
