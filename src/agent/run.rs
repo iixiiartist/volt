@@ -158,6 +158,7 @@ impl Agent {
                 stop: None,
                 tools: Some(tool_defs),
                 stream: false,
+                strict_mode: self.config.strict_mode,
                 ..Default::default()
             };
 

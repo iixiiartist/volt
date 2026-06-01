@@ -32,21 +32,88 @@ impl OpenAIProvider {
     }
 }
 
-fn build_request_body(request: &LLMRequest) -> serde_json::Value {
-    let tools = request.tools.as_ref().map(|ts| {
-        ts.iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.input_schema
-                    }
-                })
+/// Build a strict JSON Schema for structured outputs that guarantees
+/// the model's response conforms to Volt's tool call format.
+/// When strict_mode is enabled, this schema is sent as response_format
+/// instead of using the traditional tools array.
+fn build_strict_response_schema(tools: &[crate::models::ToolDefinition]) -> serde_json::Value {
+    // Build one branch per tool in an anyOf
+    let tool_branches: Vec<serde_json::Value> = tools
+        .iter()
+        .map(|t| {
+            let mut args_schema = t.input_schema.clone();
+            // Ensure additionalProperties: false for strictness
+            if let Some(obj) = args_schema.as_object_mut() {
+                obj.insert("additionalProperties".into(), serde_json::Value::Bool(false));
+            }
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "const": t.name },
+                    "arguments": args_schema
+                },
+                "required": ["name", "arguments"],
+                "additionalProperties": false
             })
-            .collect::<Vec<_>>()
-    });
+        })
+        .collect();
+
+    let tool_calls_schema = if tool_branches.len() == 1 {
+        json!({
+            "type": "array",
+            "items": tool_branches.into_iter().next().unwrap()
+        })
+    } else {
+        json!({
+            "type": "array",
+            "items": {
+                "anyOf": tool_branches
+            }
+        })
+    };
+
+    json!({
+        "type": "object",
+        "properties": {
+            "reasoning": {
+                "type": "string",
+                "description": "Optional chain-of-thought or planning text before taking action"
+            },
+            "tool_calls": tool_calls_schema,
+            "content": {
+                "type": "string",
+                "description": "Direct text response to the user. Use this when no tools are needed."
+            }
+        },
+        "required": ["content"],
+        "additionalProperties": false
+    })
+}
+
+fn build_request_body(request: &LLMRequest) -> serde_json::Value {
+    // When strict_mode is enabled, use structured outputs (json_schema response_format)
+    // instead of the traditional tools array. This guarantees 100% schema conformance
+    // and eliminates the need for client-side AST coercion / parse_lossy_json.
+    let use_structured_output = request.strict_mode;
+
+    let tools = if use_structured_output {
+        None
+    } else {
+        request.tools.as_ref().map(|ts| {
+            ts.iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.input_schema
+                        }
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+    };
 
     // Build messages with optional vision content (image_url) support
     let messages: Vec<serde_json::Value> = request
@@ -86,6 +153,22 @@ fn build_request_body(request: &LLMRequest) -> serde_json::Value {
 
     if let Some(ts) = tools {
         body["tools"] = json!(ts);
+    }
+    // Native structured outputs: guarantee schema conformance via API-level constraint
+    if use_structured_output {
+        if let Some(ref defs) = request.tools {
+            let schema = build_strict_response_schema(defs);
+            body["response_format"] = json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "volt_tool_calls",
+                    "strict": true,
+                    "schema": schema
+                }
+            });
+        }
+        // Force the model to generate a response (not just "stop" with empty content)
+        body["tool_choice"] = json!("none");
     }
     if let Some(v) = &request.reasoning_effort {
         body["reasoning_effort"] = json!(v);
@@ -522,28 +605,62 @@ impl LLMProvider for OpenAIProvider {
     }
 }
 
+/// Parse a structured output response (strict_mode) where the content field
+/// contains a JSON object with tool_calls and content fields.
+fn parse_structured_output(content_str: &str) -> Option<(Vec<ToolCall>, String)> {
+    let parsed = serde_json::from_str::<serde_json::Value>(content_str).ok()?;
+    let text_content = parsed.get("content")?.as_str()?.to_string();
+
+    let calls: Vec<ToolCall> = if let Some(tool_calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
+        tool_calls
+            .iter()
+            .filter_map(|tc| {
+                let name = tc.get("name")?.as_str()?.to_string();
+                let args = tc.get("arguments")?.clone();
+                Some(ToolCall {
+                    id: format!("call_{}", uuid::Uuid::new_v4().to_string()[..8].to_string()),
+                    name,
+                    arguments: args,
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Some((calls, text_content))
+}
+
 fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse> {
     let choice = &resp["choices"][0];
     let message = &choice["message"];
-    let content = Arc::new(message["content"].as_str().unwrap_or_default().to_string());
+    let raw_content = message["content"].as_str().unwrap_or_default().to_string();
 
-    let tool_calls = message["tool_calls"].as_array().map(|arr| {
-        arr.iter()
-            .map(|tc| {
-                let args_val = &tc["function"]["arguments"];
-                let arguments = if args_val.is_string() {
-                    parse_lossy_json(args_val.as_str().unwrap_or("{}"))
-                } else {
-                    args_val.clone()
-                };
-                ToolCall {
-                    id: tc["id"].as_str().unwrap_or("").to_string(),
-                    name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                    arguments,
-                }
-            })
-            .collect()
-    });
+    // Check if this is a structured output response (strict_mode)
+    // In strict mode, content is a JSON string with tool_calls + content fields
+    let (tool_calls, content) = if let Some((calls, text)) = parse_structured_output(&raw_content) {
+        (Some(calls), Arc::new(text))
+    } else {
+        // Traditional tool_call format
+        let calls = message["tool_calls"].as_array().map(|arr| {
+            arr.iter()
+                .map(|tc| {
+                    let args_val = &tc["function"]["arguments"];
+                    let arguments = if args_val.is_string() {
+                        parse_lossy_json(args_val.as_str().unwrap_or("{}"))
+                    } else {
+                        args_val.clone()
+                    };
+                    ToolCall {
+                        id: tc["id"].as_str().unwrap_or("").to_string(),
+                        name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                        arguments,
+                    }
+                })
+                .collect()
+        });
+        (calls, Arc::new(raw_content))
+    };
 
     let usage = resp["usage"].as_object().map(|u| Usage {
         prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
@@ -583,4 +700,201 @@ fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse>
         system_fingerprint: resp["system_fingerprint"].as_str().map(|s| s.to_string()),
         x_groq: resp.get("x_groq").cloned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{LLMMessage, ToolDefinition};
+
+    #[test]
+    fn test_build_strict_response_schema_basic() {
+        let tools = vec![
+            ToolDefinition {
+                name: "read".into(),
+                description: "Read a file".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    },
+                    "required": ["path"]
+                }),
+                category: "builtin".into(),
+            },
+            ToolDefinition {
+                name: "write".into(),
+                description: "Write a file".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "content": { "type": "string" }
+                    },
+                    "required": ["path", "content"]
+                }),
+                category: "builtin".into(),
+            },
+        ];
+
+        let schema = build_strict_response_schema(&tools);
+
+        // Top level is an object
+        assert_eq!(schema["type"], "object");
+        // Has properties: reasoning, tool_calls, content
+        assert!(schema["properties"]["reasoning"].is_object());
+        assert!(schema["properties"]["tool_calls"].is_object());
+        assert!(schema["properties"]["content"].is_object());
+        // Required includes content
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "content"));
+        // additionalProperties is false
+        assert_eq!(schema["additionalProperties"], false);
+
+        // tool_calls is an array
+        let tc_schema = &schema["properties"]["tool_calls"];
+        assert_eq!(tc_schema["type"], "array");
+
+        // items has anyOf with 2 branches (one per tool)
+        let items = tc_schema["items"].as_object().unwrap();
+        let any_of = items["anyOf"].as_array().unwrap();
+        assert_eq!(any_of.len(), 2);
+
+        // First branch has const name = "read"
+        assert_eq!(any_of[0]["properties"]["name"]["const"], "read");
+        // Second branch has const name = "write"
+        assert_eq!(any_of[1]["properties"]["name"]["const"], "write");
+
+        // Each branch has additionalProperties: false
+        assert_eq!(any_of[0]["additionalProperties"], false);
+        assert_eq!(any_of[1]["additionalProperties"], false);
+    }
+
+    #[test]
+    fn test_build_strict_response_schema_single_tool() {
+        let tools = vec![ToolDefinition {
+            name: "bash".into(),
+            description: "Run shell".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string" }
+                },
+                "required": ["command"]
+            }),
+            category: "builtin".into(),
+        }];
+
+        let schema = build_strict_response_schema(&tools);
+        let tc_schema = &schema["properties"]["tool_calls"];
+
+        // Single tool: no anyOf wrapper, just the single branch as items
+        assert!(tc_schema["items"]["anyOf"].is_null());
+        assert_eq!(tc_schema["items"]["properties"]["name"]["const"], "bash");
+    }
+
+    #[test]
+    fn test_parse_structured_output_valid() {
+        let json = r#"{"reasoning": "Need to read config", "tool_calls": [{"name": "read", "arguments": {"path": "config.toml"}}], "content": ""}"#;
+        let (calls, text) = parse_structured_output(json).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read");
+        assert_eq!(calls[0].arguments["path"], "config.toml");
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_parse_structured_output_no_tools() {
+        let json = r#"{"content": "Hello world"}"#;
+        let (calls, text) = parse_structured_output(json).unwrap();
+        assert!(calls.is_empty());
+        assert_eq!(text, "Hello world");
+    }
+
+    #[test]
+    fn test_parse_structured_output_multiple_tools() {
+        let json = r#"{"tool_calls": [{"name": "read", "arguments": {"path": "a.txt"}}, {"name": "write", "arguments": {"path": "b.txt", "content": "hi"}}], "content": ""}"#;
+        let (calls, text) = parse_structured_output(json).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "read");
+        assert_eq!(calls[1].name, "write");
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_parse_structured_output_invalid_json() {
+        assert!(parse_structured_output("not json").is_none());
+        assert!(parse_structured_output("{}").is_none()); // missing content field
+    }
+
+    #[test]
+    fn test_build_request_body_strict_mode() {
+        let tools = vec![ToolDefinition {
+            name: "read".into(),
+            description: "Read".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+            category: "builtin".into(),
+        }];
+
+        let request = LLMRequest {
+            model: "gpt-4o".into(),
+            messages: vec![LLMMessage {
+                role: "user".into(),
+                content: Arc::new("hello".into()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            strict_mode: true,
+            tools: Some(tools),
+            ..Default::default()
+        };
+
+        let body = build_request_body(&request);
+
+        // Should NOT have tools array
+        assert!(body.get("tools").is_none());
+        // Should have response_format with json_schema
+        let rf = body["response_format"].as_object().unwrap();
+        assert_eq!(rf["type"], "json_schema");
+        let js = rf["json_schema"].as_object().unwrap();
+        assert_eq!(js["name"], "volt_tool_calls");
+        assert_eq!(js["strict"], true);
+        assert!(js["schema"].is_object());
+        // Should have tool_choice: none
+        assert_eq!(body["tool_choice"], "none");
+    }
+
+    #[test]
+    fn test_build_request_body_non_strict_mode() {
+        let tools = vec![ToolDefinition {
+            name: "read".into(),
+            description: "Read".into(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            category: "builtin".into(),
+        }];
+
+        let request = LLMRequest {
+            model: "gpt-4o".into(),
+            messages: vec![LLMMessage {
+                role: "user".into(),
+                content: Arc::new("hello".into()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            strict_mode: false,
+            tools: Some(tools),
+            ..Default::default()
+        };
+
+        let body = build_request_body(&request);
+
+        // Should have tools array
+        assert!(body["tools"].is_array());
+        // Should NOT have response_format json_schema
+        assert!(body.get("response_format").is_none());
+    }
 }

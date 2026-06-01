@@ -296,6 +296,10 @@ pub struct LLMRequest {
     pub search_settings: Option<Value>,
     #[serde(default)]
     pub compound_custom: Option<Value>,
+    /// When true, use native structured outputs (json_schema response_format)
+    /// instead of traditional tool calling. Guarantees schema conformance.
+    #[serde(default)]
+    pub strict_mode: bool,
 }
 
 /// A single message in the LLM request format (role + content + optional tool call info).
