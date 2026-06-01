@@ -1,0 +1,20 @@
+id = "groq_compound_mini"
+name = "Groq Compound System Mini"
+description = "Single-tool route with 3x lower latency than full Compound System"
+
+[model_card]
+model_name = "groq/compound-mini"
+provider = "groq"
+format_dialect = "ChatMlTools"
+quirks = ["CompoundSystem", "UsageBreakdown", "SingleToolPerRequest"]
+
+[scaffolding]
+max_tools_per_turn = 1
+strict_mode = true
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write"]
+builtin_tools = ["web_search", "code_interpreter", "visit_website"]
+
+[prompts]
+system_prompt_override = "You are a lightweight Compound System. Take exactly ONE tool action per request for minimal latency."

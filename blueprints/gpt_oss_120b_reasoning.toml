@@ -1,0 +1,19 @@
+id = "gpt_oss_120b_reasoning"
+name = "GPT-OSS 120B Reasoning"
+description = "Reasoning-optimized variant with chain-of-thought and structured reasoning output"
+
+[model_card]
+model_name = "openai/gpt-oss-120b"
+provider = "groq"
+format_dialect = "ChatMlTools"
+quirks = ["DeepReasoning", "ReasoningEffortHigh", "SchemaLimitTen"]
+
+[scaffolding]
+max_tools_per_turn = 5
+strict_mode = true
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are a reasoning-optimized GPT-OSS 120B. Show your chain-of-thought, use high reasoning effort, and provide structured answers."

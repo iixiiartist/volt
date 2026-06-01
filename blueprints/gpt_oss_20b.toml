@@ -1,0 +1,19 @@
+id = "gpt_oss_20b"
+name = "GPT-OSS 20B Fast"
+description = "Fast, lightweight Groq model with tools and reasoning at ~1000 tps"
+
+[model_card]
+model_name = "openai/gpt-oss-20b"
+provider = "groq"
+format_dialect = "ChatMlTools"
+quirks = ["StringifiedBooleans", "StringifiedIntegers"]
+
+[scaffolding]
+max_tools_per_turn = 5
+strict_mode = false
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are GPT-OSS 20B, a fast Groq model at ~1000 tps. Use tools to assist the user efficiently."

@@ -1,0 +1,19 @@
+id = "llama_4_scout_mcp"
+name = "Llama 4 Scout MCP"
+description = "MCP-optimized variant for remote tool discovery and invocation"
+
+[model_card]
+model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
+provider = "groq"
+format_dialect = "LlamaChat"
+quirks = ["MCPNative", "RemoteToolDiscovery"]
+
+[scaffolding]
+max_tools_per_turn = 8
+strict_mode = true
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write", "browser_navigate", "browser_extract", "create_pdf"]
+
+[prompts]
+system_prompt_override = "You are an MCP-enabled Llama 4 Scout. Discover and invoke remote tools via the Model Context Protocol. Use connected MCP servers when available."

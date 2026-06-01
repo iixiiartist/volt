@@ -1,0 +1,20 @@
+id = "groq_compound"
+name = "Groq Compound System"
+description = "Multi-model router with up to 10 tool calls, web search, code interpreter, Wolfram Alpha"
+
+[model_card]
+model_name = "groq/compound"
+provider = "groq"
+format_dialect = "ChatMlTools"
+quirks = ["CompoundSystem", "UsageBreakdown", "UpTo10Tools", "BuiltinSearch", "BuiltinCodeInterpreter"]
+
+[scaffolding]
+max_tools_per_turn = 10
+strict_mode = true
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write", "browser_navigate", "browser_extract", "wolfram_alpha"]
+builtin_tools = ["web_search", "code_interpreter", "visit_website", "browser_automation", "wolfram_alpha"]
+
+[prompts]
+system_prompt_override = "You are a Compound System that routes complex requests to specialized component models. You can use up to 10 tools per request."

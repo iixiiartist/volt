@@ -1,0 +1,19 @@
+id = "orpheus_arabic"
+name = "Orpheus TTS Arabic"
+description = "Neural text-to-speech for Saudi Arabic dialect"
+
+[model_card]
+model_name = "canopylabs/orpheus-arabic-saudi"
+provider = "groq"
+format_dialect = "AudioSynthesis"
+quirks = ["VoiceSelection", "SpeedControl", "ArabicDialectSA"]
+
+[scaffolding]
+max_tools_per_turn = 1
+strict_mode = false
+
+[tools]
+core_tools = []
+
+[prompts]
+system_prompt_override = "You are a text-to-speech model for Saudi Arabic. Convert text to natural Arabic speech with proper dialectal pronunciation."

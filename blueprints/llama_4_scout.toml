@@ -1,0 +1,19 @@
+id = "llama_4_scout"
+name = "Llama 4 Scout 17B"
+description = "Multimodal MoE model with vision, tools, JSON schema, and MCP support"
+
+[model_card]
+model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
+provider = "groq"
+format_dialect = "LlamaChat"
+quirks = ["MarkdownCodeBlocks", "MultimodalInput"]
+
+[scaffolding]
+max_tools_per_turn = 5
+strict_mode = true
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write", "browser_navigate", "browser_extract"]
+
+[prompts]
+system_prompt_override = "You are Llama 4 Scout, a multimodal MoE model at ~750 tps. You support vision, tools, JSON schema, and MCP."
