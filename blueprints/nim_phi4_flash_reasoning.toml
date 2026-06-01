@@ -1,0 +1,19 @@
+id = "nim_phi4_flash_reasoning"
+name = "NVIDIA NIM Phi-4 Mini Flash Reasoning"
+description = "Fast reasoning — tool support unconfirmed on NIM"
+
+[model_card]
+model_name = "microsoft/phi-4-mini-flash-reasoning"
+provider = "nvidia"
+format_dialect = "ChatMlTools"
+quirks = ["ChainOfThoughtLeak", "NoToolCalling"]
+
+[scaffolding]
+max_tools_per_turn = 0
+strict_mode = false
+
+[tools]
+core_tools = []
+
+[prompts]
+system_prompt_override = "You are Phi-4 Mini Flash Reasoning on NVIDIA NIM. Fast chain-of-thought reasoning, no tool calling."

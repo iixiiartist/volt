@@ -6,7 +6,7 @@ description = "Vision-optimized variant for image analysis tasks"
 model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
 provider = "groq"
 format_dialect = "LlamaChat"
-quirks = ["MultimodalInput", "ImageDetailAuto"]
+quirks = ["MultimodalInput"]
 
 [scaffolding]
 max_tools_per_turn = 3

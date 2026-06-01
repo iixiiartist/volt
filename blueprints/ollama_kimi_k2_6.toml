@@ -1,0 +1,19 @@
+id = "ollama_kimi_k2_6"
+name = "Ollama Kimi K2.6"
+description = "256K ctx, 1.04T params, vision+text, tool calling + thinking — Ollama Cloud only"
+
+[model_card]
+model_name = "kimi-k2.6:cloud"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = ["SchemaLimitTen", "MultimodalInput", "ThinkingEnabled"]
+
+[scaffolding]
+max_tools_per_turn = 6
+strict_mode = true
+
+[tools]
+core_tools = ["ollama_web_search", "ollama_web_fetch", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Kimi K2.6 on Ollama Cloud. Native agentic model with tool use, thinking, and vision."

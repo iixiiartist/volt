@@ -1,0 +1,19 @@
+id = "ollama_rnj_1"
+name = "Ollama RNJ 1 8B"
+description = "32K ctx, 8B dense — code+STEM, BFCL leader, tool calling ✅"
+
+[model_card]
+model_name = "rnj-1:8b-cloud"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = []
+
+[scaffolding]
+max_tools_per_turn = 3
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are RNJ 1 8B on Ollama Cloud. Compact model with top BFCL tool calling."

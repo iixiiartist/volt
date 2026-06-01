@@ -6,7 +6,7 @@ pub async fn register_memory_tools(registry: &Arc<ToolRegistry>) {
     registry
         .register(
             "memory_append",
-            "Append to persistent memory file",
+            "Append to persistent memory file. Use ONLY when you learn something important about the user's preferences, project setup, or recurring patterns that should be remembered across sessions. Do NOT use for temporary conversation context or trivial information.",
             serde_json::json!({
                 "type": "object",
                 "properties": {

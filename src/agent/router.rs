@@ -23,9 +23,8 @@ pub fn get_active_providers() -> Vec<String> {
         providers.push("anthropic".to_string());
     }
 
-    // Local fallbacks: assume always available if no remote key is set,
-    // or if the user has explicitly configured them.
-    if std::env::var("OLLAMA_HOST").is_ok() {
+    // Ollama: local (OLLAMA_HOST) or cloud (OLLAMA_API_KEY)
+    if std::env::var("OLLAMA_HOST").is_ok() || std::env::var("OLLAMA_API_KEY").is_ok() {
         providers.push("ollama".to_string());
     }
     if std::env::var("LLAMA_CPP_HOST").is_ok() {
@@ -237,6 +236,7 @@ mod tests {
             },
             tools: ToolSelection {
                 core_tools: vec!["bash".into()],
+                builtin_tools: vec![],
             },
             prompts: PromptOverrides {
                 system_prompt_override: None,

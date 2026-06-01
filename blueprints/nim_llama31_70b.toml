@@ -1,0 +1,19 @@
+id = "nim_llama31_70b"
+name = "NVIDIA NIM Llama 3.1 70B Instruct"
+description = "Tool calling ✅ — output capped at 4096 tokens on NIM"
+
+[model_card]
+model_name = "meta/llama-3.1-70b-instruct"
+provider = "nvidia"
+format_dialect = "LlamaChat"
+quirks = ["StringifiedBooleans", "MaxOutput4096"]
+
+[scaffolding]
+max_tools_per_turn = 4
+strict_mode = false
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Llama 3.1 70B Instruct on NVIDIA NIM. Strong tool use, 4096 max output."

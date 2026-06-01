@@ -1,19 +1,19 @@
 id = "nim_deepseek_v4_pro"
 name = "NVIDIA NIM DeepSeek V4 Pro"
-description = "1M-token context MoE for complex agentic coding on NVIDIA NIM"
+description = "1M-token context MoE — NO tool calling on NIM, uses reasoning_effort on chat template"
 
 [model_card]
 model_name = "deepseek-ai/deepseek-v4-pro"
 provider = "nvidia"
 format_dialect = "ChatMlTools"
-quirks = []
+quirks = ["NoToolCalling", "ReasoningEffort"]
 
 [scaffolding]
-max_tools_per_turn = 5
+max_tools_per_turn = 0
 strict_mode = false
 
 [tools]
-core_tools = ["web_search", "bash", "read", "write", "create_bar_chart", "create_line_chart"]
+core_tools = []
 
 [prompts]
-system_prompt_override = "You are DeepSeek V4 Pro, a 1M-token context MoE hosted on NVIDIA NIM. You excel at complex agentic coding tasks."
+system_prompt_override = "You are DeepSeek V4 Pro on NVIDIA NIM with 1M token context. You do NOT support tool calling — respond with text only."

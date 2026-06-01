@@ -5,8 +5,8 @@ description = "Lightweight prompt injection detection at 22M parameters"
 [model_card]
 model_name = "meta-llama/llama-prompt-guard-2-22m"
 provider = "groq"
-format_dialect = "Classification"
-quirks = ["BinaryInjectionScore"]
+format_dialect = "GemmaNative"
+quirks = ["NoToolCalling"]
 
 [scaffolding]
 max_tools_per_turn = 0

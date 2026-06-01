@@ -5,8 +5,8 @@ description = "Neural text-to-speech for Saudi Arabic dialect"
 [model_card]
 model_name = "canopylabs/orpheus-arabic-saudi"
 provider = "groq"
-format_dialect = "AudioSynthesis"
-quirks = ["VoiceSelection", "SpeedControl", "ArabicDialectSA"]
+format_dialect = "GemmaNative"
+quirks = ["NoToolCalling"]
 
 [scaffolding]
 max_tools_per_turn = 1

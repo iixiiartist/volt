@@ -3,7 +3,7 @@ name = "NVIDIA NIM GLM 5.1"
 description = "Flagship LLM for agentic workflows and long-horizon reasoning on NVIDIA NIM"
 
 [model_card]
-model_name = "zhipuai/glm-5.1"
+model_name = "z-ai/glm5.1"
 provider = "nvidia"
 format_dialect = "StandardXml"
 quirks = ["StringifiedBooleans", "StringifiedIntegers"]

@@ -1,0 +1,19 @@
+id = "ollama_qwen3"
+name = "Ollama Qwen 3"
+description = "40K–256K ctx (by variant), 0.6B–235B, tool calling + thinking, 100+ languages"
+
+[model_card]
+model_name = "qwen3"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = ["ThinkingEnabled"]
+
+[scaffolding]
+max_tools_per_turn = 3
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Qwen 3 on Ollama Cloud. Multilingual model with tool calling and configurable thinking."

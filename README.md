@@ -1,6 +1,6 @@
 # Volt — The Autonomous Systems Engine
 
-> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 50+ built-in tools. ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
+> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 38 active tools (dynamically gated by env vars). ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
@@ -18,7 +18,7 @@ Key design decisions:
 - **Everything-as-RAG**: 12 context kinds dynamically retrievable from unified vector store
 - **Background Auto-Seeding Worker**: MPSC channel daemon maintains context autonomously via Tokio
 - **Four-Pillar Eviction**: Semantic dedup, per-kind quotas, composite scores, episodic merging
-- **50+ Built-in Tools**: File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser, MCP, CLI gateway
+- **38 Active Tools** (dynamically retrieved via RAG): File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser, MCP, CLI gateway. Broken/optional tools auto-gated by env vars.
 - **Multi-Agent Orchestration**: Parallel, pipeline, supervisor, supervisor-agenda, and DAG patterns
 - **pgvector Persistence**: PostgreSQL with HNSW indexes, context survives restarts
 - **Hardware-Accelerated ONNX Runtime**: ort with DirectML/OpenVINO/CUDA fallback chain — auto-detects Intel NPU/GPU, NVIDIA GPU, or CPU
@@ -125,14 +125,14 @@ Full 17-category BFCL v4 sweep pending. All failures were Groq API schema valida
 
 **Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200+ distractors (Volt RAG benchmark, 50-case ablation verified).
 
-### Built-in Tools (43+)
+### Built-in Tools (38 active, 55+ total)
 
 | Category | Tools | Feature Flag |
 |---|---|---|
 | **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | built-in |
 | **Shell** | `bash` | built-in |
 | **Web** | `web_fetch`, `web_scrape`, `web_scrape_all`, `web_search`, `you_research`, `you_contents` | built-in |
-| **Data** | `json_validate`, `json_prettify`, `json_query`, `csv_read`, `csv_write`, `archive_extract`, `archive_create` | built-in |
+| **Data** | `csv_read`, `csv_write`, `archive_extract`, `archive_create`, `create_bar_chart`, `create_line_chart`, `create_pdf` | built-in / feature-gated |
 | **Memory** | `memory_append`, `todo_add` | built-in |
 | **Git** | `git_status`, `git_diff`, `git_diff_unstaged`, `git_diff_staged`, `git_add`, `git_commit`, `git_reset`, `git_log`, `git_branch`, `git_checkout`, `git_show`, `git_create_branch` | built-in |
 | **Time** | `get_current_time`, `convert_time` | built-in |
@@ -145,13 +145,13 @@ Full 17-category BFCL v4 sweep pending. All failures were Groq API schema valida
 
 ### Embedding
 
-Hardware-accelerated ONNX Runtime (ort) with auto-detecting Execution Provider fallback chain: OpenVINO → DirectML → CUDA → CPU. Uses `Xenova/bge-small-en-v1.5` (384d, int8 quantized, ~60MB). Configure via `VOLT_ONNX_MODEL_DIR` or `EMBEDDING_MODEL`. Falls back to deterministic SHA-256 placeholder + BM25 hybrid retrieval when no network or local model is available.
+Hardware-accelerated ONNX Runtime (ort) with auto-detecting Execution Provider fallback chain: OpenVINO → DirectML → CUDA → CPU. Uses `Xenova/bge-large-en-v1.5` (1024d, int8 quantized, ~337MB). Configure via `VOLT_ONNX_MODEL_DIR` or `EMBEDDING_MODEL`. Falls back to deterministic SHA-256 placeholder + BM25 hybrid retrieval when no network or local model is available.
 
 > **MSVC build required:** ort prebuilt binaries ship for `x86_64-pc-windows-msvc` only. Build from source with VS 2022 Build Tools and the MSVC Rust toolchain (`rustup default stable-x86_64-pc-windows-msvc`).
 
 ### MCP Protocol Server
 
-Volt exposes its full 50+ tool registry over the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) — the open standard for AI tool integration. Run `volt mcp-serve` to start the stdio server, then connect any MCP-compatible client (Claude Desktop, Cline, Goose, etc.).
+Volt exposes its full 38+ tool registry over the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) — the open standard for AI tool integration. Run `volt mcp-serve` to start the stdio server, then connect any MCP-compatible client (Claude Desktop, Cline, Goose, etc.).
 
 - **Full lifecycle**: `initialize` handshake with capability declaration (`protocolVersion: 2024-11-05`), `notifications/initialized` support
 - **Stdout-safe**: All JSON-RPC messages go to stdout; tracing/logging routes to stderr — no protocol corruption
@@ -166,7 +166,7 @@ The `tools-mcp-grpc` feature flag enables a gRPC MCP transport (`MCPTransport::G
 
 Agent Blueprints are TOML profiles that constrain the agent loop for small/edge models (<8B parameters). They compensate for common failure modes via **cognitive scaffolding** and **AST-level quirk coercion**.
 
-**Two production blueprints** ship in `blueprints/`:
+**67 production blueprints** ship in `blueprints/` across Groq (19), NVIDIA NIM (20), Ollama Cloud (25), and Edge (3):
 
 | Blueprint | Model | Dialect | Quirks | Mode |
 |---|---|---|---|---|
@@ -341,7 +341,7 @@ url = "postgres://volt:volt@localhost:5432/volt"
 # Full test suite
 cargo test --features testutils
 
-# Unit tests (63)
+# Unit tests (198)
 cargo test --lib --features testutils
 
 # Professional workflow tests (24)

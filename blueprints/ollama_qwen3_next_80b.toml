@@ -1,0 +1,19 @@
+id = "ollama_qwen3_next_80b"
+name = "Ollama Qwen 3 Next 80B"
+description = "256K ctx, 80B/3B active MoE — agentic tasks, tool calling + thinking"
+
+[model_card]
+model_name = "qwen3-next:80b-cloud"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = ["SchemaLimitTen", "ThinkingEnabled"]
+
+[scaffolding]
+max_tools_per_turn = 5
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Qwen 3 Next 80B on Ollama Cloud. MoE model for complex agentic tasks."

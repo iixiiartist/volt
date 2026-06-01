@@ -9,8 +9,8 @@ pub async fn register_web_tools(registry: &Arc<ToolRegistry>) {
 
     registry
         .register_with_permission(
-            "web_fetch",
-            "Fetch a URL and return its content",
+                "web_fetch",
+                "Fetch a URL and return its content. Use ONLY when the user asks for information from a specific URL or when web_search results point to a page you need to read. Do NOT use for general questions you can answer from your training data.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -82,7 +82,7 @@ pub async fn register_web_tools(registry: &Arc<ToolRegistry>) {
         registry
             .register(
                 "web_search",
-                "Search the web for real-time information using you.com Search API. Returns structured results with titles, URLs, description, and full page content in Markdown. Use this when you need current information from the internet.",
+                "Search the web for real-time information using you.com Search API. Use ONLY when the user asks for current events, real-time data, or facts that may have changed after your training cutoff. Do NOT use for timeless facts, math, code explanations, or general knowledge you already know.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {

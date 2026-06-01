@@ -1,0 +1,19 @@
+id = "ollama_devstral_small_2"
+name = "Ollama Devstral Small 2 24B"
+description = "256K ctx, 24B, agentic coding — SWE-bench 65.8%, tool calling ✅"
+
+[model_card]
+model_name = "devstral-small-2:24b-cloud"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = []
+
+[scaffolding]
+max_tools_per_turn = 4
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Devstral Small 2 24B on Ollama Cloud. Agentic coding specialist with SWE-bench 65.8%."

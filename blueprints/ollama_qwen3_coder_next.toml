@@ -1,0 +1,19 @@
+id = "ollama_qwen3_coder_next"
+name = "Ollama Qwen 3 Coder Next"
+description = "256K ctx, 80B/3B active MoE — code-only, non-thinking, tool calling ✅"
+
+[model_card]
+model_name = "qwen3-coder-next:cloud"
+provider = "ollama"
+format_dialect = "ChatMlTools"
+quirks = ["NonThinking"]
+
+[scaffolding]
+max_tools_per_turn = 4
+strict_mode = false
+
+[tools]
+core_tools = ["ollama_web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Qwen 3 Coder Next on Ollama Cloud. Pure non-thinking code model with tool calling."

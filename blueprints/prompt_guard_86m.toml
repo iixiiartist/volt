@@ -5,8 +5,8 @@ description = "Multilingual prompt injection detection at 86M parameters, 99.8% 
 [model_card]
 model_name = "meta-llama/llama-prompt-guard-2-86m"
 provider = "groq"
-format_dialect = "Classification"
-quirks = ["BinaryInjectionScore", "Multilingual"]
+format_dialect = "GemmaNative"
+quirks = ["NoToolCalling"]
 
 [scaffolding]
 max_tools_per_turn = 0

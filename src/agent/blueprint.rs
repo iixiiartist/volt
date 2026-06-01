@@ -77,6 +77,51 @@ pub enum ModelQuirk {
     /// Model tends to skip the final_answer call; inject a forced-final system message
     #[serde(rename = "MissingFinalAnswer")]
     MissingFinalAnswer,
+    /// Model does NOT support tool calling on this provider
+    #[serde(rename = "NoToolCalling")]
+    NoToolCalling,
+    /// Model uses reasoning_effort parameter (DeepSeek-style)
+    #[serde(rename = "ReasoningEffort")]
+    ReasoningEffort,
+    /// API returns 202 Accepted; caller must poll for completion
+    #[serde(rename = "AsyncPolling")]
+    AsyncPolling,
+    /// Model accepts multimodal input (images, video, audio)
+    #[serde(rename = "MultimodalInput")]
+    MultimodalInput,
+    /// Max output tokens capped below model's native limit (e.g. 4096 on NIM)
+    #[serde(rename = "MaxOutput4096")]
+    MaxOutput4096,
+    /// Max context window capped at 4096
+    #[serde(rename = "MaxContext4096")]
+    MaxContext4096,
+    /// Model is deprecated but still accessible on this provider
+    #[serde(rename = "Deprecated")]
+    Deprecated,
+    /// Model supports configurable thinking/reasoning mode
+    #[serde(rename = "ThinkingEnabled")]
+    ThinkingEnabled,
+    /// Model runs in non-thinking mode only (fast path)
+    #[serde(rename = "NonThinking")]
+    NonThinking,
+    /// Model is a Compound System orchestrator, not a raw LLM
+    #[serde(rename = "CompoundSystem")]
+    CompoundSystem,
+    /// Compound system returns per-model usage breakdown
+    #[serde(rename = "UsageBreakdown")]
+    UsageBreakdown,
+    /// Supports up to 10 tool calls per turn
+    #[serde(rename = "UpTo10Tools")]
+    UpTo10Tools,
+    /// Has built-in web search capability
+    #[serde(rename = "BuiltinSearch")]
+    BuiltinSearch,
+    /// Has built-in code interpreter
+    #[serde(rename = "BuiltinCodeInterpreter")]
+    BuiltinCodeInterpreter,
+    /// Tends to wrap code blocks in markdown triple backticks
+    #[serde(rename = "MarkdownCodeBlocks")]
+    MarkdownCodeBlocks,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +133,8 @@ pub struct ScaffoldingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSelection {
     pub core_tools: Vec<String>,
+    #[serde(default)]
+    pub builtin_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

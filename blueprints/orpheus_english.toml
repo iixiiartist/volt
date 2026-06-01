@@ -5,8 +5,8 @@ description = "Neural text-to-speech for English with natural prosody"
 [model_card]
 model_name = "canopylabs/orpheus-v1-english"
 provider = "groq"
-format_dialect = "AudioSynthesis"
-quirks = ["VoiceSelection", "SpeedControl"]
+format_dialect = "GemmaNative"
+quirks = ["NoToolCalling"]
 
 [scaffolding]
 max_tools_per_turn = 1

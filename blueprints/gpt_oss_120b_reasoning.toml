@@ -6,7 +6,7 @@ description = "Reasoning-optimized variant with chain-of-thought and structured 
 model_name = "openai/gpt-oss-120b"
 provider = "groq"
 format_dialect = "ChatMlTools"
-quirks = ["DeepReasoning", "ReasoningEffortHigh", "SchemaLimitTen"]
+quirks = ["ThinkingEnabled", "ReasoningEffort", "SchemaLimitTen"]
 
 [scaffolding]
 max_tools_per_turn = 5

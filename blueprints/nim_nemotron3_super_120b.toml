@@ -1,19 +1,19 @@
 id = "nim_nemotron3_super_120b"
 name = "NVIDIA NIM Nemotron-3 Super 120B"
-description = "Hybrid Mamba-Transformer MoE flagship for multi-agent orchestration on NVIDIA NIM"
+description = "1M-ctx hybrid Mamba-Transformer MoE — NO tool param in NIM API schema"
 
 [model_card]
 model_name = "nvidia/nemotron-3-super-120b-a12b"
 provider = "nvidia"
 format_dialect = "LlamaChat"
-quirks = ["ChainOfThoughtLeak"]
+quirks = ["ChainOfThoughtLeak", "NoToolCalling"]
 
 [scaffolding]
-max_tools_per_turn = 6
+max_tools_per_turn = 0
 strict_mode = false
 
 [tools]
-core_tools = ["web_search", "bash", "read", "write", "browser_navigate", "browser_extract", "create_bar_chart", "create_line_chart"]
+core_tools = []
 
 [prompts]
-system_prompt_override = "You are Nemotron-3 Super 120B, a hybrid Mamba-Transformer MoE on NVIDIA NIM. You are the ultimate multi-agent orchestrator."
+system_prompt_override = "You are Nemotron-3 Super 120B on NVIDIA NIM with 1M context. You do NOT support tool calling via NIM API."

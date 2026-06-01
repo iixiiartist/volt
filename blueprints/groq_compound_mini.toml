@@ -6,7 +6,7 @@ description = "Single-tool route with 3x lower latency than full Compound System
 model_name = "groq/compound-mini"
 provider = "groq"
 format_dialect = "ChatMlTools"
-quirks = ["CompoundSystem", "UsageBreakdown", "SingleToolPerRequest"]
+quirks = ["CompoundSystem", "UsageBreakdown", "MultiToolParalysis"]
 
 [scaffolding]
 max_tools_per_turn = 1

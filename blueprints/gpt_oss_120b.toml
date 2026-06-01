@@ -1,6 +1,6 @@
 id = "gpt_oss_120b"
 name = "GPT-OSS 120B Flagship"
-description = "Most capable Groq model with vision, reasoning, tools, and structured outputs"
+description = "Most capable Groq model with reasoning_effort, built-in tools (search/code/browser), structured outputs"
 
 [model_card]
 model_name = "openai/gpt-oss-120b"

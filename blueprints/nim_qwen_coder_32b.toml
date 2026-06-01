@@ -1,0 +1,19 @@
+id = "nim_qwen_coder_32b"
+name = "NVIDIA NIM Qwen 2.5 Coder 32B"
+description = "Code-specialized model — tool support unconfirmed on NIM"
+
+[model_card]
+model_name = "qwen/qwen2.5-coder-32b-instruct"
+provider = "nvidia"
+format_dialect = "ChatMlTools"
+quirks = ["NoToolCalling"]
+
+[scaffolding]
+max_tools_per_turn = 0
+strict_mode = false
+
+[tools]
+core_tools = []
+
+[prompts]
+system_prompt_override = "You are Qwen 2.5 Coder 32B on NVIDIA NIM. Code generation and analysis specialist."

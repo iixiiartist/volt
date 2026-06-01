@@ -1,0 +1,19 @@
+id = "nim_phi4_mini"
+name = "NVIDIA NIM Phi-4 Mini Instruct"
+description = "Small fast model — tool support unconfirmed on NIM"
+
+[model_card]
+model_name = "microsoft/phi-4-mini-instruct"
+provider = "nvidia"
+format_dialect = "ChatMlTools"
+quirks = ["NoToolCalling"]
+
+[scaffolding]
+max_tools_per_turn = 0
+strict_mode = false
+
+[tools]
+core_tools = []
+
+[prompts]
+system_prompt_override = "You are Phi-4 Mini Instruct on NVIDIA NIM. Fast and efficient for text tasks."

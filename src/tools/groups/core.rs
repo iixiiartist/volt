@@ -11,7 +11,7 @@ pub async fn register_core_tools(registry: &Arc<ToolRegistry>) {
         registry
             .register_with_permission(
                 "bash",
-                "Execute a shell command",
+                "Execute a shell command. Use ONLY for tasks that require external programs, compilation, file system operations, or system administration. Do NOT use for simple text answers, math, or reasoning — answer those directly.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -57,8 +57,8 @@ pub async fn register_core_tools(registry: &Arc<ToolRegistry>) {
 
     registry
         .register_with_permission(
-            "write",
-            "Write content to a file at any path on the filesystem. This is the ONLY way to save text to a file. Use this after web_search, web_fetch, bash, or any other data-gathering tool to persist results. Creates the file if it does not exist, overwrites if it does.",
+                "write",
+                "Write content to a file at any path on the filesystem. Use ONLY when the user explicitly asks you to save something to disk, or when you have gathered data (via web_search, bash, etc.) that needs to be persisted. Do NOT use this to write your conversational response — just reply in text. Creates parent directories and the file if missing, overwrites if it exists.",
             serde_json::json!({
                 "type": "object",
                 "properties": {

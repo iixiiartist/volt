@@ -1,15 +1,25 @@
 ## Volt Project — Current State
 
-### Tools built (all compile, all tested)
-| Category | Tools | Feature Flag |
+### Tools built (55+ total, 38 active by default)
+| Category | Tools | Gating |
 |---|---|---|
-| **Screenshot** | `screenshot` | tools-screenshot |
-| **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
-| **PDF** | `create_pdf` | tools-pdf |
-| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop |
-| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser |
-| **MCP client** | `MCPClient` with Bearer token auth | built-in |
-| **SearchHQ MCP** | `register_searchhq_tools()` — 19 tools into ToolRegistry | built-in |
+| **Core** | `read`, `write`, `edit`, `bash`, `glob`, `grep`, `final_answer` | `bash` hidden in `VOLT_BFCL_MODE` |
+| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all`, `web_search`, `you_research`, `you_contents` | Search tools require `YOUCOM_API_KEY`; 3 hidden in `VOLT_BFCL_MODE` |
+| **Memory** | `memory_append`, `todo_add` | Always |
+| **Data** | `csv_read`, `csv_write`, `archive_extract`, `archive_create`, `create_bar_chart`, `create_line_chart`, `create_pdf` | Charts/PDF/Desktop/Browser hidden in `VOLT_MINIMAL_TOOLS`; PDF requires `tools-pdf` feature |
+| **Git** | `git_status`, `git_diff_unstaged`, `git_diff_staged`, `git_diff`, `git_commit`, `git_add`, `git_reset`, `git_log`, `git_create_branch`, `git_checkout`, `git_show`, `git_branch` | Always |
+| **Time & Sequential** | `get_current_time`, `convert_time`, `sequentialthinking` | Always |
+| **Orchestration** | `delegate`, `run_workflow` | Always |
+| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | `tools-desktop` feature + not `VOLT_MINIMAL_TOOLS` |
+| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | `tools-browser` feature + not `VOLT_MINIMAL_TOOLS` |
+| **LLM Local** | `litertlm`, `llamacpp`, `mtp` | `VOLT_ENABLE_LOCAL_LLM_TOOLS=1` + binary on disk |
+| **NVIDIA Cloud** | `nvidia_list_functions`, `nvidia_call_function`, `nvidia_deploy_function` | `NVIDIA_API_KEY` or `NVCF_API_KEY` |
+| **Ollama Web** | `ollama_web_search`, `ollama_web_fetch` | `OLLAMA_API_KEY` |
+| **CLI Gateway** | `cli_exec`, `cli_query` | `VOLT_ENABLE_CLI_TOOLS=1` |
+| **MCP Client** | `MCPClient` with Bearer token auth | Built-in |
+| **SearchHQ MCP** | `register_searchhq_tools()` — 19 tools into ToolRegistry | Built-in |
+
+> **Note:** The `screenshot` tool (desktop screenshot) exists in `src/tools/screenshot.rs` behind the `tools-screenshot` feature but is **not currently registered** in the tool registry. It is dead code until wired into a tool group.
 
 ### Unified Context Store ("Everything-as-RAG")
 All 12 context fields embedded and dynamically retrievable via `ContextStore`:
@@ -58,7 +68,7 @@ Three bugs fixed in SearchHQ MCP server (deployed via `npx netlify deploy --buil
 | Worst case | TF-IDF | TF-IDF | 68% | -6pp |
 
 Key finding: tool selection embedding quality is the dominant signal (+12pp). Context enrichment requires a fully-seeded store to cross into positive ROI. Full BFCL run: 470 cases, ~$0.37 total, 74% token savings, +4.8pp accuracy.
-- ProgramBench: 25 coding puzzles
+- ProgramBench: 8 coding puzzles (`tests/program_bench.rs`)
 - BFCL v4: 4,241 cases across 17 categories (simple_python, parallel, multiple, live_simple, multi-turn, etc.)
 - `rust bfcl_bench` (`src/bin/bfcl_bench.rs`) — Rust-native runner replacing deprecated `volt_bench.py`
 - All run on Groq at ~$0.05–$0.59/1M tokens depending on model
@@ -267,7 +277,80 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - 1 program benchmark (`tests/program_bench.rs`)
 - 1 BFCL pipeline test (requires `GROQ_API_KEY`, times out in CI without network)
 
-### Blueprint Catalog: 29 Profiles
+### Blueprint Catalog: 67 Profiles
 - **Groq fleet (19):** GPT-OSS 120B/20B/Safeguard, Llama 3.3 70B/3.1 8B/4 Scout, Qwen 3 32B, Whisper V3/Turbo, Orpheus EN/AR, Prompt Guard 22M/86M, Compound/Mini, + variants (vision, reasoning, MCP)
-- **NVIDIA NIM (8):** DeepSeek V4 Pro, Qwen 3.5 122B, Gemma 4 31B, GLM 5.1, Nemotron-3 Super 120B/Nano Omni, Step 3.7 Flash, MiniMax M2.7
-- **Edge (2):** Gemma 4 E2B Voice, Llama 3 8B Local
+- **NVIDIA NIM (20):** DeepSeek V4 Pro/Flash, Qwen 3.5 122B, Qwen Coder 32B, QwQ 32B, Gemma 3 27B, Gemma 4 31B, GLM 5.1, Llama 3.1 8B/70B, Llama 3.3 70B, MiniMax M2.5/M2.7, Mixtral 8x22B, Nemotron-3 Super 120B/Nano Omni, Phi-4 Flash Reasoning, Phi-4 Mini, Step 3.7 Flash, Kimi K2
+- **Ollama Cloud (25):** GPT-OSS, DeepSeek V3.2/V4 Pro/V4 Flash, Devstral Small 2, Gemma 4, Gemini 3 Flash, GLM 4.7/5/5.1/OCR, Kimi K2.6, MiniMax M2.1/M2.5/M2.7/M3, Nemotron Super/Nano, Qwen 3/3.5/3 Coder Next/3 Next 80B, RNJ-1
+- **Edge (3):** Gemma 4 E2B Voice, Llama 3 8B Local, Allam 2 7B
+
+### Tool Gating & System Prompt Hardening (June 2026)
+- **Problem:** Models were calling broken/optional tools (`litertlm`, `cli_exec`) for simple text questions instead of answering directly
+- **System prompt** (`src/agent/prompt.rs`): Added clear "WHEN TO ANSWER DIRECTLY" vs "WHEN TO USE TOOLS" guidance. Models now instructed to answer simple factual questions in plain text without calling tools
+- **Tool descriptions** (`src/tools/groups/`): Added `[LOCAL ONLY]`, `[ENTERPRISE ONLY]` prefixes and "Do NOT use for..." scoping to high-risk tools (`bash`, `write`, `web_fetch`, `web_search`, `memory_append`, `cli_exec`, `cli_query`)
+- **Write tool robustness** (`src/tools/write_tool.rs`): Auto-creates parent directories before writing, preventing "path not found" errors on nested paths
+
+**New opt-in env vars (tools only register when set):**
+| Env Var | Tools Gated | Description |
+|---|---|---|
+| `VOLT_ENABLE_LOCAL_LLM_TOOLS=1` | `litertlm`, `llamacpp`, `mtp` | Local inference binaries (LiteRT-LM, llama.cpp) |
+| `VOLT_ENABLE_CLI_TOOLS=1` | `cli_exec`, `cli_query` | Enterprise CLI gateway (task, hledger, etc.) |
+| `VOLT_MINIMAL_TOOLS=1` | Charts, PDF, Desktop, Browser | Minimal toolset for benchmarks |
+| `VOLT_BFCL_MODE=1` | `bash`, `web_search`, `you_research`, `you_contents` | BFCL benchmark mode |
+
+**Already gated by API key:**
+| Key | Tools |
+|---|---|
+| `NVIDIA_API_KEY` / `NVCF_API_KEY` | `nvidia_list_functions`, `nvidia_call_function`, `nvidia_deploy_function` |
+| `OLLAMA_API_KEY` | `ollama_web_search`, `ollama_web_fetch` |
+| `YOUCOM_API_KEY` | `web_search`, `you_research`, `you_contents` |
+
+**Core LLM / Routing env vars:**
+| Env Var | Description |
+|---|---|
+| `LLM_MODEL` | Default model ID (e.g. `llama-3.1-8b-instant`, `qwen/qwen3-32b`) |
+| `LLM_API_KEY` | Generic fallback API key used when provider-specific key is absent |
+| `LLM_BASE_URL` | Override base URL for OpenAI-compatible providers |
+| `LLM_MODEL_ROUTES` | JSON string for custom provider routing overrides |
+| `LLM_DEFAULT_PROVIDER` | Default provider slug (`groq`, `ollama`, `nvidia`, `anthropic`, `openai`) |
+| `OLLAMA_HOST` | Local Ollama host (e.g. `http://127.0.0.1:11434`) |
+| `LLAMA_CPP_HOST` | Local llama.cpp server host |
+| `LITERTLM_HOST` | Local LiteRT-LM server host |
+
+**Embedding env vars:**
+| Env Var | Description |
+|---|---|
+| `EMBEDDING_PROVIDER` | Provider: `nvidia`, `ollama`, `openai`, `hf`, `local`, `kimi` |
+| `EMBEDDING_ENDPOINT` | Custom embedding API endpoint URL |
+| `EMBEDDING_API_KEY` | Generic embedding API key (NVIDIA default) |
+| `EMBEDDING_MODEL` | Model ID for embeddings (default: `Xenova/bge-large-en-v1.5`) |
+| `VOLT_ONNX_MODEL_DIR` | Local path to ONNX model + tokenizer for local embedder |
+
+**Sandbox / Security env vars:**
+| Env Var | Description |
+|---|---|
+| `VOLT_SANDBOX_TIMEOUT_MS` | Sandbox command timeout (default: 5000) |
+| `VOLT_SANDBOX_MAX_STDOUT_BYTES` | Max stdout bytes from sandbox (default: 262144) |
+| `VOLT_ALLOWED_HOSTS` | Comma-separated host whitelist for `web_fetch` |
+| `VOLT_COMMAND_GUARD` | Set to `false` to disable bash command guard |
+| `VOLT_FAILURE_TRACKING` | Set to `false` to disable automatic tool failure tracking |
+| `VOLT_FAILURE_THRESHOLD` | Integer threshold for auto-disabling failing tools |
+| `VOLT_LEAK_DETECTOR` | Set to `false` to disable output leak detection |
+| `VOLT_WRAP_TOOL_OUTPUT` | Control tool output wrapping in agent loop |
+| `SANDBOX_SHELL` | Override shell binary for sandbox execution |
+
+**Local LLM binary env vars:**
+| Env Var | Description |
+|---|---|
+| `VOLT_TOOL_BIN_DIR` | Directory containing `litert_lm.exe` and `llama.exe` |
+
+**Registry / Telemetry env vars:**
+| Env Var | Description |
+|---|---|
+| `VOLT_REGISTRY_BASE_URL` | Volt registry base URL |
+| `VOLT_REGISTRY_TOKEN` | Volt registry authentication token |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry OTLP endpoint for telemetry export |
+
+**Deprecated:**
+| Env Var | Status |
+|---|---|
+| `KIMI_API_KEY` / `KIMI_EMBEDDING_MODEL` | Deprecated — use `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` |

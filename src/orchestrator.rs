@@ -341,7 +341,7 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         if !api_key.is_empty() {
             return ProviderRoute {
                 kind: ProviderKind::OpenAI,
-                base_url: "https://api.ollama.com/v1".into(),
+                base_url: "https://ollama.com/v1".into(),
                 api_key,
             };
         }
@@ -389,7 +389,7 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
             let (base_url, key_env) = match default_provider.as_str() {
                 "openai" => ("https://api.openai.com/v1", "OPENAI_API_KEY"),
                 "nvidia" => ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
-                "ollama" => ("https://api.ollama.com/v1", "OLLAMA_API_KEY"),
+                "ollama" => ("https://ollama.com/v1", "OLLAMA_API_KEY"),
                 _ => ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
             };
             let api_key = std::env::var(key_env)

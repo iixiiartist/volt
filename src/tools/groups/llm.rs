@@ -4,13 +4,14 @@ use crate::tools::registry::ToolRegistry;
 use std::sync::Arc;
 
 pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
-    // LiteRT-LM local inference tool
+    // LiteRT-LM local inference tool — requires VOLT_ENABLE_LOCAL_LLM_TOOLS=1 + binary on disk
     let litertlm_path = std::env::var("VOLT_TOOL_BIN_DIR")
         .map(|d| std::path::PathBuf::from(d).join("litert_lm.exe"))
         .unwrap_or_else(|_| std::path::PathBuf::from("litert_lm.exe"));
+    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && litertlm_path.exists() {
     registry.register(
         "litertlm",
-        "Run local inference via LiteRT-LM (Gemma-4 E4B, etc). Usage: {'model': 'path/to/model', 'prompt': '...', 'max_tokens': 256}",
+        "[LOCAL ONLY] Run a local LiteRT-LM inference binary (e.g., Gemma-4 E4B). Do NOT use this for answering user questions — you are the LLM, answer directly. Only use this if you specifically need to run a separate local model.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -45,14 +46,16 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
             })
         }),
     ).await;
+    }
 
-    // llama.cpp local inference tool
+    // llama.cpp local inference tool — requires VOLT_ENABLE_LOCAL_LLM_TOOLS=1 + binary on disk
     let llamacpp_path = std::env::var("VOLT_TOOL_BIN_DIR")
         .map(|d| std::path::PathBuf::from(d).join("llama.exe"))
         .unwrap_or_else(|_| std::path::PathBuf::from("llama.exe"));
+    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && llamacpp_path.exists() {
     registry.register(
         "llamacpp",
-        "Run local inference via llama.cpp (Gemma-4 31B, etc). Usage: {'model': 'path/to/model.gguf', 'prompt': '...', 'context_size': 4096}",
+        "[LOCAL ONLY] Run a local llama.cpp inference binary (e.g., Gemma-4 31B). Do NOT use this for answering user questions — you are the LLM, answer directly. Only use this if you specifically need to run a separate local model.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -87,8 +90,16 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
             })
         }),
     ).await;
+    }
 
-    // MTP (Multimodal Token Prediction) tool
+    // MTP (Multimodal Token Prediction) tool — only register if at least one framework binary exists
+    let litertlm_for_mtp = std::env::var("VOLT_TOOL_BIN_DIR")
+        .map(|d| std::path::PathBuf::from(d).join("litert_lm.exe"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("litert_lm.exe"));
+    let llamacpp_for_mtp = std::env::var("VOLT_TOOL_BIN_DIR")
+        .map(|d| std::path::PathBuf::from(d).join("llama.exe"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("llama.exe"));
+    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && (litertlm_for_mtp.exists() || llamacpp_for_mtp.exists()) {
     registry.register(
         "mtp",
         "Run MTP using a draft model + full model. Usage: {'draft_model': 'path/to/draft', 'full_model': 'path/to/full', 'prompt': '...', 'framework': 'litertlm|llamacpp'}",
@@ -129,4 +140,5 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
             }
         })),
     ).await;
+    }
 }

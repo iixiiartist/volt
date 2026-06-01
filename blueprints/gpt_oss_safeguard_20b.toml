@@ -5,8 +5,8 @@ description = "Safety-focused model with policy-following moderation and Harmony
 [model_card]
 model_name = "openai/gpt-oss-safeguard-20b"
 provider = "groq"
-format_dialect = "Harmony"
-quirks = ["StringifiedBooleans", "PolicyGuard"]
+format_dialect = "GemmaNative"
+quirks = ["StringifiedBooleans", "NoToolCalling"]
 
 [scaffolding]
 max_tools_per_turn = 1

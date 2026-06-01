@@ -21,7 +21,7 @@ pub async fn register_cli_tools(registry: &ToolRegistry) {
     registry
         .register(
             "cli_exec",
-            "Execute a whitelisted enterprise CLI binary (task, crm, hledger, khal, vdirsyncer, qsv, himalaya) with precise structured arguments. Returns stdout, stderr, and exit code. No shell piping or chaining. Use when you need to mutate state (add a task, send email) or get raw text output.",
+            "[ENTERPRISE ONLY] Execute a whitelisted enterprise CLI binary (task, crm, hledger, khal, vdirsyncer, qsv, himalaya). Requires VOLT_ENABLE_CLI_TOOLS=1. Use ONLY when the user explicitly asks you to run one of these specific business tools. Do NOT use for general queries or data the user did not request.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -46,7 +46,7 @@ pub async fn register_cli_tools(registry: &ToolRegistry) {
     registry
         .register_with_permission(
             "cli_query",
-            "Execute a whitelisted CLI binary and return structured JSON output. Automatically parses stdout as JSON if possible, otherwise wraps as text payload. Use for read-only queries like listing tasks, checking balances, or exporting data.",
+            "[ENTERPRISE ONLY] Execute a whitelisted CLI binary and return structured JSON output. Requires VOLT_ENABLE_CLI_TOOLS=1. Use ONLY for read-only queries on the specific business tools listed above, when the user explicitly requests it.",
             serde_json::json!({
                 "type": "object",
                 "properties": {

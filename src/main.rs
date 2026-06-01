@@ -207,7 +207,20 @@ enum AgentSubcommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
+    // Load .env with fallback to binary directory (handles CWD edge cases on Windows)
+    if dotenvy::dotenv().is_err() {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let _ = dotenvy::from_path(&dir.join(".env"));
+            }
+        }
+    }
+    // Verify critical keys are present; warn if missing before telemetry is up
+    for key in &["GROQ_API_KEY", "NVIDIA_API_KEY", "OLLAMA_API_KEY", "HF_TOKEN"] {
+        if std::env::var(key).map_or(true, |v| v.is_empty() || v.starts_with("your_")) {
+            eprintln!("[warn] {} not set or still has placeholder value", key);
+        }
+    }
     volt::telemetry::init_otel("volt");
     let cli = Cli::parse();
     volt::config::first_run_wizard();

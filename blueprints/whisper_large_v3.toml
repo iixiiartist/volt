@@ -5,8 +5,8 @@ description = "High-accuracy speech-to-text in 99+ languages, 189x real-time"
 [model_card]
 model_name = "whisper-large-v3"
 provider = "groq"
-format_dialect = "AudioTranscription"
-quirks = ["TimestampGranularities", "Multilingual99"]
+format_dialect = "GemmaNative"
+quirks = ["NoToolCalling"]
 
 [scaffolding]
 max_tools_per_turn = 1

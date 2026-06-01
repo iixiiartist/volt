@@ -104,8 +104,10 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         crate::tools::ollama_web_tools::register_ollama_web_tools(&registry);
     }
 
-    // ── Phase 6: CLI gateway (always registered last) ────────────────────
-    crate::tools::cli_tools::register_cli_tools(&registry).await;
+    // ── Phase 6: CLI gateway (requires VOLT_ENABLE_CLI_TOOLS=1) ─────────
+    if std::env::var("VOLT_ENABLE_CLI_TOOLS").as_deref() == Ok("1") {
+        crate::tools::cli_tools::register_cli_tools(&registry).await;
+    }
 
     registry
 }

@@ -1,0 +1,19 @@
+id = "nim_deepseek_v4_flash"
+name = "NVIDIA NIM DeepSeek V4 Flash"
+description = "1M-ctx fast MoE — NO tool calling on NIM, reasoning_effort only"
+
+[model_card]
+model_name = "deepseek-ai/deepseek-v4-flash"
+provider = "nvidia"
+format_dialect = "ChatMlTools"
+quirks = ["NoToolCalling", "ReasoningEffort"]
+
+[scaffolding]
+max_tools_per_turn = 0
+strict_mode = false
+
+[tools]
+core_tools = []
+
+[prompts]
+system_prompt_override = "You are DeepSeek V4 Flash on NVIDIA NIM with 1M context. Fast inference, no tool calling."

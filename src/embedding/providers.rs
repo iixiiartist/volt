@@ -136,17 +136,8 @@ pub(crate) async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> 
         });
     }
 
-    // Ollama Cloud embedding (via OLLAMA_API_KEY)
-    if std::env::var("OLLAMA_API_KEY").ok().filter(|k| !k.is_empty()).is_some() {
-        let model = "embeddinggemma".into();
-        let endpoint = "https://api.ollama.com/api/embed".into();
-        providers.push(ProviderConfig {
-            provider: EmbeddingProvider::Ollama,
-            model,
-            endpoint,
-            api_key: Some("ollama".into()), // auth via header, ignored for Ollama
-        });
-    }
+    // NOTE: Ollama Cloud does NOT support embeddings (confirmed by maintainer Mar 2026).
+    // Use local ONNX BGE, NVIDIA NIM, OpenAI, or HF instead.
 
     let nvidia_key = std::env::var("NVIDIA_API_KEY")
         .or_else(|_| std::env::var("EMBEDDING_API_KEY"))

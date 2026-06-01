@@ -6,7 +6,7 @@ description = "MCP-optimized variant for remote tool discovery and invocation"
 model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
 provider = "groq"
 format_dialect = "LlamaChat"
-quirks = ["MCPNative", "RemoteToolDiscovery"]
+quirks = []
 
 [scaffolding]
 max_tools_per_turn = 8
