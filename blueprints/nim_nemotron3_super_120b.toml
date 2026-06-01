@@ -1,0 +1,19 @@
+id = "nim_nemotron3_super_120b"
+name = "NVIDIA NIM Nemotron-3 Super 120B"
+description = "Hybrid Mamba-Transformer MoE flagship for multi-agent orchestration on NVIDIA NIM"
+
+[model_card]
+model_name = "nvidia/nemotron-3-super-120b-a12b"
+provider = "nvidia"
+format_dialect = "LlamaChat"
+quirks = ["ChainOfThoughtLeak"]
+
+[scaffolding]
+max_tools_per_turn = 6
+strict_mode = false
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write", "browser_navigate", "browser_extract", "create_bar_chart", "create_line_chart"]
+
+[prompts]
+system_prompt_override = "You are Nemotron-3 Super 120B, a hybrid Mamba-Transformer MoE on NVIDIA NIM. You are the ultimate multi-agent orchestrator."

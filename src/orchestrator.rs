@@ -194,6 +194,66 @@ fn escape_braces(s: &str) -> String {
     s.replace('{', "{{").replace('}', "}}")
 }
 
+/// Vendor prefixes for models available on NVIDIA NIM (integrate.api.nvidia.com).
+/// Models from these vendors are served through NIM when NVIDIA_API_KEY is set.
+/// This list covers the full catalog from docs.api.nvidia.com.
+const NIM_VENDOR_PREFIXES: &[&str] = &[
+    "abacusai/",
+    "arc/",
+    "bytedance/",
+    "baai/",
+    "black-forest-labs/",
+    "colabfold/",
+    "deepmind/",
+    "deepseek-ai/",
+    "google/",
+    "hive/",
+    "ipd/",
+    "meta/",
+    "microsoft/",
+    "minimaxai/",
+    "mistralai/",
+    "mit/",
+    "moonshotai/",
+    "nvidia/",
+    "openfold/",
+    "qwen/",
+    "sarvamai/",
+    "snowflake/",
+    "stabilityai/",
+    "stepfun-ai/",
+    "stockmark/",
+    "upstage/",
+    "z-ai/",
+    "zhipuai/",
+];
+
+/// Vendor prefixes served through Groq's API (these should NOT route to NVIDIA
+/// even when NVIDIA_API_KEY is set, since Groq also hosts them).
+const GROQ_VENDOR_PREFIXES: &[&str] = &[
+    "openai/gpt-oss-",
+    "meta-llama/",
+    "canopylabs/",
+];
+
+/// Check if a model name matches a known NIM-hosted vendor prefix.
+fn is_nim_hosted_model(model: &str) -> bool {
+    let m = model.to_lowercase();
+    NIM_VENDOR_PREFIXES.iter().any(|prefix| m.starts_with(prefix))
+}
+
+/// Check if model has a vendor prefix (contains '/') and is not a known
+/// Groq-hosted model. Used as a catch-all to route unknown vendor-prefixed
+/// models to NVIDIA NIM when NVIDIA_API_KEY is available.
+fn is_nim_catchall_candidate(model: &str) -> bool {
+    let m = model.to_lowercase();
+    if !m.contains('/') {
+        return false;
+    }
+    // Exclude known Groq-hosted prefixes
+    !GROQ_VENDOR_PREFIXES.iter().any(|prefix| m.starts_with(prefix))
+}
+
 pub fn resolve_provider(model: &str) -> ProviderRoute {
     let m = model.to_lowercase();
 
@@ -250,8 +310,9 @@ pub fn resolve_provider(model: &str) -> ProviderRoute {
         };
     }
 
-    // Nvidia NIM
-    if m.starts_with("nvlm") || m.contains("nvidia") {
+    // Nvidia NIM — catches native nvidia models + partner models hosted on NIM
+    // Also catches any unknown vendor-prefixed model as a fallback when NVIDIA_API_KEY is available.
+    if m.starts_with("nvlm") || m.contains("nvidia") || is_nim_hosted_model(&m) || is_nim_catchall_candidate(&m) {
         let api_key = std::env::var("NVIDIA_API_KEY")
             .or_else(|_| std::env::var("LLM_API_KEY"))
             .unwrap_or_default();

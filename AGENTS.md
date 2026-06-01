@@ -189,16 +189,7 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 | **Bonus** | RRF fusion benchmark | Rank fusion correctness |
 | **Bonus** | Tokenizer benchmark (1000 strings) | Tokenization performance |
 
-### Full Test Suite: 99 Tests Passing
-- 63 unit tests (`cargo test --lib --features testutils`)
-- 24 professional workflow tests (`tests/professional_workflows.rs`)
-- 11 real-world benchmark tests (`tests/real_world_benchmarks.rs`) — NEW
-- 1 program benchmark (`tests/program_bench.rs`)
-- 1 BFCL pipeline test (requires `GROQ_API_KEY`, times out in CI without network)
 
-### Source Changes for Test Support
-- `src/orchestrator.rs`: `topological_sort()` and `execution_levels()` made `pub` (were `fn`)
-- `src/mcp/server.rs`: `McpAppState` struct + fields made `pub`
 
 ### Windows Build (MSVC, May 2026)
 - **Root cause:** Default toolchain was `x86_64-pc-windows-gnu` (MinGW/GCC), which links against `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, `libwinpthread-1.dll`. These MinGW DLLs are not present on vanilla Windows systems.
@@ -228,3 +219,46 @@ qwen3-32b is the only model with perfect tool selection on all 3 simple_python c
 - **Stdout safety:** all `tracing` output already routes to stderr (`with_writer(std::io::stderr)`); `tools/list` and `tools/call` write only JSON-RPC to stdout
 - **Capability declaration version:** `2024-11-05` (current MCP spec)
 - **Security:** `tools/call` routes through `execute_gated()` — same permission/approval layer as internal agents
+
+### Groq Ecosystem Integration (May 2026)
+- **Audio APIs:** `transcribe()`, `translate()`, `synthesize()` in `LLMProvider` trait with default no-op impls; Groq multipart upload in `OpenAIProvider`
+- **Compound Systems:** `usage_breakdown` + `executed_tools` parsing from Groq compound responses; mapped to Volt's DAG workflow architecture
+- **Reasoning:** `reasoning_effort`, `reasoning_format`, `include_reasoning` fields in `LLMRequest` passthrough
+- **Structured Outputs:** `ResponseFormat` enum with `JsonObject`, `JsonSchema` (strict), `Text` variants
+- **Blueprints:** 19 TOML blueprints covering full Groq fleet (chat, audio, safety, compound, variants)
+- **Groq API verified:** 16/16 models live at `https://api.groq.com/openai/v1`
+
+### Environment-Aware Blueprint Routing (June 2026)
+- **`get_active_providers()`** in `src/agent/router.rs` — detects live API keys (GROQ, NVIDIA, OPENAI, ANTHROPIC) and local hosts (OLLAMA, LLAMA_CPP, LITERTLM); auto-adds local fallbacks when no remote keys found
+- **`filter_blueprints()`** — filters `&[AgentBlueprint]` to only those whose `model_card.provider` is in the active set
+- **`route_task()`** — now filters before LLM selection with prompt: "filtered to match your active API keys"
+- **3 unit tests** covering groq-only, no-remote→local, and multi-provider filtering; serialized via `ENV_MUTEX`
+
+### NVIDIA NIM Integration (June 2026)
+- **Comprehensive vendor prefix routing** — `NIM_VENDOR_PREFIXES` expanded to 27 vendors covering the full catalog from `docs.api.nvidia.com` (DeepSeek, Qwen, Google, Meta, Microsoft, Mistral, Moonshot, NVIDIA, etc.)
+- **`GROQ_VENDOR_PREFIXES`** — excludes known Groq-hosted models (`openai/gpt-oss-*`, `meta-llama/*`, `canopylabs/*`) from NVIDIA catch-all
+- **`is_nim_catchall_candidate()`** — any unknown vendor-prefixed model (contains `/`) routes to `integrate.api.nvidia.com/v1` when `NVIDIA_API_KEY` is available
+- **Async inference polling** — 202 Accepted responses trigger `poll_async_result()`: polls `GET /{request_id}` every 2s for up to 120 cycles (4 min), handles `completed`/`failed`/timeout
+- **8 NIM blueprints** in `blueprints/`: DeepSeek V4 Pro, Qwen 3.5 122B, Gemma 4 31B, GLM 5.1, Nemotron-3 Super 120B, Nemotron-3 Nano Omni, Step 3.7 Flash, MiniMax M2.7
+
+### Riva Speech/Audio Provider (June 2026)
+- **`RivaProvider`** in `src/llm/riva.rs` — implements `LLMProvider` with `transcribe()` (STT via `POST /v1/speech/recognize`) and `synthesize()` (TTS via `POST /v1/speech/synthesis`)
+- **Configurable:** `sample_rate`, `language_code`, voice selection
+- **Endpoint:** `https://riva.api.nvidia.com/v1` with `RIVA_API_KEY` auth
+
+### NVIDIA Cloud Functions (June 2026)
+- **3 tools** in `src/tools/nvidia_cloud_functions.rs`: `nvidia_list_functions`, `nvidia_call_function` (with async polling), `nvidia_deploy_function`
+- **API:** `https://api.nvcf.nvidia.com/v2/nvcf` using `NVIDIA_API_KEY` or `NVCF_API_KEY`
+- **Auto-registered** when key is present; async invocations polled automatically
+
+### Full Test Suite: 198 Tests Passing
+- 198 unit tests (`cargo test --lib --features testutils`) — up from 99
+- 24 professional workflow tests (`tests/professional_workflows.rs`)
+- 11 real-world benchmark tests (`tests/real_world_benchmarks.rs`)
+- 1 program benchmark (`tests/program_bench.rs`)
+- 1 BFCL pipeline test (requires `GROQ_API_KEY`, times out in CI without network)
+
+### Blueprint Catalog: 29 Profiles
+- **Groq fleet (19):** GPT-OSS 120B/20B/Safeguard, Llama 3.3 70B/3.1 8B/4 Scout, Qwen 3 32B, Whisper V3/Turbo, Orpheus EN/AR, Prompt Guard 22M/86M, Compound/Mini, + variants (vision, reasoning, MCP)
+- **NVIDIA NIM (8):** DeepSeek V4 Pro, Qwen 3.5 122B, Gemma 4 31B, GLM 5.1, Nemotron-3 Super 120B/Nano Omni, Step 3.7 Flash, MiniMax M2.7
+- **Edge (2):** Gemma 4 E2B Voice, Llama 3 8B Local

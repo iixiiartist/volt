@@ -94,7 +94,12 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
         crate::tools::groups::browser::register_browser_tools(&registry).await;
     }
 
-    // ── Phase 4: CLI gateway (always registered last) ────────────────────
+    // ── Phase 4: NVIDIA Cloud Functions (requires NVIDIA_API_KEY) ──────────
+    if std::env::var("NVIDIA_API_KEY").is_ok() || std::env::var("NVCF_API_KEY").is_ok() {
+        crate::tools::nvidia_cloud_functions::register_nvidia_cloud_functions(&registry);
+    }
+
+    // ── Phase 5: CLI gateway (always registered last) ────────────────────
     crate::tools::cli_tools::register_cli_tools(&registry).await;
 
     registry

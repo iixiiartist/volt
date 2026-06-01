@@ -172,6 +172,55 @@ fn make_audio_part(data: Vec<u8>, filename: &str) -> reqwest::multipart::Part {
         .unwrap_or_else(|_| reqwest::multipart::Part::bytes(fallback_data).file_name(filename.to_string()))
 }
 
+impl OpenAIProvider {
+    /// Poll an async inference result until completion (NVIDIA NIM 202 polling pattern).
+    async fn poll_async_result(&self, base_url: &str, request_id: &str) -> anyhow::Result<LLMResponse> {
+        let poll_url = format!("{}/{}", base_url.trim_end_matches('/'), request_id);
+        let max_polls = 120; // 120 * 2s = 240s max wait
+
+        for _ in 0..max_polls {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let mut req = self.http.get(&poll_url);
+            if !self.api_key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", self.api_key));
+            }
+
+            let resp_val = req
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await?;
+
+            let status = resp_val.status();
+            if !status.is_success() {
+                let err_body = resp_val.text().await.unwrap_or_default();
+                let trunc = &err_body[..500.min(err_body.len())];
+                anyhow::bail!("async poll HTTP {}: {}", status.as_u16(), trunc);
+            }
+
+            let resp: serde_json::Value = resp_val.json().await?;
+
+            // Check completion status
+            let state = resp["status"].as_str().unwrap_or("unknown");
+            match state {
+                "completed" | "succeeded" => {
+                    return parse_openai_response(resp);
+                }
+                "failed" | "error" => {
+                    let err = resp["error"].as_str().unwrap_or("unknown error");
+                    anyhow::bail!("async inference failed: {}", err);
+                }
+                _ => {
+                    // Still processing, continue polling
+                    continue;
+                }
+            }
+        }
+
+        anyhow::bail!("async inference timed out after {} polls", max_polls);
+    }
+}
+
 #[async_trait]
 impl LLMProvider for OpenAIProvider {
     fn name(&self) -> &str {
@@ -199,6 +248,21 @@ impl LLMProvider for OpenAIProvider {
             .await?;
 
         let status = resp_val.status();
+
+        // Async inference: 202 Accepted → poll for completion (NVIDIA NIM pattern)
+        if status == reqwest::StatusCode::ACCEPTED {
+            let async_resp: serde_json::Value = resp_val.json().await?;
+            let request_id = async_resp["request_id"]
+                .as_str()
+                .or_else(|| async_resp["id"].as_str())
+                .unwrap_or("")
+                .to_string();
+            if request_id.is_empty() {
+                anyhow::bail!("async inference returned 202 but no request_id in response");
+            }
+            return self.poll_async_result(&url, &request_id).await;
+        }
+
         if !status.is_success() {
             let err_body = resp_val.text().await.unwrap_or_default();
             let trunc = &err_body[..500.min(err_body.len())];

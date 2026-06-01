@@ -1,0 +1,19 @@
+id = "nim_nemotron3_nano_omni"
+name = "NVIDIA NIM Nemotron-3 Nano Omni"
+description = "Omni-modal reasoning model for computer-use agents (images, video, speech, text) on NVIDIA NIM"
+
+[model_card]
+model_name = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+provider = "nvidia"
+format_dialect = "LlamaChat"
+quirks = ["MultimodalInput"]
+
+[scaffolding]
+max_tools_per_turn = 3
+strict_mode = false
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write", "browser_screenshot", "desktop_screenshot", "browser_navigate"]
+
+[prompts]
+system_prompt_override = "You are Nemotron-3 Nano Omni, an omni-modal reasoning model on NVIDIA NIM. You understand images, video, speech, and text for computer-use agents."

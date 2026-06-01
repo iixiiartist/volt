@@ -18,6 +18,7 @@ pub mod json_tool;
 pub mod litertlm;
 pub mod llamacpp;
 pub mod mcp_client;
+pub mod nvidia_cloud_functions;
 pub mod memory_tool;
 pub mod mtp;
 pub mod path;

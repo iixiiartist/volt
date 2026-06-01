@@ -1,0 +1,19 @@
+id = "nim_step_37_flash"
+name = "NVIDIA NIM Step 3.7 Flash"
+description = "Sparse MoE multimodal reasoning model for enterprise and coding tasks on NVIDIA NIM"
+
+[model_card]
+model_name = "stepfun-ai/step-3.7-flash"
+provider = "nvidia"
+format_dialect = "ChatMlTools"
+quirks = []
+
+[scaffolding]
+max_tools_per_turn = 3
+strict_mode = false
+
+[tools]
+core_tools = ["web_search", "bash", "read", "write"]
+
+[prompts]
+system_prompt_override = "You are Step 3.7 Flash, a sparse MoE multimodal reasoning model hosted on NVIDIA NIM. You excel at enterprise and coding tasks."
