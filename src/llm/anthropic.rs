@@ -25,13 +25,19 @@ impl AnthropicProvider {
     }
 }
 
-fn build_messages(request: &LLMRequest) -> (Vec<serde_json::Value>, Option<String>) {
-    let mut system: Option<String> = None;
+/// Build Anthropic Messages API format with prompt caching support.
+///
+/// System messages are collected into an array of text blocks with
+/// `cache_control: {"type": "ephemeral"}` on the FIRST system block.
+/// The LAST content block of the LAST message also gets `cache_control`
+/// to create a rolling prefix cache for multi-turn agent loops.
+fn build_messages(request: &LLMRequest) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let mut system_blocks: Vec<serde_json::Value> = Vec::new();
     let mut messages: Vec<serde_json::Value> = Vec::new();
 
     for msg in &request.messages {
         if msg.role == "system" {
-            system = Some(msg.content.as_str().to_string());
+            system_blocks.push(json!({"type": "text", "text": msg.content.as_str()}));
             continue;
         }
         if msg.role == "tool" && msg.tool_call_id.is_some() {
@@ -62,7 +68,37 @@ fn build_messages(request: &LLMRequest) -> (Vec<serde_json::Value>, Option<Strin
         }
     }
 
-    (messages, system)
+    // Add cache_control to the first system block so the static prefix is cached
+    if !system_blocks.is_empty() {
+        if let Some(first) = system_blocks.first_mut() {
+            if let Some(obj) = first.as_object_mut() {
+                obj.insert("cache_control".into(), json!({"type": "ephemeral"}));
+            }
+        }
+    }
+
+    // Add cache_control to the last content block of the last message
+    // This creates a rolling cache: on the next turn, everything up to this
+    // point is a cached prefix, and only new content needs fresh processing.
+    if let Some(last_msg) = messages.last_mut() {
+        if let Some(content) = last_msg.get_mut("content") {
+            if content.is_string() {
+                // Convert string content to array of text blocks
+                let text = content.as_str().unwrap_or("").to_string();
+                *content = json!([
+                    {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
+                ]);
+            } else if let Some(arr) = content.as_array_mut() {
+                if let Some(last_block) = arr.last_mut() {
+                    if let Some(obj) = last_block.as_object_mut() {
+                        obj.insert("cache_control".into(), json!({"type": "ephemeral"}));
+                    }
+                }
+            }
+        }
+    }
+
+    (messages, system_blocks)
 }
 
 #[async_trait]
@@ -81,7 +117,7 @@ impl LLMProvider for AnthropicProvider {
 
     async fn complete(&self, request: &LLMRequest) -> anyhow::Result<LLMResponse> {
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-        let (messages, system) = build_messages(request);
+        let (messages, system_blocks) = build_messages(request);
 
         let tools = request.tools.as_ref().map(|ts| {
             ts.iter()
@@ -94,8 +130,8 @@ impl LLMProvider for AnthropicProvider {
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "messages": messages
         });
-        if let Some(s) = system {
-            body["system"] = json!(s);
+        if !system_blocks.is_empty() {
+            body["system"] = json!(system_blocks);
         }
         if let Some(ts) = &tools {
             body["tools"] = json!(ts);
@@ -105,6 +141,9 @@ impl LLMProvider for AnthropicProvider {
             .http
             .post(&url)
             .header("x-api-key", &self.api_key)
+            // Array system blocks with cache_control require 2023-06-01 or newer.
+            // 2023-06-01 is the stable version that supports both array system
+            // blocks and prompt caching.
             .header("anthropic-version", "2023-06-01")
             .json(&body)
             .send()
@@ -122,7 +161,7 @@ impl LLMProvider for AnthropicProvider {
         on_token: TokenCallback,
     ) -> anyhow::Result<LLMResponse> {
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-        let (messages, system) = build_messages(request);
+        let (messages, system_blocks) = build_messages(request);
 
         let tools = request.tools.as_ref().map(|ts| {
             ts.iter()
@@ -136,8 +175,8 @@ impl LLMProvider for AnthropicProvider {
             "stream": true,
             "messages": messages
         });
-        if let Some(s) = system {
-            body["system"] = json!(s);
+        if !system_blocks.is_empty() {
+            body["system"] = json!(system_blocks);
         }
         if let Some(ts) = &tools {
             body["tools"] = json!(ts);
@@ -164,6 +203,8 @@ impl LLMProvider for AnthropicProvider {
         let mut stop_reason: Option<String> = None;
         let mut input_tokens = 0u64;
         let mut output_tokens = 0u64;
+        let mut cache_read_tokens = 0u64;
+        let mut cache_create_tokens = 0u64;
 
         let mut stream = response.bytes_stream();
         while let Some(chunk_result) = stream.next().await {
@@ -230,6 +271,8 @@ impl LLMProvider for AnthropicProvider {
                         Some("message_start") => {
                             if let Some(u) = val.get("message").and_then(|m| m.get("usage")) {
                                 input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
+                                cache_read_tokens = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                                cache_create_tokens = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                             }
                         }
                         _ => {}
@@ -256,7 +299,9 @@ impl LLMProvider for AnthropicProvider {
                 total_tokens: input_tokens + output_tokens,
                 queue_time: None,
                 total_time: None,
-                prompt_tokens_details: None,
+                prompt_tokens_details: Some(crate::models::PromptTokensDetails {
+                    cached_tokens: if cache_read_tokens > 0 { Some(cache_read_tokens) } else { None },
+                }),
             }),
             usage_breakdown: None,
             executed_tools: None,
@@ -285,14 +330,20 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
         }
     }
 
-    let usage = resp["usage"].as_object().map(|u| Usage {
-        prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0),
-        completion_tokens: u["output_tokens"].as_u64().unwrap_or(0),
-        total_tokens: (u["input_tokens"].as_u64().unwrap_or(0)
-            + u["output_tokens"].as_u64().unwrap_or(0)),
-        queue_time: None,
-        total_time: None,
-        prompt_tokens_details: None,
+    let usage = resp["usage"].as_object().map(|u| {
+        let cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+        let cache_create = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+        Usage {
+            prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0),
+            completion_tokens: u["output_tokens"].as_u64().unwrap_or(0),
+            total_tokens: (u["input_tokens"].as_u64().unwrap_or(0)
+                + u["output_tokens"].as_u64().unwrap_or(0)),
+            queue_time: None,
+            total_time: None,
+            prompt_tokens_details: Some(crate::models::PromptTokensDetails {
+                cached_tokens: if cache_read > 0 { Some(cache_read) } else { None },
+            }),
+        }
     });
 
     Ok(LLMResponse {
@@ -309,4 +360,118 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
         system_fingerprint: None,
         x_groq: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::LLMMessage;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_build_messages_collects_system_blocks() {
+        let request = LLMRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                LLMMessage {
+                    role: "system".into(),
+                    content: Arc::new("You are Volt.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "system".into(),
+                    content: Arc::new("Context from RAG.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Hello".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (messages, system_blocks) = build_messages(&request);
+
+        // System blocks collected into array
+        assert_eq!(system_blocks.len(), 2);
+        assert_eq!(system_blocks[0]["type"], "text");
+        assert_eq!(system_blocks[0]["text"], "You are Volt.");
+        assert_eq!(system_blocks[1]["text"], "Context from RAG.");
+
+        // First system block has cache_control
+        assert_eq!(system_blocks[0]["cache_control"]["type"], "ephemeral");
+        // Second system block does NOT have cache_control
+        assert!(system_blocks[1].get("cache_control").is_none());
+
+        // Messages should not contain system role
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
+    fn test_build_messages_rolling_cache_on_last_message() {
+        let request = LLMRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                LLMMessage {
+                    role: "system".into(),
+                    content: Arc::new("You are Volt.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Query 1".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "assistant".into(),
+                    content: Arc::new("Answer 1".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Query 2".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (messages, _system) = build_messages(&request);
+
+        // Last message should have cache_control on its content
+        let last = messages.last().unwrap();
+        let content = last["content"].as_array().unwrap();
+        let last_block = content.last().unwrap();
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_with_cache_usage() {
+        let resp = serde_json::json!({
+            "content": [{"type": "text", "text": "Hello"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 80,
+                "cache_creation_input_tokens": 20
+            }
+        });
+
+        let parsed = parse_anthropic_response(resp).unwrap();
+        let usage = parsed.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.prompt_tokens_details.as_ref().unwrap().cached_tokens, Some(80));
+    }
 }
