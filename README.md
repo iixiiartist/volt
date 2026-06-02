@@ -23,7 +23,7 @@ Key design decisions:
 - **pgvector Persistence**: PostgreSQL with HNSW indexes, context survives restarts
 - **Hardware-Accelerated ONNX Runtime**: ort with DirectML/OpenVINO/CUDA fallback chain — auto-detects Intel NPU/GPU, NVIDIA GPU, or CPU
 - **MCP Protocol Server**: Expose 50+ tools to external clients (Claude Desktop, Cline, Goose) over stdio or HTTP with permission-gated execution
-- **Single Binary**: Rust-compiled, MIT license
+- **Single Executable**: No Python, Node.js, or Java runtime required. ONNX Runtime libraries download on first use to `~/.cache/ort.pyke.io/`.
 
 ## Quick Start
 
@@ -60,7 +60,7 @@ cargo build --release
 ./VOLT agent-run --input "Analyze this codebase" --allow
 ```
 
-**Windows (MSVC — 49 MB binary, no extra DLLs):**
+**Windows (MSVC — 49 MB binary):**
 ```powershell
 # Requires Visual Studio 2022 Build Tools with "Desktop development with C++"
 # Install: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
@@ -71,11 +71,13 @@ cd volt
 # Build using the MSVC toolchain (default after v0.5.1):
 cargo build --release
 
-# The resulting volt.exe depends only on standard Windows DLLs + VCRUNTIME140.dll
-# No MinGW or other runtime needed.
+# The resulting volt.exe depends on standard Windows DLLs + VCRUNTIME140.dll
+# (MSVC Redistributable, pre-installed on most Windows). ONNX Runtime shared
+# libraries (onnxruntime.dll, DirectML.dll, etc.) are downloaded on first use
+# to ~/.cache/ort.pyke.io/ (~50–150 MB depending on Execution Provider).
 ```
 
-> **Note for MinGW users:** If you use the GNU toolchain (`x86_64-pc-windows-gnu`), the binary will depend on `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, and `libwinpthread-1.dll`. Use the MSVC toolchain instead for a fully standalone binary.
+> **Note for MinGW users:** If you use the GNU toolchain (`x86_64-pc-windows-gnu`), the binary will depend on `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, and `libwinpthread-1.dll`. Use the MSVC toolchain instead.
 
 ## Architecture
 
