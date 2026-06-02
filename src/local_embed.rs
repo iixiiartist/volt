@@ -395,7 +395,9 @@ fn log_ep_availability() {
 
 #[cfg(all(feature = "tools-local-embeddings", not(windows)))]
 fn log_ep_availability() {
-    tracing::info!("ORT EP availability — non-Windows platform (OpenVINO/DirectML/CUDA check skipped)");
+    tracing::info!(
+        "ORT EP availability — non-Windows platform (OpenVINO/DirectML/CUDA check skipped)"
+    );
 }
 
 #[cfg(test)]
