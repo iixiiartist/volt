@@ -2,7 +2,7 @@
 
 > **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 38 active tools (dynamically gated by env vars). ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![Pipeline Status](https://gitlab.com/iixiiartist-volt/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist-volt/volt/-/commits/main)
 
 ## Why Volt?
 
