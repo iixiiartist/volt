@@ -20,6 +20,19 @@ VOLT's *Everything-as-RAG* architecture (Section 4) embeds all twelve context ki
 
 On the orchestration front, existing multi-agent systems (AutoGen, CrewAI, LangGraph) typically implement hand-coded DAGs or linear pipelines in Python. VOLT's DAG scheduler (Section 3) compiles JSON-described workflows, computes topological execution levels via Kahn's algorithm, and runs independent agents concurrently with full telemetry capture—making compound AI systems *observable by construction*.
 
+### 1.3 The Rust Migration Wave in AI Infrastructure
+
+A broader industry trend contextualizes VOLT's architectural decisions. Over the past three years, a significant migration wave has moved performance-critical AI infrastructure from Python to Rust. The drivers are structural: Python's Global Interpreter Lock (GIL) serializes CPU-bound work across threads, its garbage collector introduces unpredictable 10–50 ms pauses, and its object-per-value model causes severe memory bloat (a 30 MB source map can expand to 800 MB in CPython). Empirical post-migration benchmarks report 96% latency reductions (200 ms → 8 ms), 65–70% memory savings, and 78% infrastructure cost cuts.
+
+Prominent case studies include:
+- **Dropbox** rewrote its sync engine (Nucleus) in Rust, using the type system to "design away" invalid states and achieving deterministic pseudorandom simulation testing via a single-threaded control plane.
+- **Sentry** replaced Python source-map parsing with Rust, cutting worst-case processing from >20 seconds to <0.5 seconds and eliminating 800 MB memory bloat per process.
+- **Braintrust** built Brainstore, a Rust-native object-storage database for AI observability, achieving 86–329× faster full-text search than traditional data warehouses.
+- **Hugging Face** architected Text Generation Inference (TGI) as a dual-binary system: a Rust router handles HTTP ingress and continuous batching, while a Python model server executes PyTorch math.
+- **Verihubs** migrated its Python/FastAPI face-liveness pipeline to Rust, cutting infrastructure costs by 78% while eliminating memory leaks.
+
+This trend is not a rejection of Python (which remains indispensable for model training and research), but a strategic *surgical replacement* of Python's CPU-bound bottlenecks with Rust modules via interoperability bridges such as PyO3 and Maturin. VOLT extends this philosophy to the agent-framework layer: rather than wrapping a Python orchestrator in Rust, the entire agent loop, tool registry, context store, and DAG scheduler are Rust-native from inception—eliminating the Python-to-Rust ABI boundary entirely and avoiding the GIL, GC pauses, and memory overhead that hybrid systems still inherit from their Python components.
+
 ### 1.2 Contributions
 
 1. **Edge Model Exoskeleton (Section 2):** A TOML-based `AgentBlueprint` schema that declaratively encodes model-specific quirks (e.g., `StringifiedBooleans`, `ChainOfThoughtLeak`, `MissingFinalAnswer`). A pre-validation AST coercion layer intercepts raw LLM output *before* JSON parsing, applying surgical fixes that recover 95%+ of otherwise-failed tool calls on 2–8B models. This is the "Local Tasks" half of VOLT: ensuring that small, on-device models can execute real operations reliably.
@@ -305,6 +318,12 @@ Future work includes extending the exoskeleton to cover reasoning-model quirks (
 5. OpenAI. "Structured Outputs Guide." *OpenAI API Documentation*, 2024.
 6. Charlie Chen et al. "Monarch Mixer: A Simple Sub-Quadratic GEMM-Based Architecture." *NeurIPS 2023*.
 7. Berkeley Function-Calling Leaderboard. "BFCL v4 Dataset." *github.com/ShishirPatil/gorilla*, 2024.
+8. Dropbox Engineering. "Rewriting Dropbox's Sync Engine in Rust." *dropbox.tech*, 2020.
+9. A. Ronacher. "Fixing Python Performance with Rust." *Sentry Blog*, 2016.
+10. Braintrust. "Brainstore: The Database Designed for the AI Engineering Era." *braintrust.dev/blog*, 2024.
+11. Hugging Face. "Text Generation Inference Architecture." *huggingface.co/docs*, 2024.
+12. S. Mehta. "How We Cut Infrastructure Costs by 78% Migrating Python to Rust." *blog.saugi.me*, 2024.
+13. PyO3 Contributors. "PyO3 User Guide." *pyo3.rs*, 2024.
 
 ---
 
