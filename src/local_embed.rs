@@ -369,7 +369,7 @@ fn ort_err<E: std::fmt::Display>(e: E) -> anyhow::Error {
 
 /// Log which hardware execution providers are actually available by
 /// checking loaded native DLLs via Win32 API (available on MSVC).
-#[cfg(feature = "tools-local-embeddings")]
+#[cfg(all(feature = "tools-local-embeddings", windows))]
 fn log_ep_availability() {
     #[link(name = "kernel32")]
     extern "system" {
@@ -391,6 +391,11 @@ fn log_ep_availability() {
         if openvino { "YES" } else { "no" },
         if cuda { "YES" } else { "no" },
     );
+}
+
+#[cfg(all(feature = "tools-local-embeddings", not(windows)))]
+fn log_ep_availability() {
+    tracing::info!("ORT EP availability — non-Windows platform (OpenVINO/DirectML/CUDA check skipped)");
 }
 
 #[cfg(test)]

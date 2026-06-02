@@ -42,6 +42,8 @@ test:
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0001_core.sql
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0002_jobs_and_routines.sql
     - PGPASSWORD=volt psql -h postgres -U volt -d volt_test -f migrations/0003_storage_optimizations.sql
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
   script:
     # Full test suite (lib + all integration tests that don't require external API keys)
     - cargo test --lib --release --features testutils
@@ -127,6 +129,8 @@ build_linux_gnu:
     - apt-get install -y -qq ./google-chrome-stable_current_amd64.deb || true
     - rm -f google-chrome-stable_current_amd64.deb
     - rustup target add x86_64-unknown-linux-gnu
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
   script:
     - cargo build --release --target x86_64-unknown-linux-gnu --features tools-pdf,tools-desktop,tools-browser
     - strip target/x86_64-unknown-linux-gnu/release/volt
@@ -147,6 +151,8 @@ build_linux_musl:
   before_script:
     - apt-get update -qq && apt-get install -y -qq musl-tools
     - rustup target add x86_64-unknown-linux-musl
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
   script:
     - cargo build --release --target x86_64-unknown-linux-musl --features tools-pdf
     - strip target/x86_64-unknown-linux-musl/release/volt
