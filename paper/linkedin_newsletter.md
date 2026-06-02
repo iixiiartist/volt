@@ -81,6 +81,8 @@ VOLT fixes both.
 
 The business impact is simple: the same workload that cost you $0.37 on traditional agent frameworks costs about **$0.07** with VOLT's optimizations.
 
+> **Want to see how this works under the hood?** The prompt-caching logic, structured-output schemas, and provider routing are all in the VOLT repo — open-source and ready to inspect: [github.com/iixiiartist/volt](https://github.com/iixiiartist/volt)
+
 ---
 
 ## Managing a Team of AI Agents (Without Losing Your Mind)
