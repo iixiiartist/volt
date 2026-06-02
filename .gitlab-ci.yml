@@ -240,8 +240,11 @@ release:
   image: alpine:latest
   dependencies:
     - build_linux_gnu
-    - build_linux_musl
-    # Uncomment when self-hosted runners are available:
+    # NOTE: build_linux_musl is omitted from dependencies because musl
+    # cross-compilation with OpenSSL is not currently supported in our
+    # CI image. The release script handles missing musl artifacts gracefully.
+    # Uncomment when musl build is fixed or self-hosted runners are available:
+    # - build_linux_musl
     # - build_macos_x86_64
     # - build_macos_aarch64
     # - build_windows
