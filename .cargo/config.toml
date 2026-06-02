@@ -5,7 +5,9 @@ rustflags = ["-C", "link-args=-static -static-libstdc++"]
 [target.i686-pc-windows-gnu]
 rustflags = ["-C", "link-args=-static -static-libstdc++"]
 
-# MSVC dynamic CRT — matches ort-sys prebuilt binaries (ort v2.0.0-rc.12)
-[env]
-CXXFLAGS = "/MD"
-CFLAGS = "/MD"
+# NOTE: MSVC dynamic CRT flags (CXXFLAGS=/MD, CFLAGS=/MD) are NOT set here
+# because [env] in .cargo/config.toml applies globally and breaks Linux/macOS
+# builds (gcc interprets /MD as a file path). Windows MSVC builders should set
+# these environment variables in their shell before building:
+#   $env:CXXFLAGS="/MD"; $env:CFLAGS="/MD"; cargo build
+# This matches ort-sys prebuilt binaries (dynamic CRT MD_DynamicRelease).
