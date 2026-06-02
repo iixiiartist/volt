@@ -72,6 +72,9 @@ test:
 # â”€â”€ Lint Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 fmt:
   stage: lint
+  before_script:
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
   script:
     - rustup component add rustfmt
     - cargo fmt -- --check
@@ -81,6 +84,9 @@ fmt:
 
 clippy:
   stage: lint
+  before_script:
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
   script:
     - rustup component add clippy
     - cargo clippy -- -D warnings
@@ -93,6 +99,8 @@ security_audit:
   stage: security
   image: rust:1.95
   before_script:
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
     - cargo install cargo-audit
   script:
     - cargo audit
@@ -108,6 +116,9 @@ secret_check:
 # â”€â”€ Docs Stage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 docs:
   stage: docs
+  before_script:
+    # Override Windows-specific MSVC flags set in .cargo/config.toml [env]
+    - export CFLAGS="" && export CXXFLAGS=""
   script:
     - cargo doc --no-deps
   cache:
