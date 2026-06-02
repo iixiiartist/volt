@@ -78,11 +78,16 @@ impl EmbeddingClient {
         #[cfg(feature = "tools-local-embeddings")]
         let local = match crate::local_embed::LocalEmbedder::load() {
             Ok(embedder) => {
-                tracing::info!("local ONNX embedder loaded (ort EP chain: OpenVINO → DirectML → CUDA → CPU)");
+                tracing::info!(
+                    "local ONNX embedder loaded (ort EP chain: OpenVINO → DirectML → CUDA → CPU)"
+                );
                 Some(std::sync::Arc::new(embedder))
             }
             Err(e) => {
-                tracing::warn!("local ONNX embedder unavailable: {}. Will use deterministic fallback + BM25.", e);
+                tracing::warn!(
+                    "local ONNX embedder unavailable: {}. Will use deterministic fallback + BM25.",
+                    e
+                );
                 None
             }
         };
@@ -91,7 +96,12 @@ impl EmbeddingClient {
         // avoids slow Ollama retry delays when Ollama is not actually running.
         #[cfg(not(feature = "tools-local-embeddings"))]
         let local: Option<std::sync::Arc<crate::local_embed::LocalEmbedder>> = None;
-        if local.is_none() && providers.is_empty() && provider_str.as_deref().is_none_or(|s| s.is_empty() || s.eq_ignore_ascii_case("auto")) {
+        if local.is_none()
+            && providers.is_empty()
+            && provider_str
+                .as_deref()
+                .is_none_or(|s| s.is_empty() || s.eq_ignore_ascii_case("auto"))
+        {
             // keep providers as-is (may have auto-detected Ollama); embed will try them first
         }
 
@@ -133,7 +143,7 @@ impl EmbeddingClient {
             return tokio::task::spawn_blocking(move || cloned.batch_embed(&texts))
                 .await
                 .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
-                .map(|v| v.into_iter().map(|e| normalize_dims(e)).collect());
+                .map(|v| v.into_iter().map(normalize_dims).collect());
         }
 
         Err(anyhow::anyhow!("no local embedder available"))

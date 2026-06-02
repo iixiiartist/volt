@@ -27,23 +27,15 @@ impl ContextStore {
     }
 
     pub async fn seed_batch(&self, entries: Vec<ContextEntry>) {
-        let staged: Vec<ContextEntry> = if let Some(db) = self.db() {
-            futures::future::join_all(entries.into_iter().map(|entry| {
-                let db = db.clone();
-                async move {
-                    if let Err(e) = crate::db::insert_context_entry(&db, &entry).await {
-                        tracing::warn!("[context] seed_batch DB insert failed: {}", e);
-                    }
-                    entry
-                }
-            }))
-            .await
-        } else {
-            entries
-        };
+        if let Some(db) = self.db() {
+            if let Err(e) = crate::db::bulk_insert_context_entries(db, &entries).await {
+                tracing::warn!("[context] seed_batch DB bulk insert failed: {}", e);
+            }
+        }
 
         let mut quota_snapshot: HashMap<ContextKind, usize> = HashMap::new();
-        let kinds: std::collections::HashSet<ContextKind> = staged.iter().map(|e| e.kind).collect();
+        let kinds: std::collections::HashSet<ContextKind> =
+            entries.iter().map(|e| e.kind).collect();
         for kind in kinds {
             quota_snapshot.insert(kind, self.quota_for(kind).await);
         }
@@ -54,7 +46,7 @@ impl ContextStore {
             let mut store = self.entries.write().await;
             let mut inserted = 0usize;
 
-            for entry in staged {
+            for entry in entries {
                 let mut merged = false;
                 if let Some(ref emb) = entry.embedding {
                     for existing in store.iter_mut() {

@@ -5,7 +5,9 @@ use std::sync::Arc;
 const OLLAMA_API_BASE: &str = "https://ollama.com/api";
 
 fn get_api_key() -> Option<String> {
-    std::env::var("OLLAMA_API_KEY").ok().filter(|k| !k.is_empty())
+    std::env::var("OLLAMA_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
 }
 
 fn make_req(client: &reqwest::Client, url: &str) -> Option<reqwest::RequestBuilder> {
@@ -17,10 +19,13 @@ fn make_req(client: &reqwest::Client, url: &str) -> Option<reqwest::RequestBuild
     )
 }
 
-pub fn register_ollama_web_tools(registry: &Arc<crate::tools::ToolRegistry>) {
+pub async fn register_ollama_web_tools(registry: &Arc<crate::tools::ToolRegistry>) {
     let web_search_fn: crate::tools::ToolFn = Arc::new(move |args: serde_json::Value| {
         let query = args["query"].as_str().unwrap_or("").to_string();
-        let max_results = args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(5);
+        let max_results = args
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
         Box::pin(async move {
             if query.is_empty() {
                 return ToolResult {
@@ -93,7 +98,7 @@ pub fn register_ollama_web_tools(registry: &Arc<crate::tools::ToolRegistry>) {
         web_search_fn,
         crate::models::PermissionLevel::Allow,
         crate::attenuation::TrustLevel::Builtin,
-    );
+    ).await;
 
     let web_fetch_fn: crate::tools::ToolFn = Arc::new(move |args: serde_json::Value| {
         let url = args["url"].as_str().unwrap_or("").to_string();
@@ -168,5 +173,5 @@ pub fn register_ollama_web_tools(registry: &Arc<crate::tools::ToolRegistry>) {
         web_fetch_fn,
         crate::models::PermissionLevel::Allow,
         crate::attenuation::TrustLevel::Builtin,
-    );
+    ).await;
 }

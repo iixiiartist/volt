@@ -2,7 +2,6 @@ use crate::llm::provider::TokenCallback;
 use crate::llm::LLMProvider;
 use crate::models::{AudioRequest, AudioResponse, LLMRequest, LLMResponse, TtsRequest};
 use async_trait::async_trait;
-use std::sync::Arc;
 
 /// NVIDIA Riva speech/audio provider.
 /// Supports speech-to-text (transcribe), speech-to-text translate, and text-to-speech (synthesize).
@@ -50,12 +49,21 @@ impl LLMProvider for RivaProvider {
         _request: &LLMRequest,
         _on_token: TokenCallback,
     ) -> anyhow::Result<LLMResponse> {
-        anyhow::bail!("Riva provider does not support streaming chat completions (audio/speech only)")
+        anyhow::bail!(
+            "Riva provider does not support streaming chat completions (audio/speech only)"
+        )
     }
 
     async fn transcribe(&self, audio: &AudioRequest) -> anyhow::Result<AudioResponse> {
         let url = format!("{}/speech/recognize", self.base_url.trim_end_matches('/'));
-        let mime = match audio.file_name.rsplit('.').next().unwrap_or("wav").to_lowercase().as_str() {
+        let mime = match audio
+            .file_name
+            .rsplit('.')
+            .next()
+            .unwrap_or("wav")
+            .to_lowercase()
+            .as_str()
+        {
             "flac" => "audio/flac",
             "mp3" | "mpga" => "audio/mpeg",
             "mp4" | "m4a" => "audio/mp4",
@@ -65,20 +73,27 @@ impl LLMProvider for RivaProvider {
         };
 
         let form = reqwest::multipart::Form::new()
-            .part("audio", {
-                let part = reqwest::multipart::Part::bytes(audio.file_data.clone())
+            .part(
+                "audio",
+                reqwest::multipart::Part::bytes(audio.file_data.clone())
                     .file_name(audio.file_name.clone())
                     .mime_str(mime)
-                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(audio.file_data.clone()).file_name(audio.file_name.clone()));
-                part
-            })
-            .text("config", serde_json::json!({
-                "encoding": "LINEAR_PCM",
-                "sample_rate_hertz": 16000,
-                "language_code": audio.language.as_deref().unwrap_or("en-US"),
-                "max_alternatives": 1,
-                "profanity_filter": false,
-            }).to_string());
+                    .unwrap_or_else(|_| {
+                        reqwest::multipart::Part::bytes(audio.file_data.clone())
+                            .file_name(audio.file_name.clone())
+                    }),
+            )
+            .text(
+                "config",
+                serde_json::json!({
+                    "encoding": "LINEAR_PCM",
+                    "sample_rate_hertz": 16000,
+                    "language_code": audio.language.as_deref().unwrap_or("en-US"),
+                    "max_alternatives": 1,
+                    "profanity_filter": false,
+                })
+                .to_string(),
+            );
 
         let mut req = self.http.post(&url).multipart(form);
         if !self.api_key.is_empty() {

@@ -1,6 +1,7 @@
 use crate::context::{ContextEntry, ContextKind};
 use crate::embedding::vector_literal;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row};
+use uuid::Uuid;
 
 pub async fn insert_context_entry(pool: &PgPool, entry: &ContextEntry) -> anyhow::Result<()> {
     if let Some(ref emb) = entry.embedding {
@@ -143,6 +144,95 @@ pub async fn search_context_entries(
         });
     }
     Ok(out)
+}
+
+/// Bulk insert context entries using a single PostgreSQL statement.
+/// Eliminates N round-trips for N entries. Falls back gracefully
+/// via ON CONFLICT (id) DO UPDATE for idempotent re-seeding.
+pub async fn bulk_insert_context_entries(
+    pool: &PgPool,
+    entries: &[ContextEntry],
+) -> anyhow::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut builder = QueryBuilder::<Postgres>::new(
+        "INSERT INTO context_entries (id, kind, content, embedding, metadata, frequency, success_rate, usage_count, last_used_at, created_at) "
+    );
+
+    builder.push_values(entries, |mut b, entry| {
+        b.push_bind(entry.id)
+            .push_bind(entry.kind.as_str())
+            .push_bind(&entry.content);
+        if let Some(emb) = &entry.embedding {
+            b.push(format!("{}::vector", vector_literal(emb)));
+        } else {
+            b.push("NULL::vector");
+        }
+        b.push_bind(&entry.metadata)
+            .push_bind(i32::try_from(entry.frequency).unwrap_or(i32::MAX))
+            .push_bind(entry.success_rate)
+            .push_bind(i32::try_from(entry.usage_count).unwrap_or(i32::MAX))
+            .push_bind(entry.last_used_at)
+            .push_bind(entry.created_at);
+    });
+
+    builder.push(
+        " ON CONFLICT (id) DO UPDATE SET
+            frequency = context_entries.frequency + EXCLUDED.frequency,
+            success_rate = (context_entries.success_rate * context_entries.usage_count::real + EXCLUDED.success_rate * EXCLUDED.usage_count::real) / NULLIF(context_entries.usage_count + EXCLUDED.usage_count, 0)::real,
+            usage_count = context_entries.usage_count + EXCLUDED.usage_count,
+            last_used_at = EXCLUDED.last_used_at,
+            content = EXCLUDED.content,
+            embedding = EXCLUDED.embedding,
+            metadata = EXCLUDED.metadata"
+    );
+
+    builder.build().execute(pool).await?;
+    Ok(())
+}
+
+/// Delete context entries by their UUIDs.
+/// Returns the number of rows affected.
+pub async fn delete_context_entries_by_ids(pool: &PgPool, ids: &[Uuid]) -> anyhow::Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut builder = QueryBuilder::<Postgres>::new("DELETE FROM context_entries WHERE id IN (");
+    let mut separated = builder.separated(",");
+    for id in ids {
+        separated.push_bind(*id);
+    }
+    separated.push_unseparated(");");
+    let result = builder.build().execute(pool).await?;
+    Ok(result.rows_affected())
+}
+
+/// Bulk update embeddings for existing context entries.
+/// Uses UNNEST for a single round-trip.
+pub async fn bulk_update_embeddings(
+    pool: &PgPool,
+    updates: &[(Uuid, Vec<f32>)],
+) -> anyhow::Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+
+    let ids: Vec<Uuid> = updates.iter().map(|(id, _)| *id).collect();
+    let embeddings: Vec<String> = updates.iter().map(|(_, emb)| vector_literal(emb)).collect();
+
+    sqlx::query(
+        "UPDATE context_entries SET embedding = v.emb::vector
+         FROM (SELECT unnest($1::uuid[]) as id, unnest($2::text[]) as emb) as v
+         WHERE context_entries.id = v.id",
+    )
+    .bind(&ids[..])
+    .bind(&embeddings[..])
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn load_context_entries(pool: &PgPool, limit: i64) -> anyhow::Result<Vec<ContextEntry>> {

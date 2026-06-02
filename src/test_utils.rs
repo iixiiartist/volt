@@ -4,16 +4,17 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+#[derive(Clone)]
 pub struct MockLLMProvider {
-    pub responses: Mutex<Vec<anyhow::Result<LLMResponse>>>,
-    pub requests: Mutex<Vec<LLMRequest>>,
+    pub responses: Arc<Mutex<Vec<anyhow::Result<LLMResponse>>>>,
+    pub requests: Arc<Mutex<Vec<LLMRequest>>>,
 }
 
 impl MockLLMProvider {
     pub fn new(responses: Vec<anyhow::Result<LLMResponse>>) -> Self {
         Self {
-            responses: Mutex::new(responses),
-            requests: Mutex::new(Vec::new()),
+            responses: Arc::new(Mutex::new(responses)),
+            requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 

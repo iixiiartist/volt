@@ -135,7 +135,10 @@ impl Agent {
                     .iter()
                     .map(|s| s.as_str())
                     .collect();
-                let limit = if self.config.quirks.contains(&crate::agent::blueprint::ModelQuirk::SchemaLimitTen)
+                let limit = if self
+                    .config
+                    .quirks
+                    .contains(&crate::agent::blueprint::ModelQuirk::SchemaLimitTen)
                     && !self.config.strict_mode
                 {
                     10
@@ -179,7 +182,10 @@ impl Agent {
                         Err(e) => {
                             let err_str = e.to_string();
                             // Fast-fail on auth errors — retrying will never succeed
-                            let is_auth_err = err_str.contains("401") || err_str.contains("403") || err_str.contains("Unauthorized") || err_str.contains("Forbidden");
+                            let is_auth_err = err_str.contains("401")
+                                || err_str.contains("403")
+                                || err_str.contains("Unauthorized")
+                                || err_str.contains("Forbidden");
                             if is_auth_err || attempt + 1 >= max_retries {
                                 if !is_auth_err {
                                     if self.is_cancelled() {
@@ -191,8 +197,7 @@ impl Agent {
                                 eprintln!("\n\x1b[31m[API Auth Error]\x1b[0m {} — aborting (retrying would not help)", e);
                                 return Err(e);
                             }
-                            let delay =
-                                std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                            let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
                             eprintln!(
                                 "\n\x1b[33m[API retry {}]\x1b[0m {} (retrying in {:?})",
                                 attempt + 1,
@@ -403,10 +408,15 @@ impl Agent {
             } else {
                 // ── MissingFinalAnswer quirk ──────────────────────────
                 let content = response.content.as_str();
-                if self.config.quirks.contains(&crate::agent::blueprint::ModelQuirk::MissingFinalAnswer)
+                if self
+                    .config
+                    .quirks
+                    .contains(&crate::agent::blueprint::ModelQuirk::MissingFinalAnswer)
                     && !content.trim().is_empty()
                 {
-                    tracing::warn!("MissingFinalAnswer quirk triggered: wrapping text as final_answer");
+                    tracing::warn!(
+                        "MissingFinalAnswer quirk triggered: wrapping text as final_answer"
+                    );
                     let answer = content.trim().to_string();
                     let synthetic = ToolCall {
                         id: Uuid::new_v4().to_string(),

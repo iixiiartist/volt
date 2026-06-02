@@ -39,12 +39,22 @@ impl ContextStore {
             .await;
 
         let mut newly_embedded: Vec<(usize, Vec<f32>)> = Vec::new();
+        let mut updates: Vec<(Uuid, Vec<f32>)> = Vec::new();
         let mut entries = self.entries.write().await;
         for (id, emb) in results {
             if let Some(emb_vec) = emb {
                 if let Some(pos) = entries.iter().position(|e| e.entry.id == id) {
                     entries[pos].entry.embedding = Some(emb_vec.clone());
-                    newly_embedded.push((pos, emb_vec));
+                    newly_embedded.push((pos, emb_vec.clone()));
+                    updates.push((id, emb_vec));
+                }
+            }
+        }
+
+        if let Some(db) = self.db() {
+            if !updates.is_empty() {
+                if let Err(e) = crate::db::bulk_update_embeddings(db, &updates).await {
+                    tracing::warn!("[context] bulk_update_embeddings failed: {}", e);
                 }
             }
         }

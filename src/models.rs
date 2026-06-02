@@ -258,7 +258,11 @@ impl ResponseFormat {
     pub fn to_request_value(&self) -> Value {
         match self {
             ResponseFormat::JsonObject => serde_json::json!({"type": "json_object"}),
-            ResponseFormat::JsonSchema { name, strict, schema } => serde_json::json!({
+            ResponseFormat::JsonSchema {
+                name,
+                strict,
+                schema,
+            } => serde_json::json!({
                 "type": "json_schema",
                 "json_schema": {
                     "name": name,
@@ -474,7 +478,7 @@ impl std::fmt::Debug for MCPServerConfig {
     }
 }
 
-/// Transport mechanism for an MCP server — HTTP with URL and optional headers, Stdio, WebSocket, or gRPC.
+/// Transport mechanism for an MCP server — HTTP with URL and optional headers, or Stdio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum MCPTransport {
@@ -483,21 +487,6 @@ pub enum MCPTransport {
     #[serde(rename = "http")]
     Http {
         url: String,
-        headers: Option<HashMap<String, String>>,
-    },
-    #[serde(rename = "websocket")]
-    WebSocket {
-        url: String,
-        headers: Option<HashMap<String, String>>,
-    },
-    /// gRPC transport for high-frequency agent-to-agent coordination.
-    /// Requires the `tools-mcp-grpc` feature flag.
-    /// Uses tonic + prost for bidirectional streaming between Volt agents.
-    #[serde(rename = "grpc")]
-    Grpc {
-        /// gRPC server endpoint URL (e.g. http://[::1]:50051)
-        url: String,
-        /// Optional metadata headers to attach to each gRPC call
         headers: Option<HashMap<String, String>>,
     },
 }

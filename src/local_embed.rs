@@ -2,7 +2,7 @@
 use std::sync::Mutex;
 
 #[cfg(feature = "tools-local-embeddings")]
-use ort::ep::{CPU, CUDA, DirectML, OpenVINO};
+use ort::ep::{DirectML, OpenVINO, CPU, CUDA};
 
 #[cfg(feature = "tools-local-embeddings")]
 use ort::session::builder::GraphOptimizationLevel;
@@ -54,15 +54,19 @@ impl LocalEmbedder {
             .map_err(|e| anyhow::anyhow!("tokenizer load: {}", e))?;
 
         // Auto-configures the global ONNX Runtime environment if not yet set.
-        let mut builder = Session::builder().map_err(ort_err)?
-            .with_optimization_level(GraphOptimizationLevel::Level3).map_err(ort_err)?
-            .with_intra_threads(2).map_err(ort_err)?
+        let mut builder = Session::builder()
+            .map_err(ort_err)?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(ort_err)?
+            .with_intra_threads(2)
+            .map_err(ort_err)?
             .with_execution_providers([
                 OpenVINO::default().build(),
                 DirectML::default().build(),
                 CUDA::default().build(),
                 CPU::default().build(),
-            ]).map_err(ort_err)?;
+            ])
+            .map_err(ort_err)?;
         let session = builder.commit_from_file(&onnx_path)?;
 
         tracing::info!(
@@ -74,7 +78,10 @@ impl LocalEmbedder {
         // Log which EPs are available on this system
         log_ep_availability();
 
-        Ok(Self { session: Mutex::new(session), tokenizer })
+        Ok(Self {
+            session: Mutex::new(session),
+            tokenizer,
+        })
     }
 
     /// Same as `embed()` but runs on tokio's blocking thread pool
@@ -132,9 +139,10 @@ impl LocalEmbedder {
             }
             let seq = shape[1];
             let hidden = shape[2];
-            let data = last_hidden.as_slice().ok_or_else(|| {
-                anyhow::anyhow!("tensor data is not contiguous")
-            })?.to_vec();
+            let data = last_hidden
+                .as_slice()
+                .ok_or_else(|| anyhow::anyhow!("tensor data is not contiguous"))?
+                .to_vec();
             (seq, hidden, data)
         };
 
@@ -193,11 +201,7 @@ impl LocalEmbedder {
 
         for encoding in &encodings {
             let seq_len = encoding.len();
-            let ids: Vec<i64> = encoding
-                .get_ids()
-                .iter()
-                .map(|&v| v as i64)
-                .collect();
+            let ids: Vec<i64> = encoding.get_ids().iter().map(|&v| v as i64).collect();
             let mask: Vec<i64> = encoding
                 .get_attention_mask()
                 .iter()
@@ -243,9 +247,10 @@ impl LocalEmbedder {
             }
             let max_seq = shape[1];
             let hidden = shape[2];
-            let data = last_hidden.as_slice().ok_or_else(|| {
-                anyhow::anyhow!("tensor data is not contiguous")
-            })?.to_vec();
+            let data = last_hidden
+                .as_slice()
+                .ok_or_else(|| anyhow::anyhow!("tensor data is not contiguous"))?
+                .to_vec();
             (max_seq, hidden, data)
         };
 

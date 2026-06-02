@@ -107,11 +107,10 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
                 Some(bp) => {
                     eprintln!("[router] selected blueprint: {} ({})", bp.id, bp.name);
                     let paths = crate::agent::router::discover_blueprints();
-                    paths.iter().find(|p| {
-                        p.file_stem()
-                            .map(|s| s == bp.id.as_str())
-                            .unwrap_or(false)
-                    }).cloned()
+                    paths
+                        .iter()
+                        .find(|p| p.file_stem().map(|s| s == bp.id.as_str()).unwrap_or(false))
+                        .cloned()
                 }
                 None => {
                     eprintln!("[router] LLM could not determine best blueprint, using defaults");

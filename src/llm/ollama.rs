@@ -2,7 +2,7 @@ use crate::agent::tool_parser::parse_lossy_json;
 use crate::llm::provider::TokenCallback;
 use crate::llm::LLMProvider;
 use crate::models::{
-    AudioRequest, AudioResponse, LLMMessage, LLMRequest, LLMResponse, ToolCall, TtsRequest, Usage,
+    AudioRequest, AudioResponse, LLMRequest, LLMResponse, ToolCall, TtsRequest, Usage,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -91,7 +91,11 @@ impl OllamaProvider {
         body
     }
 
-    async fn poll_async_result(&self, base_url: &str, request_id: &str) -> anyhow::Result<LLMResponse> {
+    async fn poll_async_result(
+        &self,
+        base_url: &str,
+        request_id: &str,
+    ) -> anyhow::Result<LLMResponse> {
         let poll_url = format!("{}/chat/{}", base_url.trim_end_matches('/'), request_id);
         for _ in 0..120 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -318,6 +322,8 @@ impl LLMProvider for OllamaProvider {
     }
 
     async fn synthesize(&self, _tts: &TtsRequest) -> anyhow::Result<Vec<u8>> {
-        anyhow::bail!("ollama does not support TTS via native API (use OpenAI-compatible endpoint instead)")
+        anyhow::bail!(
+            "ollama does not support TTS via native API (use OpenAI-compatible endpoint instead)"
+        )
     }
 }

@@ -27,8 +27,18 @@ impl OpenAIProvider {
         }
     }
 
-    pub fn new_with_client(http: reqwest::Client, api_key: String, base_url: String, name: String) -> Self {
-        Self { http, api_key, base_url, name }
+    pub fn new_with_client(
+        http: reqwest::Client,
+        api_key: String,
+        base_url: String,
+        name: String,
+    ) -> Self {
+        Self {
+            http,
+            api_key,
+            base_url,
+            name,
+        }
     }
 }
 
@@ -44,7 +54,10 @@ fn build_strict_response_schema(tools: &[crate::models::ToolDefinition]) -> serd
             let mut args_schema = t.input_schema.clone();
             // Ensure additionalProperties: false for strictness
             if let Some(obj) = args_schema.as_object_mut() {
-                obj.insert("additionalProperties".into(), serde_json::Value::Bool(false));
+                obj.insert(
+                    "additionalProperties".into(),
+                    serde_json::Value::Bool(false),
+                );
             }
             json!({
                 "type": "object",
@@ -125,16 +138,19 @@ fn build_request_body(request: &LLMRequest) -> serde_json::Value {
                 "content": m.content.as_str()
             });
             if let Some(tcs) = &m.tool_calls {
-                msg["tool_calls"] = json!(tcs.iter().map(|tc| {
-                    json!({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": tc.arguments.to_string()
-                        }
+                msg["tool_calls"] = json!(tcs
+                    .iter()
+                    .map(|tc| {
+                        json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.arguments.to_string()
+                            }
+                        })
                     })
-                }).collect::<Vec<_>>());
+                    .collect::<Vec<_>>());
             }
             if let Some(tid) = &m.tool_call_id {
                 msg["tool_call_id"] = json!(tid);
@@ -202,11 +218,11 @@ fn parse_usage(val: &serde_json::Value) -> Usage {
         total_tokens: val["total_tokens"].as_u64().unwrap_or(0),
         queue_time: val["queue_time"].as_f64(),
         total_time: val["total_time"].as_f64(),
-        prompt_tokens_details: val["prompt_tokens_details"]
-            .as_object()
-            .map(|d| PromptTokensDetails {
+        prompt_tokens_details: val["prompt_tokens_details"].as_object().map(|d| {
+            PromptTokensDetails {
                 cached_tokens: d.get("cached_tokens").and_then(|v| v.as_u64()),
-            }),
+            }
+        }),
     }
 }
 
@@ -252,12 +268,18 @@ fn make_audio_part(data: Vec<u8>, filename: &str) -> reqwest::multipart::Part {
     reqwest::multipart::Part::bytes(data)
         .file_name(filename.to_string())
         .mime_str(mime)
-        .unwrap_or_else(|_| reqwest::multipart::Part::bytes(fallback_data).file_name(filename.to_string()))
+        .unwrap_or_else(|_| {
+            reqwest::multipart::Part::bytes(fallback_data).file_name(filename.to_string())
+        })
 }
 
 impl OpenAIProvider {
     /// Poll an async inference result until completion (NVIDIA NIM 202 polling pattern).
-    async fn poll_async_result(&self, base_url: &str, request_id: &str) -> anyhow::Result<LLMResponse> {
+    async fn poll_async_result(
+        &self,
+        base_url: &str,
+        request_id: &str,
+    ) -> anyhow::Result<LLMResponse> {
         let poll_url = format!("{}/{}", base_url.trim_end_matches('/'), request_id);
         let max_polls = 120; // 120 * 2s = 240s max wait
 
@@ -494,9 +516,15 @@ impl LLMProvider for OpenAIProvider {
     }
 
     async fn transcribe(&self, audio: &AudioRequest) -> anyhow::Result<AudioResponse> {
-        let url = format!("{}/audio/transcriptions", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/audio/transcriptions",
+            self.base_url.trim_end_matches('/')
+        );
         let mut form = reqwest::multipart::Form::new()
-            .part("file", make_audio_part(audio.file_data.clone(), &audio.file_name))
+            .part(
+                "file",
+                make_audio_part(audio.file_data.clone(), &audio.file_name),
+            )
             .text("model", audio.model.clone());
 
         if let Some(ref lang) = audio.language {
@@ -535,7 +563,10 @@ impl LLMProvider for OpenAIProvider {
             x_groq: resp.get("x_groq").cloned(),
             segments: None,
             task: resp.get("task").and_then(|v| v.as_str()).map(String::from),
-            language: resp.get("language").and_then(|v| v.as_str()).map(String::from),
+            language: resp
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             duration: resp.get("duration").and_then(|v| v.as_f64()),
         })
     }
@@ -543,7 +574,10 @@ impl LLMProvider for OpenAIProvider {
     async fn translate(&self, audio: &AudioRequest) -> anyhow::Result<AudioResponse> {
         let url = format!("{}/audio/translations", self.base_url.trim_end_matches('/'));
         let form = reqwest::multipart::Form::new()
-            .part("file", make_audio_part(audio.file_data.clone(), &audio.file_name))
+            .part(
+                "file",
+                make_audio_part(audio.file_data.clone(), &audio.file_name),
+            )
             .text("model", audio.model.clone());
 
         let mut req = self.http.post(&url).multipart(form);
@@ -569,7 +603,10 @@ impl LLMProvider for OpenAIProvider {
             x_groq: resp.get("x_groq").cloned(),
             segments: None,
             task: resp.get("task").and_then(|v| v.as_str()).map(String::from),
-            language: resp.get("language").and_then(|v| v.as_str()).map(String::from),
+            language: resp
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             duration: resp.get("duration").and_then(|v| v.as_f64()),
         })
     }
@@ -611,22 +648,23 @@ fn parse_structured_output(content_str: &str) -> Option<(Vec<ToolCall>, String)>
     let parsed = serde_json::from_str::<serde_json::Value>(content_str).ok()?;
     let text_content = parsed.get("content")?.as_str()?.to_string();
 
-    let calls: Vec<ToolCall> = if let Some(tool_calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
-        tool_calls
-            .iter()
-            .filter_map(|tc| {
-                let name = tc.get("name")?.as_str()?.to_string();
-                let args = tc.get("arguments")?.clone();
-                Some(ToolCall {
-                    id: format!("call_{}", uuid::Uuid::new_v4().to_string()[..8].to_string()),
-                    name,
-                    arguments: args,
+    let calls: Vec<ToolCall> =
+        if let Some(tool_calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
+            tool_calls
+                .iter()
+                .filter_map(|tc| {
+                    let name = tc.get("name")?.as_str()?.to_string();
+                    let args = tc.get("arguments")?.clone();
+                    Some(ToolCall {
+                        id: format!("call_{}", &uuid::Uuid::new_v4().to_string()[..8]),
+                        name,
+                        arguments: args,
+                    })
                 })
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+                .collect()
+        } else {
+            Vec::new()
+        };
 
     Some((calls, text_content))
 }
@@ -663,30 +701,32 @@ fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse>
     };
 
     let usage = resp["usage"].as_object().map(|u| Usage {
-        prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
-        completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
-        total_tokens: u["total_tokens"].as_u64().unwrap_or(0),
-        queue_time: u["queue_time"].as_f64(),
-        total_time: u["total_time"].as_f64(),
-        prompt_tokens_details: u["prompt_tokens_details"]
-            .as_object()
+        prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        completion_tokens: u
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        queue_time: u.get("queue_time").and_then(|v| v.as_f64()),
+        total_time: u.get("total_time").and_then(|v| v.as_f64()),
+        prompt_tokens_details: u
+            .get("prompt_tokens_details")
+            .and_then(|v| v.as_object())
             .map(|d| PromptTokensDetails {
                 cached_tokens: d.get("cached_tokens").and_then(|v| v.as_u64()),
             }),
     });
 
-    let usage_breakdown = resp["usage_breakdown"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| {
-                    Some(ModelUsage {
-                        model: m["model"].as_str()?.to_string(),
-                        usage: parse_usage(&m["usage"]),
-                    })
+    let usage_breakdown = resp["usage_breakdown"].as_array().map(|arr| {
+        arr.iter()
+            .filter_map(|m| {
+                Some(ModelUsage {
+                    model: m["model"].as_str()?.to_string(),
+                    usage: parse_usage(&m["usage"]),
                 })
-                .collect()
-        });
+            })
+            .collect()
+    });
 
     let executed_tools = parse_executed_tools(message);
 
@@ -896,5 +936,118 @@ mod tests {
         assert!(body["tools"].is_array());
         // Should NOT have response_format json_schema
         assert!(body.get("response_format").is_none());
+    }
+
+    #[test]
+    fn test_build_strict_response_schema_injects_additional_properties_false() {
+        let tools = vec![ToolDefinition {
+            name: "write".into(),
+            description: "Write".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "content": { "type": "string" }
+                },
+                "required": ["path", "content"]
+            }),
+            category: "builtin".into(),
+        }];
+
+        let schema = build_strict_response_schema(&tools);
+        let tc = &schema["properties"]["tool_calls"];
+        let branch = &tc["items"];
+
+        // Top-level branch enforces additionalProperties: false
+        assert_eq!(branch["additionalProperties"], false);
+        // The arguments schema should also have additionalProperties: false injected
+        let args = &branch["properties"]["arguments"];
+        assert_eq!(args["additionalProperties"], false);
+    }
+
+    #[test]
+    fn test_build_strict_response_schema_exact_tool_names_as_const() {
+        let tools = vec![
+            ToolDefinition {
+                name: "read".into(),
+                description: "Read".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                category: "builtin".into(),
+            },
+            ToolDefinition {
+                name: "write".into(),
+                description: "Write".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                category: "builtin".into(),
+            },
+        ];
+
+        let schema = build_strict_response_schema(&tools);
+        let any_of = schema["properties"]["tool_calls"]["items"]["anyOf"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(any_of.len(), 2);
+        // Verify exact const values for tool names
+        assert_eq!(any_of[0]["properties"]["name"]["const"], "read");
+        assert_eq!(any_of[1]["properties"]["name"]["const"], "write");
+    }
+
+    #[test]
+    fn test_build_request_body_strict_mode_with_explicit_response_format_override() {
+        // When both strict_mode and an explicit response_format are set,
+        // the explicit response_format takes precedence (applied after strict mode).
+        let tools = vec![ToolDefinition {
+            name: "read".into(),
+            description: "Read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            category: "builtin".into(),
+        }];
+
+        let request = LLMRequest {
+            model: "gpt-4o".into(),
+            messages: vec![LLMMessage {
+                role: "user".into(),
+                content: Arc::new("hello".into()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            strict_mode: true,
+            tools: Some(tools),
+            response_format: Some(crate::models::ResponseFormat::JsonObject),
+            ..Default::default()
+        };
+
+        let body = build_request_body(&request);
+        // Explicit response_format overrides strict mode's json_schema
+        assert_eq!(body["response_format"]["type"], "json_object");
+        // tool_choice from strict mode should still be present
+        assert_eq!(body["tool_choice"], "none");
+    }
+
+    #[test]
+    fn test_build_request_body_strict_mode_empty_tools() {
+        let request = LLMRequest {
+            model: "gpt-4o".into(),
+            messages: vec![LLMMessage {
+                role: "user".into(),
+                content: Arc::new("hello".into()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            strict_mode: true,
+            tools: Some(vec![]),
+            ..Default::default()
+        };
+
+        let body = build_request_body(&request);
+        // Even with empty tools, strict mode still generates a response_format
+        // (tool_calls schema has an empty anyOf array)
+        let rf = body["response_format"].as_object().unwrap();
+        assert_eq!(rf["type"], "json_schema");
+        let js = rf["json_schema"].as_object().unwrap();
+        assert_eq!(js["name"], "volt_tool_calls");
+        // tool_choice: none is still injected
+        assert_eq!(body["tool_choice"], "none");
     }
 }

@@ -491,7 +491,7 @@ mod tests {
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
-            .max_connections(4)
+            .max_connections(1)
             .connect_with(options)
             .await
             .unwrap();

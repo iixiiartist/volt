@@ -8,8 +8,9 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
     let litertlm_path = std::env::var("VOLT_TOOL_BIN_DIR")
         .map(|d| std::path::PathBuf::from(d).join("litert_lm.exe"))
         .unwrap_or_else(|_| std::path::PathBuf::from("litert_lm.exe"));
-    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && litertlm_path.exists() {
-    registry.register(
+    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && litertlm_path.exists()
+    {
+        registry.register(
         "litertlm",
         "[LOCAL ONLY] Run a local LiteRT-LM inference binary (e.g., Gemma-4 E4B). Do NOT use this for answering user questions — you are the LLM, answer directly. Only use this if you specifically need to run a separate local model.",
         serde_json::json!({
@@ -52,8 +53,9 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
     let llamacpp_path = std::env::var("VOLT_TOOL_BIN_DIR")
         .map(|d| std::path::PathBuf::from(d).join("llama.exe"))
         .unwrap_or_else(|_| std::path::PathBuf::from("llama.exe"));
-    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && llamacpp_path.exists() {
-    registry.register(
+    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && llamacpp_path.exists()
+    {
+        registry.register(
         "llamacpp",
         "[LOCAL ONLY] Run a local llama.cpp inference binary (e.g., Gemma-4 31B). Do NOT use this for answering user questions — you are the LLM, answer directly. Only use this if you specifically need to run a separate local model.",
         serde_json::json!({
@@ -99,8 +101,10 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
     let llamacpp_for_mtp = std::env::var("VOLT_TOOL_BIN_DIR")
         .map(|d| std::path::PathBuf::from(d).join("llama.exe"))
         .unwrap_or_else(|_| std::path::PathBuf::from("llama.exe"));
-    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1") && (litertlm_for_mtp.exists() || llamacpp_for_mtp.exists()) {
-    registry.register(
+    if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() == Ok("1")
+        && (litertlm_for_mtp.exists() || llamacpp_for_mtp.exists())
+    {
+        registry.register(
         "mtp",
         "Run MTP using a draft model + full model. Usage: {'draft_model': 'path/to/draft', 'full_model': 'path/to/full', 'prompt': '...', 'framework': 'litertlm|llamacpp'}",
         serde_json::json!({

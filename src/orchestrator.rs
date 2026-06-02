@@ -54,6 +54,7 @@ pub struct StepResult {
     pub success: bool,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,31 +115,12 @@ impl Orchestrator {
     }
 }
 
-async fn create_agent(
+async fn create_agent_with_provider(
     spec: AgentSpec,
     tools: Arc<ToolRegistry>,
     cap_mgr: Option<Arc<crate::capability::CapabilityManager>>,
+    llm_provider: Box<dyn LLMProvider>,
 ) -> Agent {
-    let route = resolve_provider(&spec.model);
-
-    let llm_provider: Box<dyn LLMProvider> = match route.kind {
-        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
-            route.api_key,
-            Some(route.base_url),
-            spec.name.clone(),
-        )),
-        ProviderKind::OpenAI => Box::new(OpenAIProvider::new(
-            route.api_key,
-            route.base_url,
-            spec.name.clone(),
-        )),
-    };
-
-    let provider_label = match route.kind {
-        ProviderKind::Anthropic => "anthropic",
-        ProviderKind::OpenAI => "openai",
-    };
-
     let enabled_context_kinds = match spec.mode {
         Some(ref mode) => mode.context_kinds(),
         None => crate::models::default_context_kinds(),
@@ -148,7 +130,7 @@ async fn create_agent(
         AgentConfig {
             name: spec.name,
             model: spec.model,
-            provider: provider_label.into(),
+            provider: llm_provider.name().into(),
             system_prompt: spec.system_prompt,
             max_iterations: spec.max_iterations,
             temperature: spec.temperature,
@@ -178,6 +160,29 @@ async fn create_agent(
         agent = agent.with_capability_manager(mgr);
     }
     agent
+}
+
+async fn create_agent(
+    spec: AgentSpec,
+    tools: Arc<ToolRegistry>,
+    cap_mgr: Option<Arc<crate::capability::CapabilityManager>>,
+) -> Agent {
+    let route = resolve_provider(&spec.model);
+
+    let llm_provider: Box<dyn LLMProvider> = match route.kind {
+        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
+            route.api_key,
+            Some(route.base_url),
+            spec.name.clone(),
+        )),
+        ProviderKind::OpenAI => Box::new(OpenAIProvider::new(
+            route.api_key,
+            route.base_url,
+            spec.name.clone(),
+        )),
+    };
+
+    create_agent_with_provider(spec, tools, cap_mgr, llm_provider).await
 }
 
 fn kind_from_str(s: &str) -> ProviderKind {
@@ -230,16 +235,14 @@ const NIM_VENDOR_PREFIXES: &[&str] = &[
 
 /// Vendor prefixes served through Groq's API (these should NOT route to NVIDIA
 /// even when NVIDIA_API_KEY is set, since Groq also hosts them).
-const GROQ_VENDOR_PREFIXES: &[&str] = &[
-    "openai/gpt-oss-",
-    "meta-llama/",
-    "canopylabs/",
-];
+const GROQ_VENDOR_PREFIXES: &[&str] = &["openai/gpt-oss-", "meta-llama/", "canopylabs/"];
 
 /// Check if a model name matches a known NIM-hosted vendor prefix.
 fn is_nim_hosted_model(model: &str) -> bool {
     let m = model.to_lowercase();
-    NIM_VENDOR_PREFIXES.iter().any(|prefix| m.starts_with(prefix))
+    NIM_VENDOR_PREFIXES
+        .iter()
+        .any(|prefix| m.starts_with(prefix))
 }
 
 /// Check if model has a vendor prefix (contains '/') and is not a known
@@ -251,7 +254,9 @@ fn is_nim_catchall_candidate(model: &str) -> bool {
         return false;
     }
     // Exclude known Groq-hosted prefixes
-    !GROQ_VENDOR_PREFIXES.iter().any(|prefix| m.starts_with(prefix))
+    !GROQ_VENDOR_PREFIXES
+        .iter()
+        .any(|prefix| m.starts_with(prefix))
 }
 
 pub fn resolve_provider(model: &str) -> ProviderRoute {
@@ -428,6 +433,7 @@ impl Orchestrator {
                             success: false,
                             prompt_tokens: 0,
                             completion_tokens: 0,
+                            error: None,
                         }
                     }
                 };
@@ -443,6 +449,7 @@ impl Orchestrator {
                             success: true,
                             prompt_tokens: state.total_prompt_tokens,
                             completion_tokens: state.total_completion_tokens,
+                            error: None,
                         }
                     }
                     Err(e) => {
@@ -454,6 +461,7 @@ impl Orchestrator {
                             success: false,
                             prompt_tokens: state.total_prompt_tokens,
                             completion_tokens: state.total_completion_tokens,
+                            error: Some(e.to_string()),
                         }
                     }
                 };
@@ -472,6 +480,7 @@ impl Orchestrator {
                     success: false,
                     prompt_tokens: 0,
                     completion_tokens: 0,
+                    error: Some("task join failed".into()),
                 }),
             }
         }
@@ -503,6 +512,7 @@ impl Orchestrator {
                         success: true,
                         prompt_tokens: state.total_prompt_tokens,
                         completion_tokens: state.total_completion_tokens,
+                        error: None,
                     });
                 }
                 Err(e) => {
@@ -514,6 +524,7 @@ impl Orchestrator {
                         success: false,
                         prompt_tokens: state.total_prompt_tokens,
                         completion_tokens: state.total_completion_tokens,
+                        error: Some(e.to_string()),
                     });
                     break;
                 }
@@ -615,6 +626,7 @@ impl Orchestrator {
                 success: true,
                 prompt_tokens: state.total_prompt_tokens,
                 completion_tokens: state.total_completion_tokens,
+                error: None,
             }],
             final_output: output,
             total_duration_ms: started.elapsed().as_millis(),
@@ -887,6 +899,10 @@ impl DagWorkflow {
 pub struct DagScheduler<'a> {
     tools: &'a Arc<ToolRegistry>,
     cap_mgr: Option<&'a Arc<crate::capability::CapabilityManager>>,
+    #[doc(hidden)]
+    #[allow(clippy::type_complexity)]
+    provider_factory:
+        Option<std::sync::Arc<dyn Fn(AgentSpec) -> Box<dyn LLMProvider> + Send + Sync>>,
 }
 
 impl<'a> DagScheduler<'a> {
@@ -894,6 +910,7 @@ impl<'a> DagScheduler<'a> {
         Self {
             tools,
             cap_mgr: None,
+            provider_factory: None,
         }
     }
 
@@ -905,18 +922,29 @@ impl<'a> DagScheduler<'a> {
         self
     }
 
+    #[doc(hidden)]
+    pub fn with_provider_factory(
+        mut self,
+        factory: std::sync::Arc<dyn Fn(AgentSpec) -> Box<dyn LLMProvider> + Send + Sync>,
+    ) -> Self {
+        self.provider_factory = Some(factory);
+        self
+    }
+
     /// Execute a DAG workflow with the given initial input.
-    /// Returns a map of node ID -> agent output for all executed nodes.
+    /// Returns a map of node ID -> full execution telemetry for all executed nodes.
     pub async fn execute(
         &self,
         workflow: &DagWorkflow,
         initial_input: &str,
-    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    ) -> anyhow::Result<std::collections::HashMap<String, StepResult>> {
         let levels = workflow.execution_levels()?;
         let node_map = workflow.node_map();
         let radj = workflow.reverse_adjacency();
 
-        // Accumulates outputs: node_id -> output text
+        // Accumulates outputs and telemetry: node_id -> StepResult
+        let mut results: std::collections::HashMap<String, StepResult> =
+            std::collections::HashMap::new();
         let mut outputs: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         outputs.insert("input".to_string(), initial_input.to_string());
@@ -953,27 +981,61 @@ impl<'a> DagScheduler<'a> {
 
             // Execute all payloads in this level concurrently
             let mut handles = Vec::new();
+            let factory = self.provider_factory.clone();
             for (node_id, agent_spec, task) in payloads {
                 let tools = self.tools.clone();
                 let cap_mgr = self.cap_mgr.cloned();
+                let factory = factory.clone();
                 handles.push(tokio::spawn(async move {
-                    let agent = create_agent(agent_spec, tools, cap_mgr).await;
-                    let result = agent.run(&task).await;
-                    (node_id, result)
+                    let step_started = std::time::Instant::now();
+                    let agent = if let Some(ref f) = factory {
+                        create_agent_with_provider(
+                            agent_spec.clone(),
+                            tools,
+                            cap_mgr,
+                            f(agent_spec.clone()),
+                        )
+                        .await
+                    } else {
+                        create_agent(agent_spec.clone(), tools, cap_mgr).await
+                    };
+                    let run_result = agent.run(&task).await;
+                    let state = agent.state().lock().await;
+                    let step = match run_result {
+                        Ok(output) => StepResult {
+                            agent_name: agent_spec.name,
+                            output: output.clone(),
+                            duration_ms: step_started.elapsed().as_millis(),
+                            success: true,
+                            prompt_tokens: state.total_prompt_tokens,
+                            completion_tokens: state.total_completion_tokens,
+                            error: None,
+                        },
+                        Err(e) => StepResult {
+                            agent_name: agent_spec.name,
+                            output: format!("error: {}", e),
+                            duration_ms: step_started.elapsed().as_millis(),
+                            success: false,
+                            prompt_tokens: state.total_prompt_tokens,
+                            completion_tokens: state.total_completion_tokens,
+                            error: Some(e.to_string()),
+                        },
+                    };
+                    (node_id, step)
                 }));
             }
 
             // Collect results for this level
             for handle in handles {
-                let (node_id, result) = handle
+                let (node_id, step) = handle
                     .await
                     .map_err(|e| anyhow::anyhow!("task join: {}", e))?;
-                let output = result?;
-                outputs.insert(node_id, output);
+                outputs.insert(node_id.clone(), step.output.clone());
+                results.insert(node_id, step);
             }
         }
 
-        Ok(outputs)
+        Ok(results)
     }
 }
 
@@ -988,28 +1050,27 @@ impl Orchestrator {
         let started = std::time::Instant::now();
         let workflow = DagWorkflow::from_json(dag_json)?;
         let scheduler = DagScheduler::new(&self.tools).with_capability_manager(&self.cap_mgr);
-        let outputs = scheduler.execute(&workflow, initial_input).await?;
+        let node_results = scheduler.execute(&workflow, initial_input).await?;
 
-        // Build the workflow result
+        // Build the workflow result from real telemetry
         let mut steps = Vec::new();
         for node in &workflow.nodes {
-            if let Some(output) = outputs.get(&node.id) {
-                steps.push(StepResult {
-                    agent_name: node.agent.name.clone(),
-                    output: output.clone(),
-                    duration_ms: 0,
-                    success: true,
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                });
+            if let Some(step) = node_results.get(&node.id) {
+                steps.push(step.clone());
             }
         }
 
         // Find a "final_output" marker or use the last executed node's output
-        let final_output = outputs
+        let final_output = node_results
             .get("final_output")
-            .or_else(|| workflow.nodes.last().and_then(|n| outputs.get(&n.id)))
-            .cloned()
+            .map(|s| s.output.clone())
+            .or_else(|| {
+                workflow
+                    .nodes
+                    .last()
+                    .and_then(|n| node_results.get(&n.id))
+                    .map(|s| s.output.clone())
+            })
             .unwrap_or_default();
 
         Ok(WorkflowResult {
@@ -1017,5 +1078,124 @@ impl Orchestrator {
             final_output,
             total_duration_ms: started.elapsed().as_millis(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::LLMProvider;
+    use crate::models::{LLMRequest, LLMResponse};
+    use async_trait::async_trait;
+
+    /// Mock provider that always fails — used to verify DAG telemetry capture.
+    struct FailingProvider;
+
+    #[async_trait]
+    impl LLMProvider for FailingProvider {
+        fn name(&self) -> &str {
+            "mock-failing"
+        }
+        fn supported_models(&self) -> Vec<String> {
+            vec![]
+        }
+        async fn complete(&self, _request: &LLMRequest) -> anyhow::Result<LLMResponse> {
+            anyhow::bail!("mock hardcoded failure")
+        }
+        async fn complete_stream(
+            &self,
+            _request: &LLMRequest,
+            _on_token: crate::llm::provider::TokenCallback,
+        ) -> anyhow::Result<LLMResponse> {
+            anyhow::bail!("mock hardcoded failure")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dag_scheduler_captures_failure_telemetry() {
+        let registry = ToolRegistry::new();
+        let dag_json = r#"{
+            "nodes": [
+                {
+                    "id": "fail_node",
+                    "task": "This will fail: {input}",
+                    "agent": {
+                        "name": "failing-agent",
+                        "max_iterations": 2
+                    }
+                }
+            ],
+            "edges": []
+        }"#;
+        let workflow = DagWorkflow::from_json(dag_json).expect("valid DAG JSON");
+        let scheduler = DagScheduler::new(&registry).with_provider_factory(std::sync::Arc::new(
+            |_spec: AgentSpec| -> Box<dyn LLMProvider> { Box::new(FailingProvider) },
+        ));
+        let results = scheduler
+            .execute(&workflow, "test input")
+            .await
+            .expect("execution completes");
+
+        let step = results.get("fail_node").expect("result for fail_node");
+        assert!(!step.success, "step should report failure");
+        assert!(
+            step.error
+                .as_ref()
+                .expect("error present")
+                .contains("mock hardcoded failure"),
+            "error should contain the mock failure message"
+        );
+        assert!(
+            step.duration_ms > 0,
+            "duration_ms should be recorded (got {})",
+            step.duration_ms
+        );
+        assert!(
+            step.output.contains("error:"),
+            "output should contain the error text"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dag_scheduler_captures_success_telemetry() {
+        let registry = ToolRegistry::new();
+        let dag_json = r#"{
+            "nodes": [
+                {
+                    "id": "ok_node",
+                    "task": "Echo: {input}",
+                    "agent": {
+                        "name": "ok-agent",
+                        "max_iterations": 2
+                    }
+                }
+            ],
+            "edges": []
+        }"#;
+        let workflow = DagWorkflow::from_json(dag_json).expect("valid DAG JSON");
+        let scheduler = DagScheduler::new(&registry).with_provider_factory(std::sync::Arc::new(
+            |_spec: AgentSpec| -> Box<dyn LLMProvider> {
+                Box::new(crate::test_utils::MockLLMProvider::new(vec![
+                    crate::test_utils::MockLLMProvider::tool_result("success output"),
+                ]))
+            },
+        ));
+        let results = scheduler
+            .execute(&workflow, "hello")
+            .await
+            .expect("execution completes");
+
+        let step = results.get("ok_node").expect("result for ok_node");
+        assert!(step.success, "step should report success");
+        assert_eq!(step.error, None, "error should be None on success");
+        assert!(
+            step.duration_ms > 0,
+            "duration_ms should be recorded on success (got {})",
+            step.duration_ms
+        );
+        assert_eq!(
+            step.output, "success output",
+            "output should match mock response"
+        );
     }
 }

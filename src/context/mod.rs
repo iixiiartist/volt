@@ -185,6 +185,11 @@ impl ContextStore {
     }
 
     pub async fn append_entries(&self, entries: Vec<ContextEntry>) {
+        if let Some(db) = self.db() {
+            if let Err(e) = crate::db::bulk_insert_context_entries(db, &entries).await {
+                tracing::warn!("[context] append_entries DB bulk insert failed: {}", e);
+            }
+        }
         let mut store = self.entries.write().await;
         for entry in entries {
             store.push(StoredEntry { entry });

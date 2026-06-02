@@ -25,22 +25,39 @@ pub async fn run(
         (Some(_), Some(_)) => anyhow::bail!("provide --tasks OR --tasks-file, not both"),
         (None, None) => anyhow::bail!("provide either --tasks or --tasks-file"),
     };
-    let mut specs = parse_agent_specs(&agents_json)?;
-    if allow {
-        for spec in &mut specs {
-            spec.allow_all = true;
-        }
-    }
-    let tasks: Vec<String> = serde_json::from_str(&tasks_json)?;
+
     let tools = crate::tools::register_all_tools().await;
     let orch = Orchestrator::new(tools).await;
-    let result = orch.run_workflow(&pattern, specs, tasks).await?;
+
+    let result = if pattern == "dag" {
+        // For DAG pattern: agents_json is the DAG definition, tasks_json[0] is the initial input
+        let initial_input = serde_json::from_str::<Vec<String>>(&tasks_json)?
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        if allow {
+            // allow-all is a no-op for DAG mode — individual agent specs control their own permissions
+        }
+        orch.run_dag(&agents_json, &initial_input).await?
+    } else {
+        let mut specs = parse_agent_specs(&agents_json)?;
+        if allow {
+            for spec in &mut specs {
+                spec.allow_all = true;
+            }
+        }
+        let tasks: Vec<String> = serde_json::from_str(&tasks_json)?;
+        orch.run_workflow(&pattern, specs, tasks).await?
+    };
+
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "steps": result.steps.iter().map(|s| serde_json::json!({
                 "agent": s.agent_name, "success": s.success,
-                "duration_ms": s.duration_ms, "output": s.output,
+                "duration_ms": s.duration_ms, "prompt_tokens": s.prompt_tokens,
+                "completion_tokens": s.completion_tokens, "output": s.output,
+                "error": s.error,
             })).collect::<Vec<_>>(),
             "final_output": result.final_output, "total_duration_ms": result.total_duration_ms,
         }))?

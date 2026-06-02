@@ -8,6 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 /// Typed JSON-RPC 2.0 request — optional `id` supports notifications.
 #[derive(Deserialize)]
 pub(crate) struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     pub(crate) method: String,
     #[serde(default)]
@@ -18,8 +19,7 @@ pub(crate) struct JsonRpcRequest {
 
 impl JsonRpcRequest {
     fn is_notification(&self) -> bool {
-        self.id.is_none()
-            || self.id.as_ref().is_some_and(|v| v.is_null())
+        self.id.is_none() || self.id.as_ref().is_some_and(|v| v.is_null())
     }
 }
 

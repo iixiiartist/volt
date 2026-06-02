@@ -202,9 +202,10 @@ impl ToolRegistry {
         // embeddings (SHA-256 hash → 1024d, instant). BM25 serves as the primary
         // retrieval signal; dense scoring provides fallback.
         for (name, text) in &items {
-            let emb = embedder.embed_description(text).await.unwrap_or_else(|_| {
-                crate::embedding::deterministic_placeholder_embedding(text)
-            });
+            let emb = embedder
+                .embed_description(text)
+                .await
+                .unwrap_or_else(|_| crate::embedding::deterministic_placeholder_embedding(text));
             if let Some(mut tool) = self.tools.get_mut(name) {
                 tool.embedding = Some(emb);
             }
@@ -240,8 +241,14 @@ impl ToolRegistry {
         // 1. First pass: collect owned lightweight tuples from a single iterator.
         //    Avoids holding DashMap RefMulti guards across boundaries.
         //    Each entry: (name, description, category, opt_embedding, opt_schema)
-        let mut tool_entries: Vec<(String, String, String, Option<Vec<f32>>, serde_json::Value)> =
-            Vec::new();
+        #[allow(clippy::type_complexity)]
+        let mut tool_entries: Vec<(
+            String,
+            String,
+            String,
+            Option<Vec<f32>>,
+            serde_json::Value,
+        )> = Vec::new();
         for r in self.tools.iter() {
             let t = r.value();
             let schema = if t.def.input_schema.is_null() {

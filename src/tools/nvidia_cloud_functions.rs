@@ -15,35 +15,48 @@ fn authed_client() -> Option<reqwest::Client> {
     Some(crate::http_client().clone())
 }
 
-fn make_auth_req(client: &reqwest::Client, method: reqwest::Method, url: String) -> Option<reqwest::RequestBuilder> {
+fn make_auth_req(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: String,
+) -> Option<reqwest::RequestBuilder> {
     let key = get_api_key()?;
-    Some(client.request(method, &url).header("Authorization", format!("Bearer {}", key)))
+    Some(
+        client
+            .request(method, &url)
+            .header("Authorization", format!("Bearer {}", key)),
+    )
 }
 
-pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry>) {
-    let reg = registry.clone();
-
+pub async fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry>) {
     // nvidia_list_functions
     let list_fn: crate::tools::ToolFn = Arc::new(move |_args: serde_json::Value| {
-        let reg = reg.clone();
         Box::pin(async move {
             let client = match authed_client() {
                 Some(c) => c,
-                None => return ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("NVIDIA_API_KEY or NVCF_API_KEY not set".into()),
-                    duration_ms: 0,
-                },
+                None => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("NVIDIA_API_KEY or NVCF_API_KEY not set".into()),
+                        duration_ms: 0,
+                    }
+                }
             };
-            let req = match make_auth_req(&client, reqwest::Method::GET, format!("{}/functions", NVCF_BASE)) {
+            let req = match make_auth_req(
+                &client,
+                reqwest::Method::GET,
+                format!("{}/functions", NVCF_BASE),
+            ) {
                 Some(r) => r,
-                None => return ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("failed to create request".into()),
-                    duration_ms: 0,
-                },
+                None => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("failed to create request".into()),
+                        duration_ms: 0,
+                    }
+                }
             };
             match req.timeout(std::time::Duration::from_secs(30)).send().await {
                 Ok(resp) => {
@@ -52,7 +65,9 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
                         Ok(val) => ToolResult {
                             success: status.is_success(),
                             output: serde_json::to_string_pretty(&val).unwrap_or_default(),
-                            error: if status.is_success() { None } else {
+                            error: if status.is_success() {
+                                None
+                            } else {
                                 Some(val["error"].as_str().unwrap_or("unknown error").to_string())
                             },
                             duration_ms: 0,
@@ -74,25 +89,29 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
             }
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send>>
     });
-    registry.register_with_permission(
-        "nvidia_list_functions",
-        "List available NVIDIA Cloud Functions and their versions",
-        json!({
-            "type": "object",
-            "properties": {}
-        }),
-        "builtin",
-        list_fn,
-        crate::models::PermissionLevel::Allow,
-        crate::attenuation::TrustLevel::Builtin,
-    );
+    registry
+        .register_with_permission(
+            "nvidia_list_functions",
+            "List available NVIDIA Cloud Functions and their versions",
+            json!({
+                "type": "object",
+                "properties": {}
+            }),
+            "builtin",
+            list_fn,
+            crate::models::PermissionLevel::Allow,
+            crate::attenuation::TrustLevel::Builtin,
+        )
+        .await;
 
     // nvidia_call_function
-    let call_reg = registry.clone();
     let call_fn: crate::tools::ToolFn = Arc::new(move |args: serde_json::Value| {
-        let _ = call_reg.clone();
         let function_id = args["function_id"].as_str().unwrap_or("").to_string();
-        let version_id = args.get("version_id").and_then(|v| v.as_str()).unwrap_or("1").to_string();
+        let version_id = args
+            .get("version_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("1")
+            .to_string();
         let payload = args.get("payload").cloned().unwrap_or(json!({}));
         Box::pin(async move {
             if function_id.is_empty() {
@@ -105,62 +124,88 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
             }
             let client = match authed_client() {
                 Some(c) => c,
-                None => return ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("NVIDIA_API_KEY or NVCF_API_KEY not set".into()),
-                    duration_ms: 0,
-                },
+                None => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("NVIDIA_API_KEY or NVCF_API_KEY not set".into()),
+                        duration_ms: 0,
+                    }
+                }
             };
-            let url = format!("{}/functions/{}/versions/{}", NVCF_BASE, function_id, version_id);
+            let url = format!(
+                "{}/functions/{}/versions/{}",
+                NVCF_BASE, function_id, version_id
+            );
             let req = match make_auth_req(&client, reqwest::Method::POST, url) {
                 Some(r) => r.json(&payload),
-                None => return ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("failed to create request".into()),
-                    duration_ms: 0,
-                },
+                None => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("failed to create request".into()),
+                        duration_ms: 0,
+                    }
+                }
             };
-            match req.timeout(std::time::Duration::from_secs(120)).send().await {
+            match req
+                .timeout(std::time::Duration::from_secs(120))
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     let status = resp.status();
                     // Handle async invocation (202)
                     if status == reqwest::StatusCode::ACCEPTED {
                         let async_resp: serde_json::Value = match resp.json().await {
                             Ok(v) => v,
-                            Err(e) => return ToolResult {
-                                success: false,
-                                output: String::new(),
-                                error: Some(format!("failed to parse async response: {}", e)),
-                                duration_ms: 0,
-                            },
+                            Err(e) => {
+                                return ToolResult {
+                                    success: false,
+                                    output: String::new(),
+                                    error: Some(format!("failed to parse async response: {}", e)),
+                                    duration_ms: 0,
+                                }
+                            }
                         };
                         let req_id = async_resp["request_id"].as_str().unwrap_or("").to_string();
                         if req_id.is_empty() {
                             return ToolResult {
                                 success: true,
-                                output: serde_json::to_string_pretty(&async_resp).unwrap_or_default(),
+                                output: serde_json::to_string_pretty(&async_resp)
+                                    .unwrap_or_default(),
                                 error: None,
                                 duration_ms: 0,
                             };
                         }
                         // Poll for completion
-                        let poll_url = format!("{}/functions/{}/versions/{}/status", NVCF_BASE, function_id, version_id);
+                        let poll_url = format!(
+                            "{}/functions/{}/versions/{}/status",
+                            NVCF_BASE, function_id, version_id
+                        );
                         for _ in 0..60 {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                            let poll_req = match make_auth_req(&client, reqwest::Method::GET, poll_url.clone()) {
+                            let poll_req = match make_auth_req(
+                                &client,
+                                reqwest::Method::GET,
+                                poll_url.clone(),
+                            ) {
                                 Some(r) => r,
                                 None => break,
                             };
-                            if let Ok(poll_resp) = poll_req.timeout(std::time::Duration::from_secs(30)).send().await {
+                            if let Ok(poll_resp) = poll_req
+                                .timeout(std::time::Duration::from_secs(30))
+                                .send()
+                                .await
+                            {
                                 if let Ok(poll_val) = poll_resp.json::<serde_json::Value>().await {
                                     let state = poll_val["status"].as_str().unwrap_or("unknown");
                                     match state {
                                         "completed" | "succeeded" => {
                                             return ToolResult {
                                                 success: true,
-                                                output: serde_json::to_string_pretty(&poll_val).unwrap_or_default(),
+                                                output: serde_json::to_string_pretty(&poll_val)
+                                                    .unwrap_or_default(),
                                                 error: None,
                                                 duration_ms: 0,
                                             };
@@ -169,7 +214,12 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
                                             return ToolResult {
                                                 success: false,
                                                 output: String::new(),
-                                                error: Some(poll_val["error"].as_str().unwrap_or("function invocation failed").to_string()),
+                                                error: Some(
+                                                    poll_val["error"]
+                                                        .as_str()
+                                                        .unwrap_or("function invocation failed")
+                                                        .to_string(),
+                                                ),
                                                 duration_ms: 0,
                                             };
                                         }
@@ -189,7 +239,9 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
                         Ok(val) => ToolResult {
                             success: status.is_success(),
                             output: serde_json::to_string_pretty(&val).unwrap_or_default(),
-                            error: if status.is_success() { None } else {
+                            error: if status.is_success() {
+                                None
+                            } else {
                                 Some(val["error"].as_str().unwrap_or("unknown error").to_string())
                             },
                             duration_ms: 0,
@@ -227,14 +279,16 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
         call_fn,
         crate::models::PermissionLevel::Allow,
         crate::attenuation::TrustLevel::Builtin,
-    );
+    ).await;
 
     // nvidia_deploy_function
-    let deploy_reg = registry.clone();
     let deploy_fn: crate::tools::ToolFn = Arc::new(move |args: serde_json::Value| {
-        let _ = deploy_reg.clone();
         let name = args["name"].as_str().unwrap_or("").to_string();
-        let desc = args.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let desc = args
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let tags = args.get("tags").cloned().unwrap_or(json!({}));
         Box::pin(async move {
             if name.is_empty() {
@@ -247,12 +301,14 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
             }
             let client = match authed_client() {
                 Some(c) => c,
-                None => return ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("NVIDIA_API_KEY or NVCF_API_KEY not set".into()),
-                    duration_ms: 0,
-                },
+                None => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("NVIDIA_API_KEY or NVCF_API_KEY not set".into()),
+                        duration_ms: 0,
+                    }
+                }
             };
             let body = json!({
                 "name": name,
@@ -262,14 +318,20 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
                 "health_uri": args.get("health_uri").and_then(|v| v.as_str()).unwrap_or(""),
                 "function_type": args.get("function_type").and_then(|v| v.as_str()).unwrap_or("custom"),
             });
-            let req = match make_auth_req(&client, reqwest::Method::POST, format!("{}/functions", NVCF_BASE)) {
+            let req = match make_auth_req(
+                &client,
+                reqwest::Method::POST,
+                format!("{}/functions", NVCF_BASE),
+            ) {
                 Some(r) => r.json(&body),
-                None => return ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("failed to create request".into()),
-                    duration_ms: 0,
-                },
+                None => {
+                    return ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some("failed to create request".into()),
+                        duration_ms: 0,
+                    }
+                }
             };
             match req.timeout(std::time::Duration::from_secs(60)).send().await {
                 Ok(resp) => {
@@ -278,8 +340,15 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
                         Ok(val) => ToolResult {
                             success: status.is_success(),
                             output: serde_json::to_string_pretty(&val).unwrap_or_default(),
-                            error: if status.is_success() { None } else {
-                                Some(val["error"].as_str().unwrap_or("deployment failed").to_string())
+                            error: if status.is_success() {
+                                None
+                            } else {
+                                Some(
+                                    val["error"]
+                                        .as_str()
+                                        .unwrap_or("deployment failed")
+                                        .to_string(),
+                                )
                             },
                             duration_ms: 0,
                         },
@@ -319,5 +388,5 @@ pub fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRegistry
         deploy_fn,
         crate::models::PermissionLevel::Allow,
         crate::attenuation::TrustLevel::Builtin,
-    );
+    ).await;
 }

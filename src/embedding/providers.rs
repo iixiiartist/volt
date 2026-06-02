@@ -204,7 +204,10 @@ async fn is_ollama_running(http: &Client) -> bool {
                 return false;
             }
             // Verify the response body looks like Ollama (has "models" key)
-            resp.text().await.ok().map_or(false, |body| body.contains("models"))
+            resp.text()
+                .await
+                .ok()
+                .is_some_and(|body| body.contains("models"))
         }
         Err(_) => false,
     }

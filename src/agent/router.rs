@@ -1,4 +1,4 @@
-use super::blueprint::{AgentBlueprint, load_blueprint};
+use super::blueprint::{load_blueprint, AgentBlueprint};
 use crate::llm::LLMProvider;
 use crate::models::{LLMMessage, LLMRequest};
 use std::path::PathBuf;
@@ -35,7 +35,9 @@ pub fn get_active_providers() -> Vec<String> {
     }
 
     // If no remote provider keys are present, add local fallbacks automatically
-    let has_remote = providers.iter().any(|p| matches!(p.as_str(), "groq" | "nvidia" | "openai" | "anthropic"));
+    let has_remote = providers
+        .iter()
+        .any(|p| matches!(p.as_str(), "groq" | "nvidia" | "openai" | "anthropic"));
     if !has_remote {
         providers.push("ollama".to_string());
         providers.push("llamacpp".to_string());
@@ -84,7 +86,12 @@ pub async fn route_task(
 
     let bp_list: String = candidates
         .iter()
-        .map(|bp| format!("  - id: \"{}\"\n    name: \"{}\"\n    description: \"{}\"", bp.id, bp.name, bp.description))
+        .map(|bp| {
+            format!(
+                "  - id: \"{}\"\n    name: \"{}\"\n    description: \"{}\"",
+                bp.id, bp.name, bp.description
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -150,7 +157,11 @@ Do NOT include any other text, explanation, or markdown."#,
     let parsed: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!("[router] failed to parse LLM response as JSON: {} — raw: {}", e, text);
+            tracing::warn!(
+                "[router] failed to parse LLM response as JSON: {} — raw: {}",
+                e,
+                text
+            );
             return None;
         }
     };
@@ -158,7 +169,10 @@ Do NOT include any other text, explanation, or markdown."#,
     let bp_id = match parsed.get("blueprint_id").and_then(|v| v.as_str()) {
         Some(id) => id,
         None => {
-            tracing::warn!("[router] LLM response missing 'blueprint_id' field: {}", text);
+            tracing::warn!(
+                "[router] LLM response missing 'blueprint_id' field: {}",
+                text
+            );
             return None;
         }
     };
@@ -248,7 +262,9 @@ mod tests {
     fn test_get_active_providers_groq_only() {
         let _lock = ENV_MUTEX.lock().unwrap();
         reset_env();
-        unsafe { std::env::set_var("GROQ_API_KEY", "test-key"); }
+        unsafe {
+            std::env::set_var("GROQ_API_KEY", "test-key");
+        }
 
         let active = get_active_providers();
         assert!(active.contains(&"groq".to_string()));

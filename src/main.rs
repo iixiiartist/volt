@@ -211,12 +211,17 @@ async fn main() -> anyhow::Result<()> {
     if dotenvy::dotenv().is_err() {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                let _ = dotenvy::from_path(&dir.join(".env"));
+                let _ = dotenvy::from_path(dir.join(".env"));
             }
         }
     }
     // Verify critical keys are present; warn if missing before telemetry is up
-    for key in &["GROQ_API_KEY", "NVIDIA_API_KEY", "OLLAMA_API_KEY", "HF_TOKEN"] {
+    for key in &[
+        "GROQ_API_KEY",
+        "NVIDIA_API_KEY",
+        "OLLAMA_API_KEY",
+        "HF_TOKEN",
+    ] {
         if std::env::var(key).map_or(true, |v| v.is_empty() || v.starts_with("your_")) {
             eprintln!("[warn] {} not set or still has placeholder value", key);
         }

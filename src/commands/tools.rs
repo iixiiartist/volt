@@ -27,11 +27,45 @@ pub async fn history(limit: i64, database_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Check whether a tool name is a gated built-in and return a helpful
+/// error message when its environment variable gate is not enabled.
+fn check_tool_gate(tool: &str) -> Option<String> {
+    match tool {
+        "cli_exec" | "cli_query" => {
+            if std::env::var("VOLT_ENABLE_CLI_TOOLS").as_deref() != Ok("1") {
+                Some(format!(
+                    "tool '{}' is gated. Set VOLT_ENABLE_CLI_TOOLS=1 to enable enterprise CLI tools.",
+                    tool
+                ))
+            } else {
+                None
+            }
+        }
+        "litertlm" | "llamacpp" | "mtp" => {
+            if std::env::var("VOLT_ENABLE_LOCAL_LLM_TOOLS").as_deref() != Ok("1") {
+                Some(format!(
+                    "tool '{}' is gated. Set VOLT_ENABLE_LOCAL_LLM_TOOLS=1 to enable local LLM tools.",
+                    tool
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 pub async fn execute(
     tool: String,
     params: Option<String>,
     settings: &Settings,
 ) -> anyhow::Result<()> {
+    // Fast-fail on gated tools before attempting a DB connection,
+    // so the CLI gives a clear message even when PG is unavailable.
+    if let Some(msg) = check_tool_gate(&tool) {
+        anyhow::bail!(msg);
+    }
+
     let pool = db::connect(&settings.database_url).await?;
     let tool_params: serde_json::Value = params
         .as_deref()
@@ -45,9 +79,11 @@ pub async fn execute(
             })
         })
         .unwrap_or(serde_json::json!({}));
+
     let tool_info = db::get_tool_by_name(&pool, &tool).await?;
     let tool_id = tool_info.as_ref().map(|t| t.id);
     let source: Option<String> = db::get_tool_source(&pool, &tool).await?;
+
     let execution_id = Uuid::new_v4();
 
     match source {

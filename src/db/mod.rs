@@ -77,6 +77,13 @@ pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
             sqlx::query(statement).execute(pool).await?;
         }
     }
+    let sql3 = include_str!("../../migrations/0003_storage_optimizations.sql");
+    for statement in split_sql_statements(sql3) {
+        let statement = statement.trim();
+        if !statement.is_empty() {
+            sqlx::query(statement).execute(pool).await?;
+        }
+    }
     Ok(())
 }
 

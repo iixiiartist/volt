@@ -241,6 +241,7 @@ async fn test_bfcl_voltr_pipeline() {
                 stop: None,
                 tools: Some(tool_defs.clone()),
                 stream: false,
+                ..Default::default()
             };
 
             let result = provider.complete(&request).await;

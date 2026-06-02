@@ -311,7 +311,25 @@ impl AutoSeedWorker {
             return;
         }
 
+        // Collect IDs to delete from DB before removing from memory.
+        let ids_to_remove = {
+            let entries = self.context_store.entries.read().await;
+            all_indices
+                .iter()
+                .filter_map(|&i| entries.get(i).map(|s| s.entry.id))
+                .collect::<Vec<_>>()
+        };
+
         self.context_store.remove_indices(&all_indices).await;
+
+        if let Some(db) = self.context_store.db() {
+            if let Err(e) = crate::db::delete_context_entries_by_ids(db, &ids_to_remove).await {
+                tracing::warn!(
+                    "[volt worker] failed to delete merged entries from DB: {}",
+                    e
+                );
+            }
+        }
 
         let sem = Arc::new(tokio::sync::Semaphore::new(5));
         let embed_futures: Vec<_> = replacements

@@ -88,30 +88,6 @@ pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -
 
             http_send(url, headers, request).await
         }
-        MCPTransport::WebSocket { url, headers } => {
-            let request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "params": {
-                    "name": tool,
-                    "arguments": args
-                },
-                "id": 1
-            });
-            http_send(url, headers, request).await
-        }
-        MCPTransport::Grpc { url, headers } => {
-            let request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "params": {
-                    "name": tool,
-                    "arguments": args
-                },
-                "id": 1
-            });
-            http_send(url, headers, request).await
-        }
     }
 }
 

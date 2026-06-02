@@ -196,30 +196,6 @@ impl Mcp for McpGrpcServer {
 }
 
 // ─── Client ─────────────────────────────────────────────────────
-
-/// gRPC MCP client that connects to a remote Volt agent over tonic.
-pub struct McpGrpcClient {
-    client: tonic::transport::Channel,
-}
-
-impl McpGrpcClient {
-    pub async fn connect(addr: &str) -> anyhow::Result<Self> {
-        let client = tonic::transport::Channel::from_shared(addr.to_string())?
-            .connect()
-            .await?;
-        Ok(Self { client })
-    }
-
-    /// List remote tools over gRPC.
-    pub async fn list_tools(&self) -> anyhow::Result<Vec<ToolDefinition>> {
-        // For now we call directly since our trait is not a tonic service.
-        // In production this would use the generated tonic client stub.
-        // The raw gRPC call is proxied via the JSON-RPC bridge.
-        anyhow::bail!("gRPC client requires generated tonic stubs — use MCPTransport::Http for now")
-    }
-
-    /// Call a remote tool over gRPC and return the result.
-    pub async fn call_tool(&self, _name: &str, _args: &Value) -> anyhow::Result<ToolResult> {
-        anyhow::bail!("gRPC client requires generated tonic stubs — use MCPTransport::Http for now")
-    }
-}
+// NOTE: gRPC client stub removed in v1.0. Will be re-introduced in v1.1
+// with proper tonic generated stubs and tokio-tungstenite for WebSocket.
+// For now, use MCPTransport::Http for all agent-to-agent communication.

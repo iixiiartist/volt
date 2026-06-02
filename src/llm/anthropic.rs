@@ -204,7 +204,7 @@ impl LLMProvider for AnthropicProvider {
         let mut input_tokens = 0u64;
         let mut output_tokens = 0u64;
         let mut cache_read_tokens = 0u64;
-        let mut cache_create_tokens = 0u64;
+        let mut _cache_create_tokens = 0u64;
 
         let mut stream = response.bytes_stream();
         while let Some(chunk_result) = stream.next().await {
@@ -271,8 +271,10 @@ impl LLMProvider for AnthropicProvider {
                         Some("message_start") => {
                             if let Some(u) = val.get("message").and_then(|m| m.get("usage")) {
                                 input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
-                                cache_read_tokens = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                                cache_create_tokens = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                                cache_read_tokens =
+                                    u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                                _cache_create_tokens =
+                                    u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                             }
                         }
                         _ => {}
@@ -300,7 +302,11 @@ impl LLMProvider for AnthropicProvider {
                 queue_time: None,
                 total_time: None,
                 prompt_tokens_details: Some(crate::models::PromptTokensDetails {
-                    cached_tokens: if cache_read_tokens > 0 { Some(cache_read_tokens) } else { None },
+                    cached_tokens: if cache_read_tokens > 0 {
+                        Some(cache_read_tokens)
+                    } else {
+                        None
+                    },
                 }),
             }),
             usage_breakdown: None,
@@ -331,17 +337,27 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
     }
 
     let usage = resp["usage"].as_object().map(|u| {
-        let cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-        let cache_create = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+        let cache_read = u
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let _cache_create = u
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         Usage {
-            prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0),
-            completion_tokens: u["output_tokens"].as_u64().unwrap_or(0),
-            total_tokens: (u["input_tokens"].as_u64().unwrap_or(0)
-                + u["output_tokens"].as_u64().unwrap_or(0)),
+            prompt_tokens: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            completion_tokens: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            total_tokens: (u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
+                + u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0)),
             queue_time: None,
             total_time: None,
             prompt_tokens_details: Some(crate::models::PromptTokensDetails {
-                cached_tokens: if cache_read > 0 { Some(cache_read) } else { None },
+                cached_tokens: if cache_read > 0 {
+                    Some(cache_read)
+                } else {
+                    None
+                },
             }),
         }
     });
@@ -472,6 +488,172 @@ mod tests {
         let usage = parsed.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 100);
         assert_eq!(usage.completion_tokens, 50);
-        assert_eq!(usage.prompt_tokens_details.as_ref().unwrap().cached_tokens, Some(80));
+        assert_eq!(
+            usage.prompt_tokens_details.as_ref().unwrap().cached_tokens,
+            Some(80)
+        );
+    }
+
+    #[test]
+    fn test_build_messages_rolling_cache_on_tool_use_last_message() {
+        // When the last message is an assistant message containing tool_calls,
+        // cache_control should be placed on the LAST content block (the tool_use block).
+        let request = LLMRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                LLMMessage {
+                    role: "system".into(),
+                    content: Arc::new("You are Volt.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Do something.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "assistant".into(),
+                    content: Arc::new("".into()),
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".into(),
+                        name: "read".into(),
+                        arguments: serde_json::json!({"path": "test.txt"}),
+                    }]),
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (messages, _system) = build_messages(&request);
+
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "assistant");
+        let content = last["content"].as_array().unwrap();
+        // Should be [tool_use] since assistant content is empty
+        assert_eq!(content.len(), 1);
+        let last_block = content.last().unwrap();
+        assert_eq!(last_block["type"], "tool_use");
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn test_build_messages_rolling_cache_on_mixed_content_last_message() {
+        // When the last assistant message has both text and tool_calls,
+        // cache_control should be on the LAST block (the final tool_use).
+        let request = LLMRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Do two things.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "assistant".into(),
+                    content: Arc::new("Sure.".into()),
+                    tool_calls: Some(vec![
+                        ToolCall {
+                            id: "call_1".into(),
+                            name: "read".into(),
+                            arguments: serde_json::json!({"path": "a.txt"}),
+                        },
+                        ToolCall {
+                            id: "call_2".into(),
+                            name: "write".into(),
+                            arguments: serde_json::json!({"path": "b.txt", "content": "hi"}),
+                        },
+                    ]),
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (messages, _system) = build_messages(&request);
+
+        let last = messages.last().unwrap();
+        let content = last["content"].as_array().unwrap();
+        // Should be: text block + 2 tool_use blocks
+        assert_eq!(content.len(), 3);
+        // First block is text without cache_control
+        assert_eq!(content[0]["type"], "text");
+        assert!(content[0].get("cache_control").is_none());
+        // Last block is tool_use with cache_control
+        let last_block = content.last().unwrap();
+        assert_eq!(last_block["type"], "tool_use");
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn test_build_messages_only_system_blocks() {
+        // Edge case: only system messages, no user/assistant.
+        // All system blocks are collected; first gets cache_control.
+        // No regular messages means no rolling cache on last message.
+        let request = LLMRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                LLMMessage {
+                    role: "system".into(),
+                    content: Arc::new("You are Volt.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "system".into(),
+                    content: Arc::new("Be helpful.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (messages, system_blocks) = build_messages(&request);
+        assert!(messages.is_empty());
+        assert_eq!(system_blocks.len(), 2);
+        assert_eq!(system_blocks[0]["cache_control"]["type"], "ephemeral");
+        assert!(system_blocks[1].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn test_build_messages_no_system_messages_rolling_cache_still_applied() {
+        // Even without system blocks, the last content block of the last
+        // message should still receive cache_control.
+        let request = LLMRequest {
+            model: "claude-3-5-sonnet".into(),
+            messages: vec![
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Hello.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "assistant".into(),
+                    content: Arc::new("Hi there.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                LLMMessage {
+                    role: "user".into(),
+                    content: Arc::new("Query.".into()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (messages, system_blocks) = build_messages(&request);
+        assert!(system_blocks.is_empty());
+        let last = messages.last().unwrap();
+        let content = last["content"].as_array().unwrap();
+        let last_block = content.last().unwrap();
+        assert_eq!(last_block["type"], "text");
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
     }
 }

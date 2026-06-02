@@ -96,12 +96,12 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
 
     // ── Phase 4: NVIDIA Cloud Functions (requires NVIDIA_API_KEY) ──────────
     if std::env::var("NVIDIA_API_KEY").is_ok() || std::env::var("NVCF_API_KEY").is_ok() {
-        crate::tools::nvidia_cloud_functions::register_nvidia_cloud_functions(&registry);
+        crate::tools::nvidia_cloud_functions::register_nvidia_cloud_functions(&registry).await;
     }
 
     // ── Phase 5: Ollama Cloud web tools (requires OLLAMA_API_KEY) ──────────
     if std::env::var("OLLAMA_API_KEY").is_ok() {
-        crate::tools::ollama_web_tools::register_ollama_web_tools(&registry);
+        crate::tools::ollama_web_tools::register_ollama_web_tools(&registry).await;
     }
 
     // ── Phase 6: CLI gateway (requires VOLT_ENABLE_CLI_TOOLS=1) ─────────
@@ -110,6 +110,140 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
     }
 
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{LazyLock, Mutex};
+
+    /// Serialize env-var-dependent tests to avoid race conditions.
+    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn reset_env() {
+        unsafe {
+            std::env::remove_var("VOLT_ENABLE_CLI_TOOLS");
+            std::env::remove_var("VOLT_ENABLE_LOCAL_LLM_TOOLS");
+            std::env::remove_var("VOLT_MINIMAL_TOOLS");
+            std::env::remove_var("VOLT_TOOL_BIN_DIR");
+            std::env::remove_var("NVIDIA_API_KEY");
+            std::env::remove_var("NVCF_API_KEY");
+            std::env::remove_var("OLLAMA_API_KEY");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cli_exec_gated_without_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        reset_env();
+
+        let registry = register_all_tools().await;
+        let def = registry.get_definition("cli_exec").await;
+        assert!(
+            def.is_none(),
+            "cli_exec should be gated when VOLT_ENABLE_CLI_TOOLS is unset"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cli_query_gated_without_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        reset_env();
+
+        let registry = register_all_tools().await;
+        let def = registry.get_definition("cli_query").await;
+        assert!(
+            def.is_none(),
+            "cli_query should be gated when VOLT_ENABLE_CLI_TOOLS is unset"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cli_tools_available_with_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        reset_env();
+        unsafe { std::env::set_var("VOLT_ENABLE_CLI_TOOLS", "1") }
+
+        let registry = register_all_tools().await;
+        assert!(
+            registry.get_definition("cli_exec").await.is_some(),
+            "cli_exec should be available when VOLT_ENABLE_CLI_TOOLS=1"
+        );
+        assert!(
+            registry.get_definition("cli_query").await.is_some(),
+            "cli_query should be available when VOLT_ENABLE_CLI_TOOLS=1"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_local_llm_tools_gated_without_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        reset_env();
+
+        let registry = register_all_tools().await;
+        assert!(
+            registry.get_definition("litertlm").await.is_none(),
+            "litertlm should be gated when VOLT_ENABLE_LOCAL_LLM_TOOLS is unset"
+        );
+        assert!(
+            registry.get_definition("llamacpp").await.is_none(),
+            "llamacpp should be gated when VOLT_ENABLE_LOCAL_LLM_TOOLS is unset"
+        );
+        assert!(
+            registry.get_definition("mtp").await.is_none(),
+            "mtp should be gated when VOLT_ENABLE_LOCAL_LLM_TOOLS is unset"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_local_llm_tools_available_with_env_and_binaries() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        reset_env();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bin_dir = temp_dir.path();
+
+        // Create fake binaries so the existence check passes
+        std::fs::write(bin_dir.join("litert_lm.exe"), "").unwrap();
+        std::fs::write(bin_dir.join("llama.exe"), "").unwrap();
+
+        unsafe {
+            std::env::set_var("VOLT_ENABLE_LOCAL_LLM_TOOLS", "1");
+            std::env::set_var("VOLT_TOOL_BIN_DIR", bin_dir.to_str().unwrap());
+        }
+
+        let registry = register_all_tools().await;
+        assert!(
+            registry.get_definition("litertlm").await.is_some(),
+            "litertlm should be available when gate is set and binary exists"
+        );
+        assert!(
+            registry.get_definition("llamacpp").await.is_some(),
+            "llamacpp should be available when gate is set and binary exists"
+        );
+        assert!(
+            registry.get_definition("mtp").await.is_some(),
+            "mtp should be available when gate is set and at least one binary exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_minimal_mode_excludes_extended_tools() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        reset_env();
+        unsafe { std::env::set_var("VOLT_MINIMAL_TOOLS", "1") }
+
+        let registry = register_all_tools().await;
+        // Minimal mode should exclude chart, pdf, desktop, browser tools
+        assert!(
+            registry.get_definition("create_bar_chart").await.is_none(),
+            "create_bar_chart should be excluded in minimal mode"
+        );
+        assert!(
+            registry.get_definition("create_pdf").await.is_none(),
+            "create_pdf should be excluded in minimal mode"
+        );
+    }
 }
 
 async fn register_delegate_and_workflow(registry: &Arc<ToolRegistry>) {
