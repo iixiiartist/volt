@@ -2,7 +2,8 @@
 use crate::tools::registry::ToolRegistry;
 use std::sync::Arc;
 
-pub async fn register_browser_tools(_registry: &Arc<ToolRegistry>) {
+#[allow(unused_variables)]
+pub async fn register_browser_tools(registry: &Arc<ToolRegistry>) {
     #[cfg(feature = "tools-browser")]
     {
         use crate::attenuation::TrustLevel;
