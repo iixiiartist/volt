@@ -1,12 +1,12 @@
-# Volt — The Autonomous Systems Engine
+# VOLT — Virtual Operations for Local Tasks
 
-> **Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 38 active tools (dynamically gated by env vars). ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
+> **VOLT (Virtual Operations for Local Tasks) is a Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 38 active tools (dynamically gated by env vars). ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![Pipeline Status](https://gitlab.com/iixiiartist-volt/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist-volt/volt/-/commits/main)
 
-## Why Volt?
+## Why VOLT?
 
-Most agent frameworks inject every available tool into every LLM call. Volt replaces static injection with **unified dynamic RAG** — tools, skills, memories, conversation history, artifacts, MCP configs, permissions, and security policies are all retrieved via vector similarity, so the model only sees what's relevant.
+**Virtual Operations for Local Tasks** — VOLT is built for agents that run *here*, not "somewhere in the cloud." Most agent frameworks inject every available tool into every LLM call. VOLT replaces static injection with **unified dynamic RAG** — tools, skills, memories, conversation history, artifacts, MCP configs, permissions, and security policies are all retrieved via vector similarity, so the model only sees what's relevant.
 
 **Verified results (BFCL V4, 400 cases, argument-aware evaluation):**
 - **95.0% accuracy** on llama-3.1-8b-instant (380/400) — all failures are Groq API schema validation errors (boolean/integer types passed as strings)
@@ -56,8 +56,8 @@ cd volt
 cargo build --release
 
 # Initialize, then run
-./volt init-db
-./volt agent-run --input "Analyze this codebase" --allow
+./VOLT init-db
+./VOLT agent-run --input "Analyze this codebase" --allow
 ```
 
 **Windows (MSVC — 49 MB binary, no extra DLLs):**
@@ -81,7 +81,12 @@ cargo build --release
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Volt Agent Loop                          │
+│                    VOLT Agent Loop                          │
+│  User Query → Embed → RAG (12 kinds) → LLM → Tools → Seed  │
+└─────────────────────────────────────────────────────────────┘
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    VOLT Agent Loop                          │
 │  User Query → Embed → RAG (12 kinds) → LLM → Tools → Seed  │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -123,7 +128,7 @@ cargo build --release
 
 Full 17-category BFCL v4 sweep pending. All failures were Groq API schema validation (model passes `"true"` as string instead of boolean `true`, or `"null"` for optional integer). No cases failed due to wrong function selection.
 
-**Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200+ distractors (Volt RAG benchmark, 50-case ablation verified).
+**Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200+ distractors (VOLT RAG benchmark, 50-case ablation verified).
 
 ### Built-in Tools (38 active, 55+ total)
 
@@ -141,7 +146,7 @@ Full 17-category BFCL v4 sweep pending. All failures were Groq API schema valida
 | **Screenshot/PDF/Desktop/Browser** | Feature-gated (12 tools) | opt-in features |
 | **Delegation** | `delegate`, `run_workflow`, `final_answer` | built-in |
 | **CLI Gateway** | `cli_exec`, `cli_query` (task, crm, hledger, khal, vdirsyncer, qsv, himalaya) | built-in |
-| **MCP** | SearchHQ (19 tools), extensible via `volt mcp-serve` | built-in |
+| **MCP** | SearchHQ (19 tools), extensible via `VOLT mcp-serve` | built-in |
 
 ### Embedding
 
@@ -151,7 +156,7 @@ Hardware-accelerated ONNX Runtime (ort) with auto-detecting Execution Provider f
 
 ### MCP Protocol Server
 
-Volt exposes its full 38+ tool registry over the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) — the open standard for AI tool integration. Run `volt mcp-serve` to start the stdio server, then connect any MCP-compatible client (Claude Desktop, Cline, Goose, etc.).
+VOLT exposes its full 38+ tool registry over the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) — the open standard for AI tool integration. Run `VOLT mcp-serve` to start the stdio server, then connect any MCP-compatible client (Claude Desktop, Cline, Goose, etc.).
 
 - **Full lifecycle**: `initialize` handshake with capability declaration (`protocolVersion: 2024-11-05`), `notifications/initialized` support
 - **Stdout-safe**: All JSON-RPC messages go to stdout; tracing/logging routes to stderr — no protocol corruption
@@ -164,7 +169,7 @@ The `tools-mcp-grpc` feature flag enables a gRPC MCP transport (`MCPTransport::G
 
 ### Blueprint Scaffolding & Quirk Coercion ("Edge Model Exoskeleton")
 
-Agent Blueprints are TOML profiles that constrain the agent loop for small/edge models (<8B parameters). They compensate for common failure modes via **cognitive scaffolding** and **AST-level quirk coercion**.
+VOLT's **Edge Model Exoskeleton** — the "Local Tasks" in *Virtual Operations for Local Tasks* — compensates for systematic failure modes in small/edge models (<8B parameters) via **cognitive scaffolding** and **AST-level quirk coercion**.
 
 **67 production blueprints** ship in `blueprints/` across Groq (19), NVIDIA NIM (20), Ollama Cloud (25), and Edge (3):
 
@@ -187,10 +192,10 @@ Agent Blueprints are TOML profiles that constrain the agent loop for small/edge 
 **Usage:**
 ```bash
 # Explicit blueprint
-volt agent-run --input "Create hello.txt" --blueprint blueprints/gemma4_e2b_voice.toml
+VOLT agent-run --input "Create hello.txt" --blueprint blueprints/gemma4_e2b_voice.toml
 
 # Auto-orchestrate: selects blueprint based on prompt heuristics
-volt agent-run --input "Create hello.txt" --auto-blueprint
+VOLT agent-run --input "Create hello.txt" --auto-blueprint
 ```
 
 ### Multi-Agent Orchestration
@@ -207,15 +212,15 @@ Parallel, pipeline, supervisor, and DAG-based multi-agent patterns with topologi
 
 | Command | Description |
 |---------|-------------|
-| `volt init-db` | Initialize PostgreSQL schema (tables, indexes, pgvector HNSW) — one-time setup |
-| `volt migrate` | Apply database schema migrations |
+| `VOLT init-db` | Initialize PostgreSQL schema (tables, indexes, pgvector HNSW) — one-time setup |
+| `VOLT migrate` | Apply database schema migrations |
 
 ### Running Agents
 
 | Command | Description |
 |---------|-------------|
-| `volt agent-run --input <query>` | Single-shot agent execution (non-interactive) |
-| `volt agent-tui` | Interactive terminal chat session with the agent |
+| `VOLT agent-run --input <query>` | Single-shot agent execution (non-interactive) |
+| `VOLT agent-tui` | Interactive terminal chat session with the agent |
 
 Common flags for both:
 
@@ -240,7 +245,7 @@ Common flags for both:
 
 | Command | Description |
 |---------|-------------|
-| `volt workflow --pattern <p> --agents <json> --tasks <json>` | Run a multi-agent workflow |
+| `VOLT workflow --pattern <p> --agents <json> --tasks <json>` | Run a multi-agent workflow |
 
 Patterns: `parallel`, `pipeline`, `supervisor`, or inline DAG JSON.
 
@@ -250,36 +255,36 @@ Use `--agents-file` / `--tasks-file` to pass from files instead of CLI args.
 
 | Command | Description |
 |---------|-------------|
-| `volt list-tools` | List all registered tools as JSON |
-| `volt execute --tool <name> --params <json>` | Execute a tool directly by name |
-| `volt validate --manifest <path>` | Validate a tool manifest file |
-| `volt sandbox --command <cmd>` | Run an arbitrary command in the sandbox |
-| `volt history --limit <n>` | Show recent tool execution history |
-| `volt mcp-serve` | Serve all tools over MCP stdio transport (stdin/stdout JSON-RPC) |
-| `volt provision --pkg-id <id>` | Provision a tool from the remote registry |
-| `volt provision-file --manifest <path>` | Provision a tool from a local manifest file |
-| `volt provision-skill --path <path>` | Compile and store a skill from SKILL.md |
-| `volt import-skill --path <file> --format <fmt>` | Import a skill from Claude, Cursor, Copilot, OpenCode, or Markdown |
-| `volt install-skill --name <name>` | Install a skill from the catalog |
-| `volt list-catalog-skills` | List available skills in the catalog |
-| `volt search-catalog-skills --query <q>` | Search the skill catalog |
+| `VOLT list-tools` | List all registered tools as JSON |
+| `VOLT execute --tool <name> --params <json>` | Execute a tool directly by name |
+| `VOLT validate --manifest <path>` | Validate a tool manifest file |
+| `VOLT sandbox --command <cmd>` | Run an arbitrary command in the sandbox |
+| `VOLT history --limit <n>` | Show recent tool execution history |
+| `VOLT mcp-serve` | Serve all tools over MCP stdio transport (stdin/stdout JSON-RPC) |
+| `VOLT provision --pkg-id <id>` | Provision a tool from the remote registry |
+| `VOLT provision-file --manifest <path>` | Provision a tool from a local manifest file |
+| `VOLT provision-skill --path <path>` | Compile and store a skill from SKILL.md |
+| `VOLT import-skill --path <file> --format <fmt>` | Import a skill from Claude, Cursor, Copilot, OpenCode, or Markdown |
+| `VOLT install-skill --name <name>` | Install a skill from the catalog |
+| `VOLT list-catalog-skills` | List available skills in the catalog |
+| `VOLT search-catalog-skills --query <q>` | Search the skill catalog |
 
 ### Evaluation & Benchmarks
 
 | Command | Description |
 |---------|-------------|
-| `volt eval --suite <file> --model <name>` | Run an evaluation suite against the agent |
+| `VOLT eval --suite <file> --model <name>` | Run an evaluation suite against the agent |
 | `bfcl_bench` (separate binary) | BFCL v4 benchmark runner (use `--help` for flags) |
 
 ### Daemons (Background Services)
 
 | Command | Description |
 |---------|-------------|
-| `volt heartbeat` | Periodic heartbeat loop (60s interval) |
-| `volt jobs-monitor` | Self-repair job monitor (check 30s, repair 300s) |
-| `volt routines-engine` | Routine scheduling engine (60s check) |
-| `volt jobs list` | List all jobs from the database |
-| `volt routines list` | List all routines from the database |
+| `VOLT heartbeat` | Periodic heartbeat loop (60s interval) |
+| `VOLT jobs-monitor` | Self-repair job monitor (check 30s, repair 300s) |
+| `VOLT routines-engine` | Routine scheduling engine (60s check) |
+| `VOLT jobs list` | List all jobs from the database |
+| `VOLT routines list` | List all routines from the database |
 
 ### Environment Variables
 
@@ -318,7 +323,7 @@ Use `--agents-file` / `--tasks-file` to pass from files instead of CLI args.
 
 ### Config File
 
-Volt reads `.volt/config.toml` for persistent settings (auto-generated by first-run wizard):
+VOLT reads `.volt/config.toml` for persistent settings (auto-generated by first-run wizard):
 
 ```toml
 [agent]
@@ -362,7 +367,7 @@ Pre-built binaries for Linux and Windows are available on the [Releases page](ht
 
 ## Paper & Benchmarks
 
-Official benchmarks and the accompanying paper are undergoing final validation and will be released at a later date. The `paper/` directory contains work-in-progress drafts.
+The accompanying research paper, *VOLT: Virtual Operations for Local Tasks — A Hardware-Aware Edge Exoskeleton and Compound AI Orchestrator*, is available in `paper/draft.md`. It details the four architectural pillars: Edge Model Exoskeleton (AST coercion), Cloud Optimization (prompt caching + native structured outputs), Observable DAG Orchestration, and Storage/I/O Hardening.
 
 ## Performance
 
@@ -379,4 +384,4 @@ Official benchmarks and the accompanying paper are undergoing final validation a
 
 MIT — see [LICENSE](./LICENSE) for details.
 
-**Volt** — The Autonomous Systems Engine. Built in Rust by [Setique Labs](https://setique.com).
+**VOLT** — *Virtual Operations for Local Tasks*. Built in Rust by [Setique Labs](https://setique.com).
