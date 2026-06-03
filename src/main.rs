@@ -1,6 +1,7 @@
 #![deny(deprecated)]
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
 use volt::commands;
 
@@ -172,6 +173,15 @@ enum Commands {
     },
     Heartbeat,
     Migrate,
+    /// Generate shell completions and write to stdout or a file.
+    /// Usage: `volt completion bash > ~/.local/share/bash-completion/completions/volt`
+    Completion {
+        /// Target shell: bash, zsh, fish, powershell, elvish
+        shell: Shell,
+        /// Write to a file instead of stdout
+        #[arg(long, short = 'o')]
+        out: Option<PathBuf>,
+    },
     Jobs {
         #[command(subcommand)]
         subcommand: JobsSubcommand,
@@ -444,6 +454,26 @@ async fn main() -> anyhow::Result<()> {
             let pool = volt::db::connect(&settings.database_url).await?;
             volt::db::init_schema(&pool).await?;
             println!("schema migrated");
+        }
+        Commands::Completion { shell, out } => {
+            use clap::CommandFactory;
+            use std::io::Write;
+            let mut cmd = Cli::command();
+            let bin = cmd.get_name().to_string();
+            let mut buf: Vec<u8> = Vec::new();
+            clap_complete::generate(shell, &mut cmd, bin, &mut buf);
+            match out {
+                Some(p) => {
+                    if let Some(parent) = p.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&p, &buf)?;
+                    eprintln!("wrote {} ({} bytes)", p.display(), buf.len());
+                }
+                None => {
+                    std::io::stdout().lock().write_all(&buf)?;
+                }
+            }
         }
         Commands::Jobs {
             subcommand: JobsSubcommand::List,
