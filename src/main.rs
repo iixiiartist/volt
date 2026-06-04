@@ -144,14 +144,6 @@ enum Commands {
         /// Run inside a fresh `git worktree` so file changes are isolated.
         #[arg(long, default_value_t = false)]
         worktree: bool,
-        /// Use the opencode-style panel layout (header / sidebar /
-        /// messages / composer pills / status bar). Default: classic.
-        #[arg(long, default_value_t = false)]
-        panels: bool,
-        /// Colour theme for the panel layout. Default: `default`. Other
-        /// options: `catppuccin`, `dracula`, `nord`, `solarized-dark`.
-        #[arg(long)]
-        theme: Option<String>,
     },
     McpServe,
     Workflow {
@@ -289,10 +281,6 @@ enum AgentSubcommand {
         /// are isolated to a branch (`volt-session/<short-id>`).
         #[arg(long, default_value_t = false)]
         worktree: bool,
-        /// Use the opencode-style panel layout (header / sidebar /
-        /// messages / composer pills / status bar). Default: classic.
-        #[arg(long, default_value_t = false)]
-        panels: bool,
     },
 }
 
@@ -432,7 +420,7 @@ async fn main() -> anyhow::Result<()> {
     // inline (`--print` / `--json` modes already gate their own
     // `eprintln!` chatter).
     match &cli.command {
-        Commands::AgentTui { theme: _theme, .. } => {
+        Commands::AgentTui { .. } => {
             let log_dir = volt::config::volt_home().join("logs");
             if let Err(e) = volt::telemetry::init_otel_for_tui("volt", &log_dir) {
                 eprintln!("[warn] failed to open TUI log file, falling back to stderr: {}", e);
@@ -564,7 +552,7 @@ async fn main() -> anyhow::Result<()> {
             // already-parsed subcommand and calling the same handler
             // the top-level command uses. Fields not on the subcommand
             // (mode, use_mtp, etc.) fall back to env defaults.
-            let (model, allow, max_iterations, worktree, panels) = match &cli.command {
+            let (model, allow, max_iterations, worktree) = match &cli.command {
                 Commands::Agent {
                     subcommand:
                         AgentSubcommand::Tui {
@@ -572,15 +560,8 @@ async fn main() -> anyhow::Result<()> {
                             allow,
                             max_iterations,
                             worktree,
-                            panels,
                         },
-                } => (
-                    model.clone(),
-                    *allow,
-                    *max_iterations,
-                    *worktree,
-                    *panels,
-                ),
+                } => (model.clone(), *allow, *max_iterations, *worktree),
                 _ => unreachable!("matched above"),
             };
             let mode = std::env::var("VOLT_CONTEXT_MODE")
@@ -598,8 +579,6 @@ async fn main() -> anyhow::Result<()> {
                 model_variant: settings.model_variant.clone(),
                 quantization: settings.quantization.clone(),
                 worktree,
-                panels,
-                theme: None,
             })
             .await?
         }
@@ -672,8 +651,6 @@ async fn main() -> anyhow::Result<()> {
             model_variant,
             quantization,
             worktree,
-            panels,
-            theme,
         } => {
             commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
                 model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
@@ -688,8 +665,6 @@ async fn main() -> anyhow::Result<()> {
                 model_variant,
                 quantization,
                 worktree,
-                panels,
-                theme,
             })
             .await?
         }

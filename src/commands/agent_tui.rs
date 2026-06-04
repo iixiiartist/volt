@@ -22,8 +22,6 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         model_variant,
         quantization,
         worktree,
-        panels,
-        theme,
     } = options;
 
     let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "volt-agent");
@@ -194,15 +192,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
             .with_hooks(hook_registry),
     );
 
-    let theme = theme
-        .as_deref()
-        .and_then(crate::tui::Theme::parse)
-        .unwrap_or_default();
-    let tui = if panels {
-        crate::tui::TuiChat::new_with_panels(agent, tools, printer, approval_rx, theme)
-    } else {
-        crate::tui::TuiChat::new_with_approval(agent, tools, printer, approval_rx)
-    };
+    let tui = crate::tui::TuiChat::new_with_approval(agent, tools, printer, approval_rx);
     tui.run().await?;
     Ok(())
 }
@@ -222,12 +212,6 @@ pub struct AgentTuiOptions {
     /// When true, run inside a fresh `git worktree` so file changes are
     /// isolated to a branch. See `--worktree` on `volt agent-run`.
     pub worktree: bool,
-    /// When true, use the opencode-style panel layout (header / sidebar
-    /// / messages / composer pills / status bar). Default: classic.
-    pub panels: bool,
-    /// Colour theme name for the panel layout. Parsed via `Theme::parse`;
-    /// unknown values fall back to `Theme::Default`.
-    pub theme: Option<String>,
 }
 
 impl AgentTuiOptions {

@@ -8,7 +8,7 @@ use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
 use reedline::{DefaultPrompt, ExternalPrinter, FileBackedHistory, Reedline, Signal};
 use std::io::stdout;
@@ -39,162 +39,24 @@ enum SlashResult {
     NotASlash,
 }
 
-/// TUI layout. `Classic` is the original 3-4 row layout (messages, separator,
-/// HUD). `Panels` is the new opencode-style layout: header bar, sidebar
-/// (sessions), message stream, composer pills + input, status bar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum LayoutMode {
-    #[default]
-    Classic,
-    Panels,
-}
-
-/// Colour theme for the panel layout. `Default` is the existing colour
-/// scheme. The other themes are Catppuccin Mocha, Dracula, Nord, and
-/// Solarized Dark — a subset of what opencode ships.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Theme {
-    #[default]
-    Default,
-    Catppuccin,
-    Dracula,
-    Nord,
-    SolarizedDark,
-}
-
-impl Theme {
-    /// Human-readable name for the theme. Used by `/theme <name>` and the
-    /// help text.
-    pub fn name(self) -> &'static str {
-        match self {
-            Theme::Default => "default",
-            Theme::Catppuccin => "catppuccin",
-            Theme::Dracula => "dracula",
-            Theme::Nord => "nord",
-            Theme::SolarizedDark => "solarized-dark",
-        }
-    }
-
-    /// Parse a theme name (case-insensitive). Returns `None` for unknown
-    /// names so the caller can show an error message.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "default" | "volt" => Some(Theme::Default),
-            "catppuccin" | "mocha" => Some(Theme::Catppuccin),
-            "dracula" => Some(Theme::Dracula),
-            "nord" => Some(Theme::Nord),
-            "solarized" | "solarized-dark" | "solarized_dark" => Some(Theme::SolarizedDark),
-            _ => None,
-        }
-    }
-
-    /// All themes in display order. Used by the picker dialog.
-    pub fn all() -> &'static [Theme] {
-        &[
-            Theme::Default,
-            Theme::Catppuccin,
-            Theme::Dracula,
-            Theme::Nord,
-            Theme::SolarizedDark,
-        ]
-    }
-
-    /// Resolve the theme's accent colour (used for the active pill border,
-    /// sidebar selection highlight, and the header logo). For `Default` we
-    /// fall back to Cyan which is what the existing TUI uses.
-    pub fn accent(self) -> Color {
-        match self {
-            Theme::Default => Color::Cyan,
-            Theme::Catppuccin => Color::Rgb(203, 166, 247),   // Mauve
-            Theme::Dracula => Color::Rgb(189, 147, 249),       // Purple
-            Theme::Nord => Color::Rgb(136, 192, 208),          // Frost cyan
-            Theme::SolarizedDark => Color::Rgb(38, 139, 210),  // Blue
-        }
-    }
-
-    /// Resolve the theme's muted/dim colour (sidebar chrome, separator
-    /// lines, idle HUD text).
-    pub fn muted(self) -> Color {
-        match self {
-            Theme::Default => Color::DarkGray,
-            Theme::Catppuccin => Color::Rgb(108, 112, 134),   // Overlay0
-            Theme::Dracula => Color::Rgb(98, 114, 164),       // Comment
-            Theme::Nord => Color::Rgb(76, 86, 106),           // Polar Night 3
-            Theme::SolarizedDark => Color::Rgb(88, 110, 117), // Base01
-        }
-    }
-
-    /// Colour for the user role tag.
-    pub fn user(self) -> Color {
-        match self {
-            Theme::Default => Color::Cyan,
-            Theme::Catppuccin => Color::Rgb(137, 180, 250),  // Blue
-            Theme::Dracula => Color::Rgb(139, 233, 253),     // Cyan
-            Theme::Nord => Color::Rgb(129, 161, 193),        // Frost
-            Theme::SolarizedDark => Color::Rgb(38, 139, 210), // Blue
-        }
-    }
-
-    /// Colour for the assistant role tag.
-    pub fn assistant(self) -> Color {
-        match self {
-            Theme::Default => Color::Green,
-            Theme::Catppuccin => Color::Rgb(166, 227, 161),   // Green
-            Theme::Dracula => Color::Rgb(80, 250, 123),       // Green
-            Theme::Nord => Color::Rgb(163, 190, 140),         // Aurora green
-            Theme::SolarizedDark => Color::Rgb(133, 153, 0),  // Green
-        }
-    }
-
-    /// Colour for the system role tag.
-    pub fn system(self) -> Color {
-        match self {
-            Theme::Default => Color::Yellow,
-            Theme::Catppuccin => Color::Rgb(250, 179, 135),   // Peach
-            Theme::Dracula => Color::Rgb(241, 250, 140),      // Yellow
-            Theme::Nord => Color::Rgb(235, 203, 139),         // Aurora yellow
-            Theme::SolarizedDark => Color::Rgb(181, 137, 0),  // Yellow
-        }
-    }
-}
-
 const HELP_TEXT: &str = "Volt Agent — slash commands
 
-  Conversation:
-    /clear              Clear visible messages (keeps session)
-    /compact            Compress older messages to fit context
-    /sessions           List recent sessions
-    /resume <n>         Resume session N from /sessions
-    /fork [n]           Copy the conversation up to message N into a new session
-    /export [path]      Export current session to markdown (default: session.md)
+  /help, /?           Show this help
+  /quit, /exit, /q    Exit the TUI
+  /clear              Clear visible messages (keeps session)
+  /model              Show current model
+  /model <name>       Switch model (resets conversation)
+  /status             Show agent status (model, messages, tokens)
+  /cost, /tokens      Show cumulative token usage + est. cost
+  /sessions           List recent sessions (top 10)
+  /resume             Re-load latest session messages
+  /tools              List available tools
+  /init               Create a starter AGENTS.md in the current dir
+  /delegate <task>    Spawn a sub-agent to do the task; result is shown here
+  /fork [n]           Copy the conversation up to message N into a new session
+  /plan               Toggle plan mode (next turn is read-only)
 
-  Model & mode:
-    /model              Show current model
-    /model <name>       Switch model (next session)
-    /mode               Show current mode (precision/balanced/autonomous)
-    /theme              List available colour themes
-    /theme <name>       Switch theme (default, catppuccin, dracula, nord, solarized-dark)
-
-  Tools & integrations:
-    /tools              List available tools
-    /mcp                List MCP servers + tools
-    /delegate <task>    Spawn a sub-agent for a task; result shown here
-
-  Status:
-    /status             Model, mode, session id, message count
-    /cost, /tokens      Token usage + estimated cost
-    /init               Create a starter AGENTS.md in the current dir
-
-  Other:
-    /plan               Toggle plan mode (next turn is read-only)
-    /help, /?           Show this help
-    /quit, /exit, /q    Exit the TUI
-
-  Key bindings (Panels layout):
-    Ctrl+B              Toggle sidebar
-    Ctrl+L              Clear messages (same as /clear)
-    Ctrl+C              Cancel current turn / quit
-    Esc                 Deny pending tool approval";
+Tip: while the agent is thinking, press Ctrl-C to cancel.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ChatMessage {
@@ -239,36 +101,6 @@ pub struct TuiChat {
     /// Receiver half of the approval channel. The runner polls it on each
     /// redraw tick.
     approval_rx: Option<mpsc::UnboundedReceiver<ApprovalRequest>>,
-    /// Which layout to render. `Classic` is the original 3-4 row layout
-    /// (default, backward compatible). `Panels` is the new opencode-style
-    /// layout with header, sidebar, composer pills, and status bar.
-    layout_mode: LayoutMode,
-    /// Active colour theme (panels layout). `Default` keeps the existing
-    /// colour scheme.
-    theme: Theme,
-    /// Whether the sessions sidebar is visible. Toggled with Ctrl+B in
-    /// panels mode. Ignored in classic mode.
-    sidebar_visible: bool,
-    /// Cached sidebar session list, refreshed on demand. Stored as
-    /// `(session_id, title, message_count, updated_at)` tuples.
-    sidebar_sessions: Vec<SidebarSession>,
-    /// Selection state for the sidebar list. `None` means no selection
-    /// (the active session is highlighted instead).
-    sidebar_state: ListState,
-}
-
-/// Cached session metadata for the sidebar.
-#[derive(Debug, Clone)]
-pub struct SidebarSession {
-    /// The full session id. Kept for future "switch to this session"
-    /// wiring; currently the sidebar shows the short id and the resume
-    /// command still works off the numbered list.
-    #[allow(dead_code)]
-    pub id: uuid::Uuid,
-    pub title: String,
-    pub message_count: u32,
-    /// Short id (first 8 hex chars) for display.
-    pub short_id: String,
 }
 
 /// State for the in-flight approval widget. We hold the oneshot sender
@@ -303,11 +135,6 @@ impl TuiChat {
             plan_mode: false,
             pending_approval: None,
             approval_rx: None,
-            layout_mode: LayoutMode::default(),
-            theme: Theme::default(),
-            sidebar_visible: false,
-            sidebar_sessions: Vec::new(),
-            sidebar_state: ListState::default(),
         }
     }
 
@@ -327,55 +154,6 @@ impl TuiChat {
         let mut s = Self::with_tools(agent, printer, tools);
         s.approval_rx = Some(approval_rx);
         s
-    }
-
-    /// Construct a TUI with the opencode-style panel layout enabled. In
-    /// panels mode the layout is header (3 rows) / sidebar + messages /
-    /// composer pills / input / status bar (1 row). Sidebar starts visible
-    /// and can be toggled with Ctrl+B.
-    pub fn new_with_panels(
-        agent: Arc<Agent>,
-        tools: Arc<crate::tools::ToolRegistry>,
-        printer: ExternalPrinter<String>,
-        approval_rx: mpsc::UnboundedReceiver<ApprovalRequest>,
-        theme: Theme,
-    ) -> Self {
-        let mut s = Self::new_with_approval(agent, tools, printer, approval_rx);
-        s.layout_mode = LayoutMode::Panels;
-        s.theme = theme;
-        s.sidebar_visible = true;
-        s
-    }
-
-    /// Get the current layout mode.
-    pub fn layout_mode(&self) -> LayoutMode {
-        self.layout_mode
-    }
-
-    /// Get the current theme.
-    pub fn theme(&self) -> Theme {
-        self.theme
-    }
-
-    /// Set the theme. Caller should redraw after calling.
-    pub fn set_theme(&mut self, theme: Theme) {
-        self.theme = theme;
-    }
-
-    /// Toggle the sidebar visibility. No-op in classic mode.
-    pub fn toggle_sidebar(&mut self) {
-        if self.layout_mode == LayoutMode::Panels {
-            self.sidebar_visible = !self.sidebar_visible;
-        }
-    }
-
-    /// Replace the cached sidebar session list. Called by `/sessions` to
-    /// refresh the data; the sidebar widget reads it on each redraw.
-    pub fn set_sidebar_sessions(&mut self, sessions: Vec<SidebarSession>) {
-        self.sidebar_sessions = sessions;
-        if self.sidebar_state.selected().is_none() && !self.sidebar_sessions.is_empty() {
-            self.sidebar_state.select(Some(0));
-        }
     }
 
     /// Drain a single approval request from the channel if one is
@@ -512,20 +290,6 @@ impl TuiChat {
             let sig = line_editor.read_line(&prompt);
             match sig {
                 Ok(Signal::Success(buf)) => {
-                    // Global key bindings (intercepted before any other
-                    // routing). These come through reedline as raw control
-                    // characters in the buffer.
-                    if buf == "\u{02}" {
-                        // Ctrl+B — toggle sidebar.
-                        self.toggle_sidebar();
-                        continue;
-                    }
-                    if buf == "\u{0C}" {
-                        // Ctrl+L — clear messages (mirror /clear).
-                        self.messages.clear();
-                        self.add_message("system", "(conversation cleared)");
-                        continue;
-                    }
                     // If a tool approval is pending, route single-character
                     // y/n/a responses to the approval widget instead of
                     // treating them as user prompts.
@@ -535,6 +299,27 @@ impl TuiChat {
                     {
                         continue;
                     }
+                    let line = buf.trim().to_string();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if line.starts_with('/') {
+                        match self.execute_slash_command(&line, &sessions_pool).await {
+                            SlashResult::Quit => break,
+                            SlashResult::Handled => continue,
+                            SlashResult::NotASlash => {
+                                self.add_message(
+                                    "system",
+                                    &format!(
+                                        "unknown slash command: {}. Type /help for the list.",
+                                        line.split_whitespace().next().unwrap_or(&line)
+                                    ),
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                    self.dispatch_prompt(line.clone(), &sessions_pool).await;
                     let line = buf.trim().to_string();
                     if line.is_empty() {
                         continue;
@@ -580,20 +365,6 @@ impl TuiChat {
         &self,
         terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     ) -> anyhow::Result<()> {
-        match self.layout_mode {
-            LayoutMode::Classic => self.render_frame_classic(terminal),
-            LayoutMode::Panels => self.render_frame_panels(terminal),
-        }
-    }
-
-    /// Original 3-4 row layout: messages / approval widget (optional) /
-    /// input separator / HUD. Kept as the default for backward
-    /// compatibility — every existing user has the muscle memory for
-    /// this layout.
-    fn render_frame_classic(
-        &self,
-        terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    ) -> anyhow::Result<()> {
         terminal.draw(|f| {
             let area = f.area();
             let has_approval = self.pending_approval.is_some();
@@ -628,60 +399,6 @@ impl TuiChat {
                 self.render_messages(f, chunks[0]);
                 self.render_input_separator(f, chunks[1]);
                 self.render_hud(f, chunks[2]);
-            }
-        })?;
-        Ok(())
-    }
-
-    /// New opencode-style 3-region layout: header (3 rows) / body
-    /// (sidebar optional, messages) / composer pills (1 row) / input
-    /// separator (1 row) / status bar (1 row). When an approval is
-    /// pending, insert a 5-row modal between messages and pills.
-    fn render_frame_panels(
-        &self,
-        terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    ) -> anyhow::Result<()> {
-        terminal.draw(|f| {
-            let area = f.area();
-            let has_approval = self.pending_approval.is_some();
-
-            // Outer split: header (3) / body (fill) / composer (1) /
-            // input sep (1) / status (1). Approval modal sits on top of
-            // the body if pending.
-            let outer = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // header
-                    Constraint::Min(5),    // body
-                    Constraint::Length(1), // composer pills
-                    Constraint::Length(1), // input separator
-                    Constraint::Length(1), // status bar
-                ])
-                .split(area);
-
-            self.render_header(f, outer[0]);
-
-            // Body split: sidebar (0 or 24) / messages (fill).
-            if self.sidebar_visible {
-                let body_chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Length(26), Constraint::Min(20)])
-                    .split(outer[1]);
-                self.render_sidebar(f, body_chunks[0]);
-                self.render_messages_panels(f, body_chunks[1]);
-            } else {
-                self.render_messages_panels(f, outer[1]);
-            }
-
-            self.render_composer_pills(f, outer[2]);
-            self.render_input_separator(f, outer[3]);
-            self.render_status_bar(f, outer[4]);
-
-            // Approval modal sits on top of everything else when pending.
-            if has_approval {
-                let popup_area = centered_rect(70, 30, area);
-                f.render_widget(Clear, popup_area);
-                self.render_approval(f, popup_area);
             }
         })?;
         Ok(())
@@ -912,12 +629,8 @@ impl TuiChat {
                     Some(pool) => match sessions::list_sessions(pool, 20).await {
                         Ok(items) if items.is_empty() => {
                             self.add_message("system", "no persisted sessions yet");
-                            self.set_sidebar_sessions(Vec::new());
                         }
                         Ok(items) => {
-                            // Print a numbered list in the chat for
-                            // /resume compatibility, and refresh the
-                            // sidebar cache for the panels layout.
                             let mut s = String::from("Sessions (most recent first):\n");
                             for (idx, sess) in items.iter().enumerate() {
                                 let title = if sess.title.is_empty() {
@@ -938,21 +651,6 @@ impl TuiChat {
                             }
                             s.push_str("\nUse `/resume <n>` to load a session by number.");
                             self.add_message("system", &s);
-                            // Update the sidebar cache.
-                            let sidebar_items: Vec<SidebarSession> = items
-                                .iter()
-                                .map(|sess| {
-                                    let id_str = sess.id.to_string();
-                                    let short_id = id_str[..8.min(id_str.len())].to_string();
-                                    SidebarSession {
-                                        id: sess.id,
-                                        title: sess.title.clone(),
-                                        message_count: sess.message_count,
-                                        short_id,
-                                    }
-                                })
-                                .collect();
-                            self.set_sidebar_sessions(sidebar_items);
                         }
                         Err(e) => {
                             self.add_message("system", &format!("failed to list sessions: {}", e));
@@ -1251,179 +949,6 @@ impl TuiChat {
                 }
                 SlashResult::Handled
             }
-            "/theme" => {
-                match args.first() {
-                    Some(name) => match Theme::parse(name) {
-                        Some(theme) => {
-                            let was = self.theme;
-                            self.set_theme(theme);
-                            self.add_message(
-                                "system",
-                                &format!("theme: {} → {}", was.name(), theme.name()),
-                            );
-                        }
-                        None => {
-                            let names: Vec<&str> =
-                                Theme::all().iter().map(|t| t.name()).collect();
-                            self.add_message(
-                                "system",
-                                &format!(
-                                    "unknown theme '{}'. Available: {}",
-                                    name,
-                                    names.join(", ")
-                                ),
-                            );
-                        }
-                    },
-                    None => {
-                        let names: Vec<String> = Theme::all()
-                            .iter()
-                            .map(|t| {
-                                if *t == self.theme {
-                                    format!("{} (active)", t.name())
-                                } else {
-                                    t.name().to_string()
-                                }
-                            })
-                            .collect();
-                        self.add_message(
-                            "system",
-                            &format!("Available themes:\n  {}", names.join("\n  ")),
-                        );
-                    }
-                }
-                SlashResult::Handled
-            }
-            "/mode" => {
-                match args.first() {
-                    Some(name) => {
-                        // We don't actually mutate the agent's mode from
-                        // the TUI (the mode is set at startup via
-                        // `volt agent-tui --mode <name>`), but we surface
-                        // the request so the user knows what to do.
-                        self.add_message(
-                            "system",
-                            &format!(
-                                "mode '{}' will take effect on the next session.\n\
-                                 To switch now, restart with: volt agent-tui --mode {}",
-                                name, name
-                            ),
-                        );
-                    }
-                    None => {
-                        self.add_message(
-                            "system",
-                            &format!("current mode: {}", self.mode_label()),
-                        );
-                    }
-                }
-                SlashResult::Handled
-            }
-            "/mcp" => {
-                // Walk the tool registry and find any tools that came
-                // from an MCP server. We expose this through the
-                // registry's tool names — MCP tools are namespaced
-                // `mcp__<server>__<tool>` in Volt's convention.
-                let mut mcp_tools: std::collections::BTreeMap<String, Vec<String>> =
-                    std::collections::BTreeMap::new();
-                for name in self.tools.tool_names() {
-                    if let Some(rest) = name.strip_prefix("mcp__") {
-                        if let Some(idx) = rest.find("__") {
-                            let server = &rest[..idx];
-                            let tool = &rest[idx + 2..];
-                            mcp_tools
-                                .entry(server.to_string())
-                                .or_default()
-                                .push(tool.to_string());
-                        }
-                    }
-                }
-                if mcp_tools.is_empty() {
-                    self.add_message(
-                        "system",
-                        "no MCP servers registered. Use `mcp__*` tool names in your\n\
-                         config or `volt mcp serve` to expose Volt as an MCP server.",
-                    );
-                } else {
-                    let mut out = String::from("MCP servers + tools:\n");
-                    for (server, tools) in &mcp_tools {
-                        out.push_str(&format!("  {} ({} tools)\n", server, tools.len()));
-                        for t in tools {
-                            out.push_str(&format!("    • {}\n", t));
-                        }
-                    }
-                    self.add_message("system", &out);
-                }
-                SlashResult::Handled
-            }
-            "/export" => {
-                // `/export [path]` writes the current visible messages
-                // to a markdown file. Default path: session.md in the
-                // current directory.
-                let path = args
-                    .first()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("session.md"));
-                let mut body = String::new();
-                body.push_str(&format!(
-                    "# Volt session export — {}\n\n",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-                ));
-                body.push_str(&format!(
-                    "model: `{}`\nmode: `{}`\n\n",
-                    self.agent.config().model,
-                    self.mode_label()
-                ));
-                for m in &self.messages {
-                    let role = m.role.to_uppercase();
-                    if m.role == "tool" {
-                        let name = m.tool_name.as_deref().unwrap_or("tool");
-                        body.push_str(&format!("### [{}] {}\n\n", role, name));
-                        body.push_str("```\n");
-                        body.push_str(&m.content);
-                        body.push_str("\n```\n\n");
-                    } else {
-                        body.push_str(&format!("### {}\n\n", role));
-                        body.push_str(&m.content);
-                        body.push_str("\n\n");
-                    }
-                }
-                match std::fs::write(&path, &body) {
-                    Ok(_) => self.add_message(
-                        "system",
-                        &format!("exported {} messages to {}", self.messages.len(), path.display()),
-                    ),
-                    Err(e) => self.add_message(
-                        "system",
-                        &format!("export failed: {}", e),
-                    ),
-                }
-                SlashResult::Handled
-            }
-            "/compact" => {
-                // `/compact` triggers prompt compression on the
-                // agent's current conversation. We call the agent's
-                // `compact_state` method (if available) and report the
-                // result. Falls back to a soft no-op if the method
-                // isn't present (older agent builds).
-                let msgs_before = self
-                    .agent
-                    .state()
-                    .try_lock()
-                    .map(|s| s.messages.len())
-                    .unwrap_or(0);
-                self.add_message(
-                    "system",
-                    &format!(
-                        "(note) /compact is read-only in this build — it cannot mutate the\n\
-                         agent's message list. The current conversation has {} messages.\n\
-                         Manual cleanup: /clear to clear the visible messages and start over,\n\
-                         or /fork to copy the conversation into a fresh session.",
-                        msgs_before
-                    ),
-                );
-                SlashResult::Handled
-            }
             _ => SlashResult::NotASlash,
         }
     }
@@ -1476,198 +1001,6 @@ impl TuiChat {
             .style(Style::default().fg(Color::DarkGray))
             .alignment(ratatui::layout::Alignment::Left);
         f.render_widget(para, area);
-    }
-
-    // ── panels layout render methods ─────────────────────────────────
-
-    /// Top header (3 rows): logo + model name on the left, plan/state
-    /// pills in the middle, context % + cost on the right. Mirrors the
-    /// opencode header.
-    fn render_header(&self, f: &mut Frame, area: Rect) {
-        let accent = self.theme.accent();
-        let muted = self.theme.muted();
-        let (p, c) = self
-            .agent
-            .state()
-            .try_lock()
-            .map(|s| (s.total_prompt_tokens, s.total_completion_tokens))
-            .unwrap_or((0, 0));
-        let est_cost = (c as f64) * 0.000_000_59;
-
-        // 3-row split: row 0 logo / model / cost, row 1 thin rule,
-        // row 2 breadcrumb (mode + plan + theme). We use one Paragraph
-        // with 3 explicit lines and let ratatui's Wrap handle narrow
-        // terminals.
-        let model_short = short_model_name(&self.agent.config().model);
-        let plan_label = if self.plan_mode { "PLAN" } else { "RUN" };
-        let line0 = Line::from(vec![
-            Span::styled(" VOLT ", Style::default().fg(Color::Black).bg(accent).add_modifier(Modifier::BOLD)),
-            Span::styled("  ", Style::default()),
-            Span::styled(model_short, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Span::styled("  ", Style::default()),
-            Span::styled(format!("↑ {}{} ↓ {}{}", fmt_tokens(p), suffix_tokens(p), fmt_tokens(c), suffix_tokens(c)),
-                Style::default().fg(muted)),
-        ]);
-        let line1 = Line::from(Span::styled(
-            "─".repeat(area.width as usize),
-            Style::default().fg(muted),
-        ));
-        let line2 = Line::from(vec![
-            Span::styled(" mode=", Style::default().fg(muted)),
-            Span::styled(self.mode_label(), Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-            Span::styled("  state=", Style::default().fg(muted)),
-            Span::styled(
-                if self.is_thinking { "thinking" } else { "idle" },
-                Style::default().fg(if self.is_thinking { Color::Yellow } else { muted }),
-            ),
-            Span::styled("  plan=", Style::default().fg(muted)),
-            Span::styled(plan_label, Style::default().fg(if self.plan_mode { Color::Yellow } else { muted })),
-            Span::styled("  theme=", Style::default().fg(muted)),
-            Span::styled(self.theme.name(), Style::default().fg(accent)),
-            Span::styled(format!("  ~${:.4}", est_cost), Style::default().fg(muted)),
-        ]);
-        let block = Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(muted));
-        let p = Paragraph::new(vec![line0, line1, line2])
-            .block(block)
-            .wrap(Wrap { trim: false });
-        f.render_widget(p, area);
-    }
-
-    /// Left sidebar (24 cols). Lists recent sessions with the active
-    /// session highlighted. j/k or arrows move the selection; Enter
-    /// switches; n creates a new session.
-    fn render_sidebar(&self, f: &mut Frame, area: Rect) {
-        let accent = self.theme.accent();
-        let muted = self.theme.muted();
-        let title = " Sessions ";
-        let items: Vec<ListItem> = if self.sidebar_sessions.is_empty() {
-            vec![ListItem::new(Line::from(Span::styled(
-                "  (no sessions yet)",
-                Style::default().fg(muted),
-            )))]
-        } else {
-            self.sidebar_sessions
-                .iter()
-                .map(|s| {
-                    let title = if s.title.is_empty() {
-                        "(untitled)"
-                    } else {
-                        s.title.as_str()
-                    };
-                    let display = format!(" {}\n  {} msgs · {}", s.short_id, s.message_count, title);
-                    ListItem::new(display)
-                })
-                .collect()
-        };
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(muted)).title(title))
-            .highlight_style(Style::default().bg(accent).fg(Color::Black).add_modifier(Modifier::BOLD))
-            .highlight_symbol("▶ ");
-        f.render_stateful_widget(list, area, &mut self.sidebar_state.clone());
-    }
-
-    /// Messages area in panels mode. Same content as the classic
-    /// renderer; we keep it as a separate method so future panels-only
-    /// tweaks (e.g. virtual scroll, in-place expand) can land without
-    /// touching the classic render path.
-    fn render_messages_panels(&self, f: &mut Frame, area: Rect) {
-        let max_width = area.width.saturating_sub(4) as usize;
-        let items: Vec<ListItem> = self
-            .messages
-            .iter()
-            .map(|m| build_item_enhanced_with_theme(&m.role, &m.content, m.tool_name.as_deref(), max_width, self.theme))
-            .collect();
-        let title = format!(" Chat ({} msgs) ", self.messages.len());
-        let block = Block::default().borders(Borders::NONE);
-        let messages = List::new(items).block(block).style(Style::default());
-        // Manually paint the title above the list because the list block
-        // has no borders.
-        f.render_widget(messages, area);
-        let title_area = Rect { x: area.x, y: area.y, width: area.width, height: 1 };
-        let title_p = Paragraph::new(Line::from(Span::styled(
-            title,
-            Style::default().fg(self.theme.muted()).add_modifier(Modifier::BOLD),
-        )));
-        f.render_widget(title_p, title_area);
-    }
-
-    /// Composer pills row: 1 line showing the model, plan, and theme as
-    /// coloured badges. Sits just above the input separator.
-    fn render_composer_pills(&self, f: &mut Frame, area: Rect) {
-        let accent = self.theme.accent();
-        let muted = self.theme.muted();
-        let model = short_model_name(&self.agent.config().model);
-        let plan = if self.plan_mode { "PLAN" } else { "RUN" };
-        let mode = self.mode_label();
-        let theme = self.theme.name();
-        let line = Line::from(vec![
-            pill(" model ", &model, accent),
-            Span::raw("  "),
-            pill(" mode ", &mode, Color::Magenta),
-            Span::raw("  "),
-            pill(" plan ", plan, if self.plan_mode { Color::Yellow } else { muted }),
-            Span::raw("  "),
-            pill(" theme ", theme, Color::Green),
-            Span::raw("  "),
-            Span::styled("ctrl+B sidebar  /help", Style::default().fg(muted)),
-        ]);
-        let para = Paragraph::new(line);
-        f.render_widget(para, area);
-    }
-
-    /// 1-row status bar at the very bottom: tokens + cost + /help.
-    fn render_status_bar(&self, f: &mut Frame, area: Rect) {
-        let (p, c) = self
-            .agent
-            .state()
-            .try_lock()
-            .map(|s| (s.total_prompt_tokens, s.total_completion_tokens))
-            .unwrap_or((0, 0));
-        let est_cost = (c as f64) * 0.000_000_59;
-        let duration = self
-            .turn_started_at
-            .map(|t| t.elapsed().as_secs_f32())
-            .unwrap_or(0.0);
-        let line = if self.is_thinking {
-            format!(
-                " ↑ {}{} tok  ↓ {}{} tok  ·  ~${:.4}  ·  {:.1}s  ·  thinking…",
-                fmt_tokens(p),
-                suffix_tokens(p),
-                fmt_tokens(c),
-                suffix_tokens(c),
-                est_cost,
-                duration
-            )
-        } else {
-            format!(
-                " ↑ {}{} tok  ↓ {}{} tok  ·  ~${:.4}  ·  /help for commands",
-                fmt_tokens(p),
-                suffix_tokens(p),
-                fmt_tokens(c),
-                suffix_tokens(c),
-                est_cost
-            )
-        };
-        let para = Paragraph::new(line).style(Style::default().fg(Color::DarkGray));
-        f.render_widget(para, area);
-    }
-
-    /// Short label for the current mode (precision / balanced /
-    /// autonomous / unknown). Pulled from the agent's config.
-    fn mode_label(&self) -> String {
-        // The agent's mode isn't a first-class field; we derive it from
-        // the enabled context kinds. Balanced is the default in
-        // agent_tui.rs.
-        let kind = self.agent.config().enabled_context_kinds.len();
-        if kind <= 3 {
-            "precision".to_string()
-        } else if kind <= 6 {
-            "balanced".to_string()
-        } else {
-            "autonomous".to_string()
-        }
     }
 }
 
@@ -1827,18 +1160,6 @@ fn build_item_enhanced(
     tool_name: Option<&str>,
     max_width: usize,
 ) -> ListItem<'static> {
-    build_item_enhanced_with_theme(role, content, tool_name, max_width, Theme::default())
-}
-
-/// Theme-aware variant used by the panels layout. The classic layout
-/// uses `Theme::Default` so the two paths produce identical output.
-fn build_item_enhanced_with_theme(
-    role: &str,
-    content: &str,
-    tool_name: Option<&str>,
-    max_width: usize,
-    theme: Theme,
-) -> ListItem<'static> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     if role == "tool" {
@@ -1871,9 +1192,9 @@ fn build_item_enhanced_with_theme(
     // user / assistant / system / fallback — keep the original behaviour
     // but add JSON highlight to assistant content (often tool call args).
     let style = match role {
-        "user" => Style::default().fg(theme.user()),
-        "assistant" => Style::default().fg(theme.assistant()),
-        "system" => Style::default().fg(theme.system()),
+        "user" => Style::default().fg(Color::Cyan),
+        "assistant" => Style::default().fg(Color::Green),
+        "system" => Style::default().fg(Color::Yellow),
         _ => Style::default(),
     };
     let role_tag = Span::styled(
@@ -1945,51 +1266,6 @@ fn history_file_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("volt")
         .join("history.txt")
-}
-
-/// Build a centred rectangle of the given percentage of the parent area.
-/// Used by the approval modal so it floats over the panel content
-/// without resizing the underlying layout.
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
-
-/// Render a `[ label value ]` pill with the given accent colour. The
-/// label is dimmed; the value uses the accent on a dark background.
-fn pill(label: &'static str, value: &str, accent: Color) -> Span<'static> {
-    Span::styled(
-        format!("[{}{}]", label, value),
-        Style::default().fg(accent).add_modifier(Modifier::BOLD),
-    )
-}
-
-/// Shorten a model id for header display. Keeps the vendor prefix and
-/// the size; drops the verbose suffix. Examples:
-///   `llama-3.1-8b-instant`     → `llama-3.1-8b`
-///   `openai/gpt-oss-20b`       → `gpt-oss-20b`
-///   `meta-llama/llama-4-scout` → `llama-4-scout`
-fn short_model_name(model: &str) -> String {
-    // Strip vendor prefix if present.
-    let raw = model.rsplit('/').next().unwrap_or(model);
-    // Strip trailing qualifiers that don't add information.
-    let raw = raw.strip_suffix("-instant").unwrap_or(raw);
-    let raw = raw.strip_suffix("-preview").unwrap_or(raw);
-    raw.to_string()
 }
 
 /// Resolves when the given cancel token is triggered.
@@ -2105,157 +1381,8 @@ mod tests {
             "/delegate",
             "/fork",
             "/plan",
-            "/theme",
-            "/mode",
-            "/mcp",
-            "/export",
-            "/compact",
         ] {
             assert!(HELP_TEXT.contains(cmd), "missing {} in help", cmd);
         }
-    }
-
-    // ── LayoutMode tests ─────────────────────────────────────────────
-
-    #[test]
-    fn layout_mode_default_is_classic() {
-        // The default is `Classic` for backward compat. Existing users
-        // shouldn't be surprised by a new layout on upgrade.
-        assert_eq!(LayoutMode::default(), LayoutMode::Classic);
-    }
-
-    // ── Theme tests ──────────────────────────────────────────────────
-
-    #[test]
-    fn theme_default_name() {
-        assert_eq!(Theme::default().name(), "default");
-    }
-
-    #[test]
-    fn theme_all_names_distinct() {
-        let names: Vec<&str> = Theme::all().iter().map(|t| t.name()).collect();
-        let mut deduped = names.clone();
-        deduped.sort();
-        deduped.dedup();
-        assert_eq!(deduped.len(), names.len(), "duplicate theme names");
-    }
-
-    #[test]
-    fn theme_parse_round_trip() {
-        for t in Theme::all() {
-            let parsed = Theme::parse(t.name()).unwrap();
-            assert_eq!(parsed, *t);
-        }
-    }
-
-    #[test]
-    fn theme_parse_case_insensitive() {
-        assert_eq!(Theme::parse("DEFAULT"), Some(Theme::Default));
-        assert_eq!(Theme::parse("Catppuccin"), Some(Theme::Catppuccin));
-        assert_eq!(Theme::parse("DRACULA"), Some(Theme::Dracula));
-        assert_eq!(Theme::parse("nord"), Some(Theme::Nord));
-    }
-
-    #[test]
-    fn theme_parse_unknown_returns_none() {
-        assert_eq!(Theme::parse("nope"), None);
-        assert_eq!(Theme::parse(""), None);
-        assert_eq!(Theme::parse("monokai"), None);
-    }
-
-    #[test]
-    fn theme_synonyms() {
-        // Solarized-Dark is also known as solarized or solarized_dark.
-        assert_eq!(Theme::parse("solarized"), Some(Theme::SolarizedDark));
-        assert_eq!(Theme::parse("solarized-dark"), Some(Theme::SolarizedDark));
-        assert_eq!(Theme::parse("solarized_dark"), Some(Theme::SolarizedDark));
-    }
-
-    #[test]
-    fn theme_accent_is_color() {
-        // Just verify the function returns a colour (any colour). The
-        // exact RGB is covered by the parse_round_trip test above.
-        let _ = Theme::Default.accent();
-        let _ = Theme::Catppuccin.accent();
-        let _ = Theme::Dracula.accent();
-        let _ = Theme::Nord.accent();
-        let _ = Theme::SolarizedDark.accent();
-    }
-
-    // ── pill tests ───────────────────────────────────────────────────
-
-    #[test]
-    fn pill_formats_label_and_value() {
-        let s = pill(" model ", "llama-3.1-8b", Color::Cyan);
-        let content = s.content;
-        assert!(content.contains("model"));
-        assert!(content.contains("llama-3.1-8b"));
-        assert!(content.starts_with('['));
-        assert!(content.ends_with(']'));
-    }
-
-    // ── short_model_name tests ───────────────────────────────────────
-
-    #[test]
-    fn short_model_name_strips_instant() {
-        assert_eq!(short_model_name("llama-3.1-8b-instant"), "llama-3.1-8b");
-    }
-
-    #[test]
-    fn short_model_name_strips_vendor_prefix() {
-        assert_eq!(short_model_name("openai/gpt-oss-20b"), "gpt-oss-20b");
-        assert_eq!(short_model_name("meta-llama/llama-4-scout"), "llama-4-scout");
-    }
-
-    #[test]
-    fn short_model_name_strips_preview() {
-        assert_eq!(short_model_name("gpt-4o-preview"), "gpt-4o");
-    }
-
-    #[test]
-    fn short_model_name_no_change_for_already_short() {
-        assert_eq!(short_model_name("qwen3-32b"), "qwen3-32b");
-    }
-
-    // ── centered_rect tests ──────────────────────────────────────────
-
-    #[test]
-    fn centered_rect_produces_smaller_area_than_parent() {
-        let parent = Rect::new(0, 0, 100, 50);
-        let popup = centered_rect(70, 30, parent);
-        assert!(popup.width < parent.width);
-        assert!(popup.height < parent.height);
-        // The popup should be roughly centered.
-        assert!(popup.x > 0);
-        assert!(popup.y > 0);
-    }
-
-    // ── build_item_enhanced_with_theme tests ─────────────────────────
-
-    #[test]
-    fn build_item_with_theme_uses_theme_user_color() {
-        let item = build_item_enhanced_with_theme(
-            "user",
-            "hello",
-            None,
-            80,
-            Theme::Catppuccin,
-        );
-        assert!(item.width() > 0);
-        // The Catppuccin user colour is Mauve (203, 166, 247). Even
-        // though ListItem doesn't expose the spans, we know the function
-        // returned without panicking.
-    }
-
-    #[test]
-    fn build_item_with_theme_assistant_uses_green_family() {
-        let item = build_item_enhanced_with_theme(
-            "assistant",
-            "ok",
-            None,
-            80,
-            Theme::Dracula,
-        );
-        assert!(item.width() > 0);
     }
 }
