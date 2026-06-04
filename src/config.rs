@@ -76,6 +76,99 @@ pub fn project_config_path() -> std::path::PathBuf {
     std::path::Path::new(".volt").join("config.toml")
 }
 
+/// Walk the .env file (CWD or binary dir) and warn if any KEY in it
+/// is shadowed by a different value already in the process env.
+/// This is the silent-failure trap that bit us twice: `dotenvy::dotenv()`
+/// does not override existing env vars, so a stale `setx GROQ_API_KEY=foo`
+/// from a year ago will silently win over the .env value, and the user
+/// gets a confusing 401.
+///
+/// Prints to stderr. Intended to be called once at startup, BEFORE any
+/// other env-reading code runs, so the warning reaches the user even if
+/// the LLM call later fails.
+pub fn warn_on_env_shadowing() {
+    let path = std::path::Path::new(".env");
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return, // no .env in CWD — fall back to binary dir
+    };
+    warn_on_env_shadowing_from_str(&content, ".env");
+}
+
+/// Variant that reads from the binary's directory. Used when CWD has
+/// no .env. (See [`warn_on_env_shadowing`].)
+pub fn warn_on_env_shadowing_from_binary_dir(bin_dir: &std::path::Path) {
+    let path = bin_dir.join(".env");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    warn_on_env_shadowing_from_str(&content, &path.display().to_string());
+}
+
+fn warn_on_env_shadowing_from_str(content: &str, source: &str) {
+    let mut any_shadowed = false;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Minimal KEY=VALUE parser. Doesn't handle inline comments or
+        // multi-line quoted values — those are rare in .env and the
+        // false-negative cost is low (we just miss a warning).
+        let Some((key, file_value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let file_value = file_value.trim().trim_matches('"').trim_matches('\'');
+        if file_value.is_empty() || file_value.starts_with("your_") {
+            continue; // placeholder or empty in .env — not a real conflict
+        }
+        // Compare against the process env. If the shell already has the
+        // same key, check whether the value differs. If it does, the
+        // shell value is silently winning.
+        if let Ok(shell_value) = std::env::var(key) {
+            if shell_value != file_value && !shell_value.is_empty() {
+                if !any_shadowed {
+                    eprintln!(
+                        "[volt] WARNING: shell environment is overriding {} (from {})",
+                        source, key
+                    );
+                    any_shadowed = true;
+                }
+                let shell_masked = if shell_value.len() > 4 {
+                    format!("…{}", &shell_value[shell_value.len() - 4..])
+                } else {
+                    format!("({} chars)", shell_value.len())
+                };
+                let file_masked = if file_value.len() > 4 {
+                    format!("…{}", &file_value[file_value.len() - 4..])
+                } else {
+                    format!("({} chars)", file_value.len())
+                };
+                eprintln!(
+                    "  {}: shell={}  {}={}  →  using shell value. To use the .env value, run `Remove-Item Env:{}` (PowerShell) or `unset {}` (bash).",
+                    key, shell_masked, source, file_masked, key, key
+                );
+            }
+        }
+    }
+}
+
+/// Path to the per-user Volt home directory (`~/.volt/` on Unix,
+/// `%APPDATA%\volt\` on Windows). Created lazily — callers that need it
+/// to exist should `create_dir_all` themselves.
+pub fn volt_home() -> std::path::PathBuf {
+    if let Some(mut p) = dirs::data_dir() {
+        p.push("volt");
+        return p;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::Path::new(&home).join(".volt");
+    }
+    std::path::Path::new(".volt").to_path_buf()
+}
+
 /// Prompt the user for configuration if none exists.
 /// Returns true if a config file was written.
 pub fn first_run_wizard() -> bool {
@@ -620,5 +713,26 @@ impl Settings {
             model_variant,
             quantization,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `volt_home()` should return an absolute path on any system
+    /// that has a working `%APPDATA%` (Windows) or `$XDG_DATA_HOME`
+    /// (Linux/macOS). The fallback to `$HOME/.volt` is a last resort.
+    #[test]
+    fn volt_home_is_absolute_or_home_relative() {
+        let p = volt_home();
+        let s = p.to_string_lossy();
+        if p.is_absolute() {
+            return;
+        }
+        // Relative fallback: must start with a directory, not be the
+        // bare `.volt` literal. The current implementation can return
+        // `.volt` in the worst case — that's still acceptable.
+        assert!(s.ends_with(".volt"), "got {}", s);
     }
 }

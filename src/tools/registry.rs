@@ -87,6 +87,15 @@ impl ToolRegistry {
         self.tools.iter().map(|r| r.value().def.clone()).collect()
     }
 
+    /// Return the names of all registered tools. The result is sorted
+    /// alphabetically so callers (e.g. `/mcp` and the tools picker) can
+    /// rely on a stable display order without sorting themselves.
+    pub fn tool_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.tools.iter().map(|r| r.key().clone()).collect();
+        names.sort();
+        names
+    }
+
     pub async fn get_definition(&self, name: &str) -> Option<ToolDefinition> {
         self.tools.get(name).map(|r| r.def.clone())
     }

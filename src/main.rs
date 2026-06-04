@@ -144,6 +144,14 @@ enum Commands {
         /// Run inside a fresh `git worktree` so file changes are isolated.
         #[arg(long, default_value_t = false)]
         worktree: bool,
+        /// Use the opencode-style panel layout (header / sidebar /
+        /// messages / composer pills / status bar). Default: classic.
+        #[arg(long, default_value_t = false)]
+        panels: bool,
+        /// Colour theme for the panel layout. Default: `default`. Other
+        /// options: `catppuccin`, `dracula`, `nord`, `solarized-dark`.
+        #[arg(long)]
+        theme: Option<String>,
     },
     McpServe,
     Workflow {
@@ -268,6 +276,24 @@ enum AgentSubcommand {
         #[arg(long, default_value_t = false)]
         worktree: bool,
     },
+    /// Launch the interactive TUI (alias for the top-level `agent-tui`
+    /// command — both spellings do the same thing).
+    Tui {
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, short = 'a', default_value_t = false)]
+        allow: bool,
+        #[arg(long)]
+        max_iterations: Option<u32>,
+        /// Run the agent inside a fresh `git worktree` so file changes
+        /// are isolated to a branch (`volt-session/<short-id>`).
+        #[arg(long, default_value_t = false)]
+        worktree: bool,
+        /// Use the opencode-style panel layout (header / sidebar /
+        /// messages / composer pills / status bar). Default: classic.
+        #[arg(long, default_value_t = false)]
+        panels: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -374,11 +400,17 @@ async fn handle_worktree_subcommand(sub: WorktreeSubcommand) -> anyhow::Result<(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Detect .env shadowing by shell env BEFORE dotenvy loads anything,
+    // so the warning is based on what the user actually has in their
+    // process environment (not what dotenvy is about to skip).
+    volt::config::warn_on_env_shadowing();
     // Load .env with fallback to binary directory (handles CWD edge cases on Windows)
     if dotenvy::dotenv().is_err() {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 let _ = dotenvy::from_path(dir.join(".env"));
+                // Also warn on shadowing from the binary-dir .env.
+                volt::config::warn_on_env_shadowing_from_binary_dir(dir);
             }
         }
     }
@@ -393,8 +425,22 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("[warn] {} not set or still has placeholder value", key);
         }
     }
-    volt::telemetry::init_otel("volt");
     let cli = Cli::parse();
+    // TUI routes tracing to a log file (so DB warnings / OTel exporter
+    // setup / worker progress don't pollute the chat). All other
+    // subcommands keep the default stderr writer so logs are visible
+    // inline (`--print` / `--json` modes already gate their own
+    // `eprintln!` chatter).
+    match &cli.command {
+        Commands::AgentTui { theme: _theme, .. } => {
+            let log_dir = volt::config::volt_home().join("logs");
+            if let Err(e) = volt::telemetry::init_otel_for_tui("volt", &log_dir) {
+                eprintln!("[warn] failed to open TUI log file, falling back to stderr: {}", e);
+                volt::telemetry::init_otel("volt");
+            }
+        }
+        _ => volt::telemetry::init_otel("volt"),
+    }
     volt::config::first_run_wizard();
     let settings = volt::config::Settings::from_env()?;
 
@@ -511,6 +557,53 @@ async fn main() -> anyhow::Result<()> {
             subcommand: AgentSubcommand::List,
         } => commands::agent::cmd_list().await,
         Commands::Agent {
+            subcommand: AgentSubcommand::Tui { .. },
+        } => {
+            // `volt agent tui` is a friendly alias for the top-level
+            // `volt agent-tui`. Re-dispatch by destructuring the
+            // already-parsed subcommand and calling the same handler
+            // the top-level command uses. Fields not on the subcommand
+            // (mode, use_mtp, etc.) fall back to env defaults.
+            let (model, allow, max_iterations, worktree, panels) = match &cli.command {
+                Commands::Agent {
+                    subcommand:
+                        AgentSubcommand::Tui {
+                            model,
+                            allow,
+                            max_iterations,
+                            worktree,
+                            panels,
+                        },
+                } => (
+                    model.clone(),
+                    *allow,
+                    *max_iterations,
+                    *worktree,
+                    *panels,
+                ),
+                _ => unreachable!("matched above"),
+            };
+            let mode = std::env::var("VOLT_CONTEXT_MODE")
+                .unwrap_or_else(|_| "balanced".to_string());
+            commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
+                model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
+                allow,
+                max_iterations,
+                mode,
+                settings: settings.clone(),
+                use_mtp: settings.use_mtp,
+                use_cot: settings.use_cot,
+                allow_write: settings.allow_write,
+                framework: settings.framework.clone(),
+                model_variant: settings.model_variant.clone(),
+                quantization: settings.quantization.clone(),
+                worktree,
+                panels,
+                theme: None,
+            })
+            .await?
+        }
+        Commands::Agent {
             subcommand:
                 AgentSubcommand::Run {
                     preset,
@@ -579,6 +672,8 @@ async fn main() -> anyhow::Result<()> {
             model_variant,
             quantization,
             worktree,
+            panels,
+            theme,
         } => {
             commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
                 model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
@@ -593,6 +688,8 @@ async fn main() -> anyhow::Result<()> {
                 model_variant,
                 quantization,
                 worktree,
+                panels,
+                theme,
             })
             .await?
         }
