@@ -2,9 +2,12 @@ use super::AgentMode;
 use crate::agent::Agent;
 use crate::context::ContextStore;
 use crate::embedding::EmbeddingClient;
+use crate::llm::provider::TokenCallback;
 use crate::models::*;
 use crate::tui::TuiChat;
 use crate::{db, session, worker};
+use reedline::ExternalPrinter;
+use std::sync::Arc;
 
 pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
     let AgentTuiOptions {
@@ -19,6 +22,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         framework,
         model_variant,
         quantization,
+        worktree,
     } = options;
 
     let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "volt-agent");
@@ -52,9 +56,43 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         max_tools_per_turn: None,
         blueprint_path: None,
     };
+    let workspace_root = if worktree {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        match crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd).await {
+            Ok(Some(repo_root)) => {
+                let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
+                let wt_id = uuid::Uuid::new_v4();
+                match mgr.create_for_session(wt_id).await {
+                    Ok(info) => {
+                        eprintln!(
+                            "[worktree] isolated to {} (branch {})",
+                            info.path.display(),
+                            info.branch
+                        );
+                        info.path
+                    }
+                    Err(e) => {
+                        eprintln!("[worktree] failed: {} — using cwd", e);
+                        cwd
+                    }
+                }
+            }
+            Ok(None) => {
+                eprintln!("[worktree] not in a git repo — --worktree ignored");
+                std::env::current_dir().unwrap_or_default()
+            }
+            Err(e) => {
+                eprintln!("[worktree] detect failed: {} — using cwd", e);
+                std::env::current_dir().unwrap_or_default()
+            }
+        }
+    } else {
+        std::env::current_dir().unwrap_or_default()
+    };
+
     let mut agent = Agent::new(config, provider, tools.clone())
         .await
-        .with_workspace(std::env::current_dir().unwrap_or_default());
+        .with_workspace(workspace_root);
 
     let context_store = ContextStore::new();
     let (seed_channel, seed_rx) = worker::create_seed_channel();
@@ -125,7 +163,39 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         }
     }
 
-    TuiChat::run(&agent).await?;
+    // Build the agent with a streaming callback that prints tokens to an
+    // ExternalPrinter. The TUI owns the printer and uses reedline as the
+    // line editor; streamed tokens are printed above the input row in
+    // real time.
+    let printer = ExternalPrinter::<String>::default();
+    let printer_for_cb = printer.clone();
+    let on_token: TokenCallback = Arc::new(move |token: &str| {
+        let _ = printer_for_cb.print(token.to_string());
+    });
+
+    // Wire the per-tool approval callback so the TUI can render an
+    // approval widget instead of falling back to the stdin prompt.
+    let (approval_tx, approval_rx) = tokio::sync::mpsc::unbounded_channel();
+    let approval_fn = crate::tui::approval_callback_for(approval_tx);
+    // Load hook registry from `.volt/hooks.toml` and `~/.volt/hooks.toml`.
+    // Missing files are not errors — they just mean no hooks configured.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let mut hook_registry = crate::agent::hooks::HookRegistry::from_default_paths(&cwd)
+        .unwrap_or_else(|_| crate::agent::hooks::HookRegistry::empty());
+    let agent_name = agent.config().name.clone();
+    // session_id is set later (in resume/new session flow) — leave empty
+    // string here; registry will use its default placeholder.
+    hook_registry = hook_registry.with_session("", &agent_name);
+    let agent = Arc::new(
+        agent
+            .with_stream(on_token)
+            .with_approval(approval_fn)
+            .with_hooks(hook_registry),
+    );
+
+    TuiChat::new_with_approval(agent, tools, printer, approval_rx)
+        .run()
+        .await?;
     Ok(())
 }
 
@@ -141,6 +211,9 @@ pub struct AgentTuiOptions {
     pub framework: Option<String>,
     pub model_variant: Option<String>,
     pub quantization: Option<String>,
+    /// When true, run inside a fresh `git worktree` so file changes are
+    /// isolated to a branch. See `--worktree` on `volt agent-run`.
+    pub worktree: bool,
 }
 
 impl AgentTuiOptions {

@@ -22,7 +22,7 @@ pub async fn cmd_list() {
     }
 }
 
-pub async fn cmd_run_interactive() -> anyhow::Result<()> {
+pub async fn cmd_run_interactive(worktree: bool) -> anyhow::Result<()> {
     let presets = preset::list_presets();
     if presets.is_empty() {
         println!("No agent presets found. Create files in: presets/");
@@ -93,6 +93,10 @@ pub async fn cmd_run_interactive() -> anyhow::Result<()> {
         quantization: None,
         blueprint: None,
         auto_blueprint: false,
+        print: false,
+        json: false,
+        plan: false,
+        worktree,
     })
     .await
 }

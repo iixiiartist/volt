@@ -468,6 +468,97 @@ pub async fn load_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Resul
     Ok(out)
 }
 
+/// Create a new session that is a copy of the messages from `parent_id`
+/// (truncated to the first `up_to` entries). Returns the new session ID.
+///
+/// Useful for `/fork <n>` — the user takes a long conversation, copies
+/// the first N messages into a new session, and continues from there
+/// without polluting the original. Both sessions are independently
+/// appendable after the fork.
+pub async fn fork_session(
+    pool: &SqlitePool,
+    parent_id: Uuid,
+    up_to: usize,
+    new_title: Option<String>,
+) -> anyhow::Result<Uuid> {
+    // Load only what we're keeping. Done as a single SELECT so the
+    // source-of-truth is the database, not whatever the in-memory
+    // TuiChat::messages has at the moment of the fork.
+    let rows = sqlx::query(
+        r#"
+        SELECT role, content, tool_calls, tool_result, tool_name, created_at
+        FROM messages
+        WHERE session_id = ?
+        ORDER BY position_index ASC
+        LIMIT ?
+        "#,
+    )
+    .bind(parent_id.to_string())
+    .bind(up_to as i64)
+    .fetch_all(pool)
+    .await?;
+
+    if rows.is_empty() {
+        anyhow::bail!(
+            "no messages to fork from session {} (limit {})",
+            parent_id,
+            up_to
+        );
+    }
+
+    // Mint a new session ID. Title defaults to "<original> (fork)" so
+    // /sessions can tell forks apart at a glance.
+    let new_id = Uuid::new_v4();
+    let parent_title: String = sqlx::query_scalar("SELECT title FROM sessions WHERE id = ?")
+        .bind(parent_id.to_string())
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or_default();
+    let title = new_title.unwrap_or_else(|| {
+        if parent_title.is_empty() {
+            "fork".to_string()
+        } else {
+            format!("{} (fork)", parent_title)
+        }
+    });
+
+    let now = chrono::Utc::now();
+    let new_session = Session {
+        id: new_id,
+        agent_name: "volt".into(),
+        title,
+        message_count: rows.len() as u32,
+        created_at: now,
+        updated_at: now,
+    };
+    create_session(pool, &new_session).await?;
+
+    // Persist the copied messages. Reuse the helper that
+    // `save_session_messages_atomic` uses internally so we get
+    // position_index 0..N from a single transaction.
+    let mut msgs = Vec::with_capacity(rows.len());
+    for row in rows {
+        msgs.push(Message {
+            id: Uuid::nil(),
+            parent_message_id: None,
+            role: row.try_get("role")?,
+            content: Arc::new(row.try_get("content")?),
+            tool_calls: row
+                .try_get::<Option<&str>, _>("tool_calls")?
+                .and_then(|s| serde_json::from_str(s).ok()),
+            tool_result: row.try_get("tool_result")?,
+            tool_name: row.try_get("tool_name")?,
+            created_at: row
+                .try_get::<&str, _>("created_at")?
+                .parse()
+                .unwrap_or_else(|_| chrono::Utc::now()),
+        });
+    }
+    save_session_messages_atomic(pool, new_id, &msgs).await?;
+
+    Ok(new_id)
+}
+
 pub async fn delete_session_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM messages WHERE session_id = ?")
         .bind(session_id.to_string())
@@ -868,5 +959,94 @@ mod tests {
         let session_id = Uuid::new_v4();
         // Deleting non-existent session should not error
         delete_session_messages(&pool, session_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_copies_subset() {
+        let pool = test_pool().await;
+        let parent = Uuid::new_v4();
+        let session = Session {
+            id: parent,
+            agent_name: "volt".into(),
+            title: "original".into(),
+            message_count: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        create_session(&pool, &session).await.unwrap();
+
+        // Three messages, position 0..2
+        let msgs = vec![
+            Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "user".into(),
+                content: Arc::new("turn 1".to_string()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            },
+            Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "assistant".into(),
+                content: Arc::new("turn 2".to_string()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            },
+            Message {
+                id: uuid::Uuid::nil(),
+                parent_message_id: None,
+                role: "user".into(),
+                content: Arc::new("turn 3".to_string()),
+                tool_calls: None,
+                tool_result: None,
+                tool_name: None,
+                created_at: chrono::Utc::now(),
+            },
+        ];
+        save_session_messages_atomic(&pool, parent, &msgs)
+            .await
+            .unwrap();
+
+        // Fork the first two — should drop turn 3
+        let new_id = fork_session(&pool, parent, 2, None).await.unwrap();
+        assert_ne!(new_id, parent);
+
+        // Original untouched
+        let orig_loaded = load_messages(&pool, parent).await.unwrap();
+        assert_eq!(orig_loaded.len(), 3);
+
+        // Fork has only first 2
+        let fork_loaded = load_messages(&pool, new_id).await.unwrap();
+        assert_eq!(fork_loaded.len(), 2);
+        assert_eq!(fork_loaded[0].content.as_str(), "turn 1");
+        assert_eq!(fork_loaded[1].content.as_str(), "turn 2");
+
+        // Fork title is derived
+        let sessions = list_sessions(&pool, 10).await.unwrap();
+        let fork = sessions.iter().find(|s| s.id == new_id).unwrap();
+        assert!(
+            fork.title.contains("fork"),
+            "title should mention fork: {}",
+            fork.title
+        );
+        assert!(
+            fork.title.contains("original"),
+            "title should preserve parent: {}",
+            fork.title
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_empty_errors() {
+        let pool = test_pool().await;
+        let parent = Uuid::new_v4();
+        // No session row, no messages — fork should error cleanly
+        let r = fork_session(&pool, parent, 5, None).await;
+        assert!(r.is_err(), "forking from empty session should fail");
     }
 }

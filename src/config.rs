@@ -1,7 +1,8 @@
 use crate::embedding::EmbeddingProvider;
 use crate::models::SandboxPolicy;
 use std::env;
-use std::io::Write;
+
+use inquire::{Confirm, Password, Select, Text};
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct ProjectConfig {
@@ -111,178 +112,208 @@ pub fn first_run_wizard() -> bool {
     println!("No configuration found. Let's get you set up.");
     println!();
 
-    // ── LLM Provider ──────────────────────────────────────────
-    println!("Which LLM provider would you like to use?");
-    println!("  1) Ollama (local, free) — requires Ollama running on your machine");
-    println!("  2) Groq — fast cloud API (free tier available, needs GROQ_API_KEY)");
-    println!("  3) OpenAI — needs OPENAI_API_KEY");
-    println!("  4) Anthropic (Claude) — needs ANTHROPIC_API_KEY");
-    println!("  5) NVIDIA NIM — needs NVIDIA_API_KEY or LLM_API_KEY");
-    print!("Choice [1]: ");
-    std::io::stdout().flush().ok();
-    let mut choice = String::new();
-    std::io::stdin().read_line(&mut choice).ok();
-    let choice = choice.trim();
+    // ── LLM Provider (arrow-key picker) ───────────────────────
+    #[derive(Clone)]
+    struct WizardProvider {
+        slug: &'static str,
+        label: &'static str,
+        default_model: &'static str,
+        base_url: &'static str,
+        key_env: Option<&'static str>,
+    }
+    const PROVIDERS: &[WizardProvider] = &[
+        WizardProvider {
+            slug: "ollama",
+            label: "Ollama (local, free) — requires Ollama running on your machine",
+            default_model: "phi4-mini:3.8b",
+            base_url: "http://localhost:11434/v1",
+            key_env: None,
+        },
+        WizardProvider {
+            slug: "groq",
+            label: "Groq — fast cloud API (free tier available, needs GROQ_API_KEY)",
+            default_model: "llama-3.1-8b-instant",
+            base_url: "https://api.groq.com/openai/v1",
+            key_env: Some("GROQ_API_KEY"),
+        },
+        WizardProvider {
+            slug: "openai",
+            label: "OpenAI — needs OPENAI_API_KEY",
+            default_model: "gpt-4o",
+            base_url: "https://api.openai.com/v1",
+            key_env: Some("OPENAI_API_KEY"),
+        },
+        WizardProvider {
+            slug: "anthropic",
+            label: "Anthropic (Claude) — needs ANTHROPIC_API_KEY",
+            default_model: "claude-sonnet-4-5",
+            base_url: "https://api.anthropic.com",
+            key_env: Some("ANTHROPIC_API_KEY"),
+        },
+        WizardProvider {
+            slug: "nvidia",
+            label: "NVIDIA NIM — needs NVIDIA_API_KEY or LLM_API_KEY",
+            default_model: "nvidia/llama-nemotron-embed-1b-v2",
+            base_url: "https://integrate.api.nvidia.com/v1",
+            key_env: Some("NVIDIA_API_KEY"),
+        },
+    ];
 
-    let (model, base_url, api_key_env, provider, api_key_name) = match choice {
-        "2" => {
-            println!();
-            print!("Groq model [llama-3.1-8b-instant]: ");
-            std::io::stdout().flush().ok();
-            let mut m = String::new();
-            std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() {
-                "llama-3.1-8b-instant"
-            } else {
-                m.trim()
-            };
-            println!();
-            print!("GROQ_API_KEY: ");
-            std::io::stdout().flush().ok();
-            let mut k = String::new();
-            std::io::stdin().read_line(&mut k).ok();
-            (
-                m.to_string(),
-                "https://api.groq.com/openai/v1".to_string(),
-                Some(k.trim().to_string()),
-                "groq",
-                "GROQ_API_KEY",
-            )
+    let provider: WizardProvider = match Select::new(
+        "Which LLM provider?",
+        PROVIDERS.iter().map(|p| p.label).collect::<Vec<_>>(),
+    )
+    .with_help_message("↑↓ to choose, Enter to confirm")
+    .prompt()
+    {
+        Ok(label) => PROVIDERS
+            .iter()
+            .find(|p| p.label == label)
+            .cloned()
+            .unwrap_or_else(|| PROVIDERS[0].clone()),
+        Err(_) => {
+            eprintln!("(setup cancelled)");
+            return false;
         }
-        "3" => {
-            println!();
-            print!("OpenAI model [gpt-4o]: ");
-            std::io::stdout().flush().ok();
-            let mut m = String::new();
-            std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() {
-                "gpt-4o"
-            } else {
-                m.trim()
-            };
-            println!();
-            print!("OPENAI_API_KEY: ");
-            std::io::stdout().flush().ok();
-            let mut k = String::new();
-            std::io::stdin().read_line(&mut k).ok();
-            (
-                m.to_string(),
-                "https://api.openai.com/v1".to_string(),
-                Some(k.trim().to_string()),
-                "openai",
-                "OPENAI_API_KEY",
-            )
+    };
+
+    // Model name (with default)
+    let model = match Text::new("Model")
+        .with_default(provider.default_model)
+        .with_help_message("Press Enter to accept the default")
+        .prompt()
+    {
+        Ok(m) if !m.trim().is_empty() => m.trim().to_string(),
+        Ok(_) => provider.default_model.to_string(),
+        Err(_) => {
+            eprintln!("(setup cancelled)");
+            return false;
         }
-        "4" => {
-            println!();
-            print!("Claude model [claude-sonnet-4-5]: ");
-            std::io::stdout().flush().ok();
-            let mut m = String::new();
-            std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() {
-                "claude-sonnet-4-5"
-            } else {
-                m.trim()
-            };
-            println!();
-            print!("ANTHROPIC_API_KEY: ");
-            std::io::stdout().flush().ok();
-            let mut k = String::new();
-            std::io::stdin().read_line(&mut k).ok();
-            (
-                m.to_string(),
-                "https://api.anthropic.com".to_string(),
-                Some(k.trim().to_string()),
-                "anthropic",
-                "ANTHROPIC_API_KEY",
-            )
-        }
-        "5" => {
-            println!();
-            print!("NVIDIA NIM model [nvidia/llama-nemotron-embed-1b-v2]: ");
-            std::io::stdout().flush().ok();
-            let mut m = String::new();
-            std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() {
-                "nvidia/llama-nemotron-embed-1b-v2"
-            } else {
-                m.trim()
-            };
-            println!();
-            print!("NVIDIA_API_KEY (or LLM_API_KEY): ");
-            std::io::stdout().flush().ok();
-            let mut k = String::new();
-            std::io::stdin().read_line(&mut k).ok();
-            (
-                m.to_string(),
-                "https://integrate.api.nvidia.com/v1".to_string(),
-                Some(k.trim().to_string()),
-                "nvidia",
-                "NVIDIA_API_KEY",
-            )
-        }
-        _ => {
-            println!();
-            print!("Ollama model [phi4-mini:3.8b]: ");
-            std::io::stdout().flush().ok();
-            let mut m = String::new();
-            std::io::stdin().read_line(&mut m).ok();
-            let m = if m.trim().is_empty() {
-                "phi4-mini:3.8b"
-            } else {
-                m.trim()
-            };
-            println!();
-            print!("Ollama base URL [http://localhost:11434/v1]: ");
-            std::io::stdout().flush().ok();
-            let mut u = String::new();
-            std::io::stdin().read_line(&mut u).ok();
-            let u = if u.trim().is_empty() {
-                "http://localhost:11434/v1"
-            } else {
-                u.trim()
-            };
-            (m.to_string(), u.to_string(), None, "ollama", "LLM_BASE_URL")
-        }
+    };
+
+    // API key (masked) for cloud providers; optional base URL for local
+    let (base_url, api_key_env, api_key_name) = if provider.slug == "ollama" {
+        let url = match Text::new("Ollama base URL")
+            .with_default(provider.base_url)
+            .prompt()
+        {
+            Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+            Ok(_) => provider.base_url.to_string(),
+            Err(_) => {
+                eprintln!("(setup cancelled)");
+                return false;
+            }
+        };
+        (url, None, "LLM_BASE_URL")
+    } else {
+        let key = match Password::new(&format!("{} API key", provider.key_env.unwrap_or("LLM")))
+            .without_confirmation()
+            .with_help_message("input is masked; press Enter to confirm")
+            .prompt()
+        {
+            Ok(k) => k,
+            Err(_) => {
+                eprintln!("(setup cancelled)");
+                return false;
+            }
+        };
+        (
+            provider.base_url.to_string(),
+            Some(key),
+            provider.key_env.unwrap_or("LLM_API_KEY"),
+        )
     };
 
     // ── Embedding Provider ────────────────────────────────────
-    println!();
-    println!("Embedding provider (used for skill/memory search):");
-    println!("  1) Ollama (local) — requires embedding model pulled");
-    println!("  2) NVIDIA NIM (cloud, free tier)");
-    print!("Choice [1]: ");
-    std::io::stdout().flush().ok();
-    let mut emb_choice = String::new();
-    std::io::stdin().read_line(&mut emb_choice).ok();
-    let (emb_model, emb_provider, emb_endpoint) = match emb_choice.trim() {
-        "2" => (
-            "nvidia/llama-nemotron-embed-1b-v2".to_string(),
-            "nvidia".to_string(),
-            "https://integrate.api.nvidia.com/v1/embeddings".to_string(),
-        ),
-        _ => (
-            "mxbai-embed-large".to_string(),
-            "ollama".to_string(),
-            "http://localhost:11434/v1".to_string(),
-        ),
+    #[derive(Clone)]
+    struct WizardEmbed {
+        label: &'static str,
+        model: &'static str,
+        provider: &'static str,
+        endpoint: &'static str,
+    }
+    const EMBEDS: &[WizardEmbed] = &[
+        WizardEmbed {
+            label: "Ollama (local) — requires embedding model pulled",
+            model: "mxbai-embed-large",
+            provider: "ollama",
+            endpoint: "http://localhost:11434/v1",
+        },
+        WizardEmbed {
+            label: "NVIDIA NIM (cloud, free tier)",
+            model: "nvidia/llama-nemotron-embed-1b-v2",
+            provider: "nvidia",
+            endpoint: "https://integrate.api.nvidia.com/v1/embeddings",
+        },
+    ];
+
+    let emb = match Select::new(
+        "Embedding provider (used for skill/memory search)?",
+        EMBEDS.iter().map(|e| e.label).collect::<Vec<_>>(),
+    )
+    .prompt()
+    {
+        Ok(label) => EMBEDS
+            .iter()
+            .find(|e| e.label == label)
+            .cloned()
+            .unwrap_or_else(|| EMBEDS[0].clone()),
+        Err(_) => {
+            eprintln!("(setup cancelled)");
+            return false;
+        }
     };
 
     // ── Database ──────────────────────────────────────────────
-    println!();
-    println!("Database URL (Volt needs PostgreSQL 16+ with pgvector).");
-    println!("  • Local install: postgres://volt:volt@localhost:5432/volt");
-    println!("  • Docker Compose: postgres://volt:volt@localhost:5432/volt");
-    println!("  • Cloud: postgres://user:pass@host:5432/db");
-    print!("DATABASE_URL [postgres://volt:volt@localhost:5432/volt]: ");
-    std::io::stdout().flush().ok();
-    let mut db_url = String::new();
-    std::io::stdin().read_line(&mut db_url).ok();
-    let db_url = if db_url.trim().is_empty() {
-        "postgres://volt:volt@localhost:5432/volt"
-    } else {
-        db_url.trim()
+    let db_url = match Text::new("DATABASE_URL (Volt needs PostgreSQL 16+ with pgvector)")
+        .with_default("postgres://volt:volt@localhost:5432/volt")
+        .with_help_message("Press Enter for the default local URL")
+        .prompt()
+    {
+        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+        Ok(_) => "postgres://volt:volt@localhost:5432/volt".to_string(),
+        Err(_) => {
+            eprintln!("(setup cancelled)");
+            return false;
+        }
     };
+
+    // ── Confirm before writing ────────────────────────────────
+    println!();
+    println!("Summary:");
+    println!("  LLM:     {} ({})", provider.label, model);
+    if let Some(ref k) = api_key_env {
+        let masked: String = "•".repeat(k.chars().count().min(8));
+        println!(
+            "  API key: {} (saved to .env, masked: {}…)",
+            api_key_name, masked
+        );
+    } else {
+        println!("  Base URL: {}", base_url);
+    }
+    println!("  Embed:   {} ({})", emb.label, emb.model);
+    println!("  DB:      {}", db_url);
+    println!();
+    let proceed = match Confirm::new("Write configuration to .volt/config.toml?")
+        .with_default(true)
+        .prompt()
+    {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("(setup cancelled)");
+            return false;
+        }
+    };
+    if !proceed {
+        println!("(aborted; no files written)");
+        return false;
+    }
+
+    // Pull the values back out of the (label-driven) wizard for the file writer.
+    let provider_slug = provider.slug;
+    let emb_model = emb.model.to_string();
+    let emb_provider = emb.provider.to_string();
+    let emb_endpoint = emb.endpoint.to_string();
 
     // ── Write config ──────────────────────────────────────────
     let config_dir = std::path::Path::new(".volt");
@@ -298,7 +329,7 @@ pub fn first_run_wizard() -> bool {
     // Agent section
     lines.push("[agent]".to_string());
     lines.push(format!("model = \"{}\"", model));
-    lines.push(format!("provider = \"{}\"", provider));
+    lines.push(format!("provider = \"{}\"", provider_slug));
     lines.push("max_iterations = 25".to_string());
     lines.push("temperature = 0.3".to_string());
     lines.push("use_mtp = false".to_string());
@@ -348,7 +379,7 @@ pub fn first_run_wizard() -> bool {
             }
 
             // LLM_BASE_URL (for Ollama, when a custom base URL was provided)
-            if provider == "ollama" && base_url != "http://localhost:11434/v1" {
+            if provider_slug == "ollama" && base_url != "http://localhost:11434/v1" {
                 let entry = format!("LLM_BASE_URL={}\n", base_url);
                 if !env_path.exists() {
                     let _ = std::fs::write(env_path, &entry);

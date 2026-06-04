@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 impl Agent {
     pub async fn run(&self, input: &str) -> anyhow::Result<String> {
+        // PreRun hooks (one-shot side effects; not allowed to block).
+        if let Some(registry) = &self.hook_registry {
+            registry.run_pre_run().await;
+        }
         let is_precision = self.is_precision_mode();
         if !is_precision {
             if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
@@ -444,6 +448,9 @@ impl Agent {
                     .await;
                 drop(state);
                 self.save_session_messages_delta().await;
+                if let Some(registry) = &self.hook_registry {
+                    registry.run_post_run().await;
+                }
                 return Ok(Arc::unwrap_or_clone(response.content));
             }
         }
@@ -465,8 +472,14 @@ impl Agent {
             .map(|m| m.content.as_str().to_string())
             .unwrap_or_default();
         if !last_answer.is_empty() {
+            if let Some(registry) = &self.hook_registry {
+                registry.run_post_run().await;
+            }
             Ok(last_answer)
         } else {
+            if let Some(registry) = &self.hook_registry {
+                registry.run_post_run().await;
+            }
             Err(anyhow::anyhow!(
                 "max iterations reached without final response"
             ))
@@ -610,13 +623,27 @@ impl Agent {
         } else {
             input.to_string()
         };
+
+        // Run UserPromptSubmit hooks. They cannot block the prompt (that
+        // would be hostile), but they can inject context that is appended
+        // to the user message and visible to the model.
+        let mut effective_input = safe_input.clone();
+        if let Some(registry) = &self.hook_registry {
+            let outcome = registry.run_user_prompt_submit(&effective_input).await;
+            let ctx = outcome.merged_context();
+            if !ctx.trim().is_empty() {
+                effective_input.push_str("\n\n[hook context]\n");
+                effective_input.push_str(&ctx);
+            }
+        }
+
         let mut state = self.state.lock().await;
         let parent_id = crate::models::Message::last_id(&state.messages);
         state.messages.push(Message {
             id: Uuid::new_v4(),
             parent_message_id: parent_id,
             role: "user".into(),
-            content: Arc::new(safe_input),
+            content: Arc::new(effective_input),
             tool_calls: None,
             tool_result: None,
             tool_name: None,
@@ -840,7 +867,15 @@ impl Agent {
                 == PermissionLevel::Prompt
                 && !self.config.allow_all
                 && !allow_session;
-            if needs_approval {
+            if !needs_approval {
+                continue;
+            }
+
+            // Decide via the TUI callback if one is installed, otherwise
+            // fall back to the legacy stdin prompt.
+            let decision = if let Some(approval_fn) = &self.approval_fn {
+                approval_fn(&tc.name, &tc.arguments).await
+            } else {
                 eprintln!(
                     "\n\x1b[33m[approval]\x1b[0m tool '{}({:?})' requires approval.",
                     tc.name, tc.arguments
@@ -855,8 +890,28 @@ impl Agent {
                 })
                 .await
                 .unwrap_or_default();
-                if answer == "a" {
+                match answer.as_str() {
+                    "y" | "yes" => crate::agent::ApprovalDecision::AllowOnce,
+                    "a" => crate::agent::ApprovalDecision::AllowSession,
+                    _ => crate::agent::ApprovalDecision::Deny,
+                }
+            };
+
+            match decision {
+                crate::agent::ApprovalDecision::AllowOnce => {
+                    // proceed with this tool, no session-wide change
+                }
+                crate::agent::ApprovalDecision::AllowSession => {
                     allow_session = true;
+                }
+                crate::agent::ApprovalDecision::Deny => {
+                    // Skip this tool call. The agent loop's downstream
+                    // capability check will exclude it.
+                    tracing::info!(
+                        "[approval] denied tool '{}' with args {:?}",
+                        tc.name,
+                        tc.arguments
+                    );
                 }
             }
         }
@@ -896,6 +951,7 @@ impl Agent {
         }
 
         let cap_mgr = self.capability_manager.clone();
+        let hook_registry = self.hook_registry.clone();
         let futures: Vec<_> = failure_filtered
             .iter()
             .map(|tc| {
@@ -906,51 +962,102 @@ impl Agent {
                 let id = tc.id.clone();
                 let store = self.context_store.clone();
                 let embedder = self.embedder.clone();
+                let hook_registry = hook_registry.clone();
                 tracing::debug!("executing tool: {} with {}", name, args);
                 async move {
-                    let result = tools
-                        .execute_gated(&name, &args, &cap_mgr)
-                        .await
-                        .unwrap_or_else(|e| ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(format!("tool error: {}", e)),
-                            duration_ms: 0,
-                        });
-
-                    if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
-                        if let Ok(_emb) = emb.embed_description(&name).await {
-                            store
-                                .record_run(
-                                    &args.to_string(),
-                                    &name,
-                                    result.success,
-                                    serde_json::json!({
-                                        "tool_name": name,
-                                        "duration_ms": result.duration_ms,
-                                        "error": result.error,
-                                    }),
-                                )
-                                .await;
+                    // PreToolUse hook: can block or modify args.
+                    let mut effective_args = args.clone();
+                    let mut blocked_reason: Option<String> = None;
+                    if let Some(registry) = &hook_registry {
+                        let decision = registry.run_pre_tool_use(&name, &args).await;
+                        match decision {
+                            crate::agent::hooks::PreToolDecision::Allow => {}
+                            crate::agent::hooks::PreToolDecision::Block { reason } => {
+                                blocked_reason = Some(reason);
+                            }
+                            crate::agent::hooks::PreToolDecision::ModifyArgs { args: new_args } => {
+                                effective_args = new_args;
+                            }
                         }
                     }
 
-                    let error_msg = result.error.clone();
-                    let raw_output = if result.success {
-                        result.output.clone()
+                    let (effective_name, output, result) = if let Some(reason) = blocked_reason {
+                        (
+                            name.clone(),
+                            format!("[hook blocked] {}", reason),
+                            ToolResult {
+                                success: false,
+                                output: String::new(),
+                                error: Some(format!("blocked by hook: {}", reason)),
+                                duration_ms: 0,
+                            },
+                        )
                     } else {
-                        format!("error: {}", error_msg.unwrap_or_default())
+                        let result = tools
+                            .execute_gated(&name, &effective_args, &cap_mgr)
+                            .await
+                            .unwrap_or_else(|e| ToolResult {
+                                success: false,
+                                output: String::new(),
+                                error: Some(format!("tool error: {}", e)),
+                                duration_ms: 0,
+                            });
+
+                        if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
+                            if let Ok(_emb) = emb.embed_description(&name).await {
+                                store
+                                    .record_run(
+                                        &effective_args.to_string(),
+                                        &name,
+                                        result.success,
+                                        serde_json::json!({
+                                            "tool_name": name,
+                                            "duration_ms": result.duration_ms,
+                                            "error": result.error,
+                                        }),
+                                    )
+                                    .await;
+                            }
+                        }
+
+                        let error_msg = result.error.clone();
+                        let raw_output = if result.success {
+                            result.output.clone()
+                        } else {
+                            format!("error: {}", error_msg.unwrap_or_default())
+                        };
+
+                        let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref()
+                            != Some("false")
+                        {
+                            crate::safety_layer::wrap_tool_output(&name, &raw_output)
+                        } else {
+                            raw_output
+                        };
+
+                        // PostToolUse hook: collect any context injections.
+                        let mut post_output = output;
+                        if let Some(registry) = &hook_registry {
+                            let outcome = registry
+                                .run_post_tool_use(
+                                    &name,
+                                    &effective_args,
+                                    &post_output,
+                                    result.success,
+                                    result.duration_ms as u64,
+                                )
+                                .await;
+                            let ctx = outcome.merged_context();
+                            if !ctx.trim().is_empty() {
+                                post_output.push_str("\n\n[hook context]\n");
+                                post_output.push_str(&ctx);
+                            }
+                        }
+
+                        (name.clone(), post_output, result)
                     };
 
-                    let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref()
-                        != Some("false")
-                    {
-                        crate::safety_layer::wrap_tool_output(&name, &raw_output)
-                    } else {
-                        raw_output
-                    };
-
-                    (name, id, output, result)
+                    (effective_name, id, output, result)
                 }
             })
             .collect();

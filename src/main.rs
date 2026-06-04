@@ -88,6 +88,26 @@ enum Commands {
         blueprint: Option<PathBuf>,
         #[arg(long, default_value_t = false)]
         auto_blueprint: bool,
+        /// Emit the response to stdout and suppress progress chatter (eprintln).
+        /// Ideal for piping into shell scripts.
+        #[arg(long, short = 'p', default_value_t = false)]
+        print: bool,
+        /// Emit a single JSON envelope on stdout (one line) with the response
+        /// and metadata. All other output is suppressed.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+        /// Read-only plan mode: ask the agent to output a plan as text
+        /// before invoking any tool. Useful for reviewing the agent's
+        /// intent before approving tool calls.
+        #[arg(long, default_value_t = false)]
+        plan: bool,
+        /// Run the agent inside a fresh `git worktree` on a dedicated
+        /// branch (`volt-session/<short-id>`). All file changes the
+        /// agent makes are isolated to that worktree; review with
+        /// `volt worktree list` / `volt worktree merge <id>` /
+        /// `volt worktree clean <id>`.
+        #[arg(long, default_value_t = false)]
+        worktree: bool,
     },
     Agent {
         #[command(subcommand)]
@@ -121,6 +141,9 @@ enum Commands {
         model_variant: Option<String>,
         #[arg(long)]
         quantization: Option<String>,
+        /// Run inside a fresh `git worktree` so file changes are isolated.
+        #[arg(long, default_value_t = false)]
+        worktree: bool,
     },
     McpServe,
     Workflow {
@@ -182,6 +205,34 @@ enum Commands {
         #[arg(long, short = 'o')]
         out: Option<PathBuf>,
     },
+    /// Run a health check and report environment / config / DB status.
+    Doctor,
+    /// Print the latest volt release info (does not auto-install).
+    Update {
+        /// Only print the latest version and exit.
+        #[arg(long)]
+        check: bool,
+        /// Specific version to check for (default: latest).
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Scaffold AGENTS.md / SOUL.md / MEMORY.md / USER.md in the current dir.
+    Init {
+        /// Overwrite existing files without prompting.
+        #[arg(long, short = 'f')]
+        force: bool,
+        /// Only write this file (e.g. --only AGENTS.md).
+        #[arg(long)]
+        only: Option<String>,
+    },
+    /// Manage worktrees created by `volt agent-run --worktree`. Each
+    /// session that ran with `--worktree` lives on its own branch in
+    /// `.volt-worktrees/<short-id>`. Use this command to list, review,
+    /// merge, or discard those worktrees.
+    Worktree {
+        #[command(subcommand)]
+        subcommand: WorktreeSubcommand,
+    },
     Jobs {
         #[command(subcommand)]
         subcommand: JobsSubcommand,
@@ -212,7 +263,113 @@ enum AgentSubcommand {
         preset: Option<String>,
         #[arg(long)]
         input: Option<String>,
+        /// Run the agent inside a fresh `git worktree` so file changes
+        /// are isolated to a branch (`volt-session/<short-id>`).
+        #[arg(long, default_value_t = false)]
+        worktree: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum WorktreeSubcommand {
+    /// List all volt-managed worktrees (`volt-session/*` branches).
+    List,
+    /// Show a `git diff --stat` summary of the changes in a worktree's
+    /// branch relative to the current HEAD.
+    Status {
+        /// Short id of the worktree (first 8 hex chars of the session uuid).
+        id: String,
+    },
+    /// Merge a session branch back into the current branch (`--no-ff`).
+    /// The worktree is left in place; run `volt worktree clean` after.
+    Merge {
+        /// Short id of the worktree to merge.
+        id: String,
+    },
+    /// Remove a worktree and delete its branch. Discards the worktree's
+    /// changes; export them first if you want to keep them.
+    Clean {
+        /// Short id of the worktree to discard.
+        id: String,
+        /// Skip the confirmation prompt.
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
+}
+
+async fn handle_worktree_subcommand(sub: WorktreeSubcommand) -> anyhow::Result<()> {
+    use crate::commands::worktree::WorktreeManager;
+    let cwd = std::env::current_dir()?;
+    let repo_root = match WorktreeManager::detect_repo_root(&cwd).await? {
+        Some(r) => r,
+        None => {
+            anyhow::bail!("not inside a git repository; `volt worktree` requires git");
+        }
+    };
+    let mgr = WorktreeManager::new(repo_root);
+    match sub {
+        WorktreeSubcommand::List => {
+            let infos = mgr.list().await?;
+            if infos.is_empty() {
+                println!("(no volt worktrees)");
+                return Ok(());
+            }
+            println!("{:<10}  {:<35}  {:<10}  PATH", "SHORT", "BRANCH", "HEAD");
+            for info in infos {
+                let head = mgr.head_short(&info.branch).await.unwrap_or_default();
+                println!(
+                    "{:<10}  {:<35}  {:<10}  {}",
+                    info.short_id,
+                    info.branch,
+                    head,
+                    info.path.display()
+                );
+            }
+        }
+        WorktreeSubcommand::Status { id } => {
+            let branch = format!("volt-session/{}", id);
+            let summary = mgr.diff_summary(&branch).await?;
+            if summary.trim().is_empty() {
+                println!("(no changes in {} relative to HEAD)", branch);
+            } else {
+                println!("Changes in {} (vs HEAD):\n{}", branch, summary);
+            }
+        }
+        WorktreeSubcommand::Merge { id } => {
+            let branch = format!("volt-session/{}", id);
+            println!("Merging {} into current branch (--no-ff)...", branch);
+            mgr.merge_back(&branch).await?;
+            println!(
+                "Done. The worktree is still on disk; run `volt worktree clean {}` to remove it.",
+                id
+            );
+        }
+        WorktreeSubcommand::Clean { id, force } => {
+            let branch = format!("volt-session/{}", id);
+            let path = mgr.parent_dir().join(&id);
+            if !force {
+                eprint!(
+                    "This will remove {} and delete branch {}. Continue? [y/N] ",
+                    path.display(),
+                    branch
+                );
+                use std::io::Write;
+                std::io::stderr().flush().ok();
+                let mut buf = String::new();
+                std::io::stdin().read_line(&mut buf).ok();
+                if buf.trim().to_lowercase() != "y" {
+                    println!("aborted");
+                    return Ok(());
+                }
+            }
+            if path.exists() {
+                mgr.remove(&path, true).await?;
+            }
+            mgr.delete_branch(&branch, true).await?;
+            println!("Removed {} and branch {}.", path.display(), branch);
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -286,6 +443,10 @@ async fn main() -> anyhow::Result<()> {
             quantization,
             blueprint,
             auto_blueprint,
+            print: print_mode,
+            json: json_mode,
+            plan,
+            worktree,
         } => {
             let model = commands::agent_run::AgentRunOptions::model_or_default(model);
 
@@ -339,6 +500,10 @@ async fn main() -> anyhow::Result<()> {
                 quantization,
                 blueprint,
                 auto_blueprint,
+                print: print_mode,
+                json: json_mode,
+                plan,
+                worktree,
             })
             .await?
         }
@@ -346,7 +511,12 @@ async fn main() -> anyhow::Result<()> {
             subcommand: AgentSubcommand::List,
         } => commands::agent::cmd_list().await,
         Commands::Agent {
-            subcommand: AgentSubcommand::Run { preset, input },
+            subcommand:
+                AgentSubcommand::Run {
+                    preset,
+                    input,
+                    worktree,
+                },
         } => {
             if let Some(input) = input {
                 // Non-interactive: load preset and run
@@ -387,10 +557,14 @@ async fn main() -> anyhow::Result<()> {
                     quantization: None,
                     blueprint: None,
                     auto_blueprint: false,
+                    print: false,
+                    json: false,
+                    plan: false,
+                    worktree: false,
                 })
                 .await?
             } else {
-                commands::agent::cmd_run_interactive().await?
+                commands::agent::cmd_run_interactive(worktree).await?
             }
         }
         Commands::AgentTui {
@@ -404,6 +578,7 @@ async fn main() -> anyhow::Result<()> {
             framework,
             model_variant,
             quantization,
+            worktree,
         } => {
             commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
                 model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
@@ -417,6 +592,7 @@ async fn main() -> anyhow::Result<()> {
                 framework,
                 model_variant,
                 quantization,
+                worktree,
             })
             .await?
         }
@@ -474,6 +650,18 @@ async fn main() -> anyhow::Result<()> {
                     std::io::stdout().lock().write_all(&buf)?;
                 }
             }
+        }
+        Commands::Doctor => {
+            commands::doctor::run(&settings).await?;
+        }
+        Commands::Update { check, version } => {
+            commands::doctor::check_update(check, version.as_deref()).await?;
+        }
+        Commands::Init { force, only } => {
+            commands::init::run(force, only.as_deref()).await?;
+        }
+        Commands::Worktree { subcommand } => {
+            handle_worktree_subcommand(subcommand).await?;
         }
         Commands::Jobs {
             subcommand: JobsSubcommand::List,

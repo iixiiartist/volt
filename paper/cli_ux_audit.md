@@ -1062,24 +1062,24 @@ This section tracks actual implementation work. Each item gets a ✅ when shippe
 | # | Item | Status | Commit | Notes |
 |---|---|---|---|---|
 | 1 | `volt completion <shell>` | ✅ | `6aa6eb6` | `clap_complete = 4` added; bash/zsh/fish/powershell/elvish supported; stdout or `--out <file>` |
-| 2 | Stream tokens into TUI | ⬜ | — | Single biggest perceived-quality win |
-| 3 | Slash commands in TUI | ⬜ | — | `/help`, `/model`, `/clear`, `/cost`, etc. |
-| 4 | `inquire`-based first-run wizard | ⬜ | — | API key masking + arrow-key nav |
-| 5 | Inject `AGENTS.md` into system prompt | ⬜ | — | 2-3h change in `prompt.rs` |
-| 6 | Token/cost HUD footer in TUI | ⬜ | — | Wire `total_prompt_tokens` to TUI render |
-| 7 | `reedline` upgrade for TUI input | ⬜ | — | History, multiline, kill ring |
-| 8 | `--print` / `--json` flags on `agent-run` | ⬜ | — | CI/script-friendly output |
-| 9 | `volt doctor` + `volt update` | ⬜ | — | Health check + self-upgrade |
-| 10 | `volt init` + `AGENTS.md` scaffolding | ⬜ | — | Project-aware first-run |
-| 11 | Syntax-highlighted tool calls in TUI | ⬜ | — | `syntect` already in deps |
-| 12 | Plan mode (`/plan` — read-only agent) | ⬜ | — | |
-| 13 | `volt resume <n>` and `volt sessions` | ⬜ | — | |
-| 14 | Per-tool TUI approval widget | ⬜ | — | Replace stdin prompt with TUI widget |
+| 2 | Stream tokens into TUI | ✅ | — | Token callback wired; TUI redraws every 50ms |
+| 3 | Slash commands in TUI | ✅ | — | `/help`, `/quit`, `/clear`, `/model`, `/status`, `/cost`, `/tokens`, `/sessions`, `/resume`, `/tools`, `/init` wired into TUI |
+| 4 | `inquire`-based first-run wizard | ✅ | — | `inquire = 0.7` added; arrow-key Select, masked Password for API keys, summary+Confirm; falls back to false on Ctrl+C |
+| 5 | Inject `AGENTS.md` into system prompt | ✅ | — | 9-line addition to `prompt.rs`; AGENTS.md loaded as `## Project Instructions (AGENTS.md)` section |
+| 6 | Token/cost HUD footer in TUI | ✅ | — | One-line HUD: `↑ 1.2k tok  ↓ 432 tok  ·  ~$0.0003  ·  2.3s  ·  thinking…` (or `/help` when idle); tracks turn_started_at Instant |
+| 7 | `reedline` upgrade for TUI input | ✅ | — | `reedline = 0.48` + `dirs = 6`; FileBackedHistory at `~/.local/share/volt/history.txt`; Ctrl-A/E/W/U/K, history nav (Up/Down), Ctrl-R reverse search, bracketed paste, multiline. Streaming tokens via `ExternalPrinter`. ~700-line tui.rs replaced |
+| 8 | `--print` / `--json` flags on `agent-run` | ✅ | — | `--print` (suppresses eprintln chatter), `--json` (single-line JSON envelope with response+model+tokens+elapsed); mutex; `chat!` macro routes diagnostics through quiet-mode gate |
+| 9 | `volt doctor` + `volt update` | ✅ | — | `volt doctor` prints platform/Rust/API keys (masked, last 4)/DB reachability/embedder config/ONNX EP detection/disk/permissions/AGENTS.md presence. `volt update` queries GitHub releases, prints local vs latest, suggests `cargo install --git` or release tarball. Both via `src/commands/doctor.rs`. No auto-binary-replace (out of scope; suggests install commands). |
+| 10 | `volt init` + `AGENTS.md` scaffolding | ✅ | — | Detects rust/node/python/go/java/generic; scaffolds AGENTS.md + SOUL.md + MEMORY.md + USER.md; --force overwrites; --only X writes a single file; per-file Confirm prompt when file exists and no --force; embedded templates in `src/commands/init.rs` (no templates/ dir needed). |
+| 11 | Syntax-highlighted tool calls in TUI | ✅ | — | `syntect::easy::HighlightLines` on JSON content (tool args/results); `color_for_tool` buckets tools into shell/write/network/agent/data/memory/read categories with per-bucket ratatui colors; ChatMessage gained `tool_name: Option<String>` and `id: Option<String>` for ID-based de-dup; enabled `default-fancy` syntect feature (which pulls in `parsing` + `html` + `yaml-load` + `plist-load` + `dump-load` + `dump-create`); 10 new unit tests covering color buckets and JSON highlight. |
+| 12 | Plan mode (`/plan` — read-only agent) | ✅ | — | TUI: `TuiChat::plan_mode: bool` toggled by `/plan`; auto-resets after the next turn. `dispatch_prompt` prefixes the input with `[PLAN MODE — read-only]` block telling the model to output a numbered plan before invoking any tool. Non-interactive: `--plan` flag on `volt agent-run` does the same. Model is told not to execute tools in plan-mode turns; user reviews the plan and either re-prompts (executing) or `/plan` toggles off. |
+| 13 | `volt resume <n>` and `volt sessions` | ✅ | — | TUI `/sessions` calls `sessions::list_sessions(pool, 20)`, prints a numbered list (short id + title + msg count + updated time); `/resume <n>` calls `load_messages`, replaces `TuiChat::messages` with the loaded conversation, updates `agent.state.session_id`. `execute_slash_command` is now async and accepts the pool. The shell commands `volt sessions` and `volt resume <id>` were already wired (existing) — TUI is now on par. |
+| 14 | Per-tool TUI approval widget | ✅ | — | Added `Agent::with_approval(callback)` builder + `ApprovalCallback` async type. Agent loop now consults `approval_fn` when set; falls back to the legacy stdin prompt otherwise. TUI constructs a `tokio::mpsc::UnboundedSender<ApprovalRequest>` via `tui::approval_callback_for(tx)` and passes it to the agent; the TUI owns the receiver (`TuiChat::new_with_approval`). `poll_approval` drains the channel on each redraw; `handle_approval_key(buf)` resolves the in-flight oneshot with `AllowOnce` / `AllowSession` / `Deny`. New 5-row layout (messages / approval widget / input separator / HUD) when an approval is pending. Press `y` to allow once, `a` to allow for the session, `n` or `Esc` to deny. Also fixed: legacy stdin prompt now correctly distinguishes y/n/a (was treating all non-`a` answers identically). |
 | 15 | Hook system (PreToolUse/PostToolUse) | ⬜ | — | Large effort |
 | 16 | `volt serve` daemon + Web UI | ⬜ | — | Out of scope for pure CLI |
 | 17 | Worktree-per-session mode | ⬜ | — | |
-| 18 | Subagent spawning from TUI | ⬜ | — | |
-| 19 | Conversation fork | ⬜ | — | |
+| 18 | Subagent spawning from TUI | ✅ | — | `/delegate <task>` slash command in TUI; `TuiChat.tools: Arc<ToolRegistry>` field; calls `crate::tools::delegate::delegate_task` with brief context from last user message; result rendered as a synthetic system message; `tokio::task::spawn_blocking` + `Handle::current().block_on` so it can await from the slash-command path. |
+| 19 | Conversation fork | ✅ | — | `/fork [n]` slash command in TUI; new `sessions::fork_session` helper that creates a new session row + copies the first N messages from a parent; `persist_tui_messages` helper flushes the agent's authoritative `state.messages` to disk first so the fork sees a consistent view; `ChatMessage` gained `Clone`; title is derived as `"<parent> (fork)"`. `/fork` (no arg) forks the whole conversation; `/fork N` truncates to the first N messages. The original session is left untouched. |
 
 ### Quick Wins Sprint Plan
 

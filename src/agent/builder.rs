@@ -97,6 +97,8 @@ impl Agent {
             failure_tracker: None,
             tool_output_buffer: Arc::new(Mutex::new(HashMap::new())),
             checkpoint_journal: None,
+            approval_fn: None,
+            hook_registry: None,
             capability_manager: mgr,
         }
     }
@@ -192,6 +194,23 @@ impl Agent {
             }
             self.config.blueprint_path = Some(path.to_string_lossy().to_string());
         }
+        self
+    }
+
+    /// Set a per-tool approval callback. When the agent needs approval for a
+    /// tool call, it invokes this callback instead of reading from stdin.
+    /// The TUI passes a callback that renders a clickable widget.
+    pub fn with_approval(mut self, approval_fn: crate::agent::ApprovalCallback) -> Self {
+        self.approval_fn = Some(approval_fn);
+        self
+    }
+
+    /// Install a hook registry. Hooks are shell commands run at
+    /// `PreToolUse` / `PostToolUse` / `PreRun` / `PostRun` /
+    /// `UserPromptSubmit` points. They can block, modify arguments, or
+    /// inject context. See `src/agent/hooks.rs` for the config format.
+    pub fn with_hooks(mut self, hooks: crate::agent::hooks::HookRegistry) -> Self {
+        self.hook_registry = Some(hooks);
         self
     }
 

@@ -40,6 +40,17 @@ pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> St
                 parts.push(format!("## User Profile\n{}", content));
             }
         }
+
+        // AGENTS.md is the project-level instruction file (mirrors Codex /
+        // Claude Code). It is loaded directly into the system prompt so the
+        // model sees project conventions on the first turn — without waiting
+        // for RAG retrieval.
+        let agents_path = ws.join("AGENTS.md");
+        if agents_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&agents_path) {
+                parts.push(format!("## Project Instructions (AGENTS.md)\n{}", content));
+            }
+        }
     }
 
     parts.push(
