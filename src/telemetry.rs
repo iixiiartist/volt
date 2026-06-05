@@ -42,10 +42,7 @@ pub fn init_otel_for_tui(service_name: &str, log_dir: &Path) -> std::io::Result<
     Ok(())
 }
 
-fn init_otel_with_writer(
-    service_name: &str,
-    writer: Arc<Mutex<Box<dyn Write + Send + Sync>>>,
-) {
+fn init_otel_with_writer(service_name: &str, writer: Arc<Mutex<Box<dyn Write + Send + Sync>>>) {
     OTEL_INIT.get_or_init(|| {
         let provider = build_provider(service_name);
 
@@ -69,7 +66,11 @@ fn init_otel_with_writer(
             )
             .with(telemetry);
 
-        subscriber.init();
+        // `try_init` instead of `init` so this is fully idempotent —
+        // a sibling library (Dioxus desktop, ort, etc.) may have set
+        // a global subscriber already. We just skip ours in that case
+        // and let the existing one win.
+        let _ = subscriber.try_init();
     });
 }
 

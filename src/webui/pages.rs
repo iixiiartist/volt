@@ -1,11 +1,15 @@
-use dioxus::prelude::*;
-use super::commands::{ToolInfo, UiCommand, UiEvent};
+// `use_resource` returns a future we intentionally don't await —
+// we just want it to run on first mount of each page.
+#![allow(clippy::let_underscore_future)]
+
+use super::commands::{ToolInfo, UiCommand};
 use super::routes::Page;
 use super::state::{
     ToastLevel, VoltState, COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO,
-    COLOR_PANEL, COLOR_PANEL_HOVER, COLOR_SUCCESS, COLOR_TEXT, COLOR_TEXT_DIM,
-    COLOR_TEXT_MUTED, COLOR_WARNING, FONT_MONO,
+    COLOR_PANEL, COLOR_PANEL_HOVER, COLOR_SUCCESS, COLOR_TEXT, COLOR_TEXT_DIM, COLOR_TEXT_MUTED,
+    FONT_MONO,
 };
+use dioxus::prelude::*;
 
 pub fn render_page(page: Page) -> Element {
     match page {
@@ -83,7 +87,7 @@ pub fn LoadingState(message: &'static str) -> Element {
 }
 
 #[component]
-pub fn Panel(title: &'static str, children: Element) -> Element {
+pub fn Panel(title: String, children: Element) -> Element {
     rsx! {
         div { style: "background-color: {COLOR_PANEL}; border: 1px solid {COLOR_BORDER}; border-radius: 8px; overflow: hidden;",
             div { style: "padding: 12px 16px; border-bottom: 1px solid {COLOR_BORDER};",
@@ -391,13 +395,90 @@ pub fn WorktreesPage() -> Element {
 #[component]
 pub fn JobsPage() -> Element {
     let mut state: VoltState = use_context();
+    let mut new_desc = use_signal(String::new);
+    let mut show_create = use_signal(|| false);
+    {
+        // Auto-load on first mount.
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListJobs);
+        });
+    }
     rsx! {
-        PageHeader { title: "Jobs", subtitle: "Scheduled background jobs" }
+        PageHeader { title: "Jobs", subtitle: "Scheduled background jobs (Postgres)" }
         div { style: "padding: 24px 32px;",
-            div { style: "margin-bottom: 16px;",
+            div { style: "display: flex; gap: 8px; margin-bottom: 16px;",
+                PrimaryButton { label: "New Job".to_string(), onclick: move |_| show_create.set(true) }
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListJobs) }
             }
-            EmptyState { icon: "\u{23F0}", title: "No scheduled jobs", description: "Jobs are defined in the database with cron expressions. Use 'volt jobs' CLI to add and manage them." }
+            if *show_create.read() {
+                Panel { title: "Create Job",
+                    div { style: "display: flex; gap: 8px; margin-bottom: 12px;",
+                        input { style: "flex: 1; padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
+                            placeholder: "Job description...",
+                            value: "{new_desc.read()}",
+                            oninput: move |e| new_desc.set(e.value().to_string()),
+                        }
+                        PrimaryButton { label: "Create".to_string(), onclick: move |_| {
+                            let d = new_desc.read().clone();
+                            if !d.is_empty() {
+                                state.fire(UiCommand::CreateJob { description: d });
+                                new_desc.set(String::new());
+                                show_create.set(false);
+                            }
+                        }}
+                        SecondaryButton { label: "Cancel".to_string(), onclick: move |_| show_create.set(false) }
+                    }
+                }
+            }
+            {
+                let jobs = state.jobs.read();
+                if jobs.is_empty() {
+                    rsx! { EmptyState { icon: "\u{23F0}", title: "No scheduled jobs", description: "Create one above or use 'volt jobs add' from the CLI. Jobs run when the daemon is active." } }
+                } else {
+                    rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 8px;",
+                            for j in jobs.iter() {
+                                Panel { title: format!("{} ({})", j.name, j.last_status),
+                                    div { style: "display: flex; gap: 16px; font-size: 12px; color: {COLOR_TEXT_DIM};",
+                                        span { "ID: " }, span { style: "font-family: {FONT_MONO}; color: {COLOR_TEXT};", "{&j.id[..8.min(j.id.len())]}" }
+                                        span { "•" }
+                                        span { "Attempts: {j.attempt_count}" }
+                                        if let Some(w) = &j.worker_id { span { "•" } span { "Worker: {w}" } }
+                                        span { "•" }
+                                        span { "Created: {j.created_at}" }
+                                    }
+                                    div { style: "display: flex; gap: 8px; margin-top: 12px;",
+                                        PrimaryButton { label: "Start".to_string(), onclick: {
+                                            let id_str = j.id.clone();
+                                            move |_| {
+                                                if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                                                    state.fire(UiCommand::StartJob { id: uuid, worker_id: Some("webui".into()) });
+                                                }
+                                            }
+                                        }}
+                                        SecondaryButton { label: "Complete".to_string(), onclick: {
+                                            let id_str = j.id.clone();
+                                            move |_| {
+                                                if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                                                    state.fire(UiCommand::CompleteJob { id: uuid, output: "completed from webui".into() });
+                                                }
+                                            }
+                                        }}
+                                        DangerButton { label: "Fail".to_string(), onclick: {
+                                            let id_str = j.id.clone();
+                                            move |_| {
+                                                if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                                                    state.fire(UiCommand::FailJob { id: uuid, error: "marked failed from webui".into() });
+                                                }
+                                            }
+                                        }}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -405,13 +486,115 @@ pub fn JobsPage() -> Element {
 #[component]
 pub fn RoutinesPage() -> Element {
     let mut state: VoltState = use_context();
+    let mut new_name = use_signal(String::new);
+    let mut new_prompt = use_signal(String::new);
+    let mut new_cron = use_signal(String::new);
+    let mut show_create = use_signal(|| false);
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListRoutines);
+        });
+    }
     rsx! {
-        PageHeader { title: "Routines", subtitle: "Event-triggered routines" }
+        PageHeader { title: "Routines", subtitle: "Event-triggered routines (Postgres)" }
         div { style: "padding: 24px 32px;",
-            div { style: "margin-bottom: 16px;",
+            div { style: "display: flex; gap: 8px; margin-bottom: 16px;",
+                PrimaryButton { label: "New Routine".to_string(), onclick: move |_| show_create.set(true) }
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListRoutines) }
             }
-            EmptyState { icon: "\u{1F4A1}", title: "No routines", description: "Routines trigger on events (file changes, webhooks, schedules). Use 'volt routines' CLI to define them." }
+            if *show_create.read() {
+                Panel { title: "Create Routine",
+                    div { style: "display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;",
+                        input { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
+                            placeholder: "Name (e.g. daily-cleanup)",
+                            value: "{new_name.read()}",
+                            oninput: move |e| new_name.set(e.value().to_string()),
+                        }
+                        input { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
+                            placeholder: "Action prompt (what the agent does)",
+                            value: "{new_prompt.read()}",
+                            oninput: move |e| new_prompt.set(e.value().to_string()),
+                        }
+                        input { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px; font-family: {FONT_MONO};",
+                            placeholder: "Cron expression (optional, e.g. 0 9 * * *)",
+                            value: "{new_cron.read()}",
+                            oninput: move |e| new_cron.set(e.value().to_string()),
+                        }
+                        div { style: "display: flex; gap: 8px;",
+                            PrimaryButton { label: "Create".to_string(), onclick: move |_| {
+                                let n = new_name.read().clone();
+                                let p = new_prompt.read().clone();
+                                let c = new_cron.read().clone();
+                                if !n.is_empty() && !p.is_empty() {
+                                    state.fire(UiCommand::CreateRoutine {
+                                        name: n,
+                                        action_prompt: p,
+                                        cron: if c.is_empty() { None } else { Some(c) },
+                                        trigger_type: Some("cron".into()),
+                                    });
+                                    new_name.set(String::new());
+                                    new_prompt.set(String::new());
+                                    new_cron.set(String::new());
+                                    show_create.set(false);
+                                }
+                            }}
+                            SecondaryButton { label: "Cancel".to_string(), onclick: move |_| show_create.set(false) }
+                        }
+                    }
+                }
+            }
+            {
+                let routines = state.routines.read();
+                if routines.is_empty() {
+                    rsx! { EmptyState { icon: "\u{1F4A1}", title: "No routines", description: "Create one above. Routines trigger on cron events or external webhooks." } }
+                } else {
+                    rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 8px;",
+                            for r in routines.iter() {
+                                Panel { title: format!("{} ({})", r.name, if r.enabled { "enabled" } else { "disabled" }),
+                                    div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 8px;",
+                                        span { "Trigger: {r.trigger}" }
+                                        span { " • ID: " }
+                                        span { style: "font-family: {FONT_MONO};", "{&r.id[..8.min(r.id.len())]}" }
+                                    }
+                                    div { style: "font-size: 13px; color: {COLOR_TEXT}; margin-bottom: 12px;",
+                                        "{r.action_prompt}"
+                                    }
+                                    div { style: "display: flex; gap: 8px;",
+                                        if r.enabled {
+                                            SecondaryButton { label: "Disable".to_string(), onclick: {
+                                                let id_str = r.id.clone();
+                                                move |_| {
+                                                    if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                                                        state.fire(UiCommand::ToggleRoutine { id: uuid, enabled: false });
+                                                    }
+                                                }
+                                            }}
+                                        } else {
+                                            PrimaryButton { label: "Enable".to_string(), onclick: {
+                                                let id_str = r.id.clone();
+                                                move |_| {
+                                                    if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                                                        state.fire(UiCommand::ToggleRoutine { id: uuid, enabled: true });
+                                                    }
+                                                }
+                                            }}
+                                        }
+                                        DangerButton { label: "Delete".to_string(), onclick: {
+                                            let id_str = r.id.clone();
+                                            move |_| {
+                                                if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
+                                                    state.fire(UiCommand::DeleteRoutine { id: uuid });
+                                                }
+                                            }
+                                        }}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -423,8 +606,13 @@ pub fn SkillsPage() -> Element {
     let mut show_search = use_signal(|| false);
     let mut show_import = use_signal(|| false);
     let mut import_path = use_signal(String::new);
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListSkills);
+        });
+    }
     rsx! {
-        PageHeader { title: "Skills", subtitle: "Reusable skill manifests from local, catalog, and imports" }
+        PageHeader { title: "Skills", subtitle: "Reusable skill manifests (local, catalog, imports)" }
         div { style: "padding: 24px 32px;",
             div { style: "display: flex; gap: 8px; margin-bottom: 16px;",
                 PrimaryButton { label: "Browse Catalog".to_string(), onclick: move |_| show_search.set(true) }
@@ -446,6 +634,31 @@ pub fn SkillsPage() -> Element {
                             }
                         }}
                     }
+                    {
+                        let results = state.catalog_results.read();
+                        if !results.is_empty() {
+                            rsx! {
+                                div { style: "display: flex; flex-direction: column; gap: 6px; margin-top: 8px;",
+                                    for c in results.iter() {
+                                        div { style: "display: flex; align-items: center; gap: 12px; padding: 8px 12px; background-color: {COLOR_PANEL}; border-radius: 6px;",
+                                            div { style: "flex: 1;",
+                                                div { style: "color: {COLOR_TEXT}; font-size: 13px;", "{c.name}" }
+                                                div { style: "color: {COLOR_TEXT_DIM}; font-size: 11px;", "{c.description}" }
+                                            }
+                                            PrimaryButton { label: "Install".to_string(), onclick: {
+                                                let n = c.name.clone();
+                                                move |_| state.fire(UiCommand::InstallSkill { name: n.clone() })
+                                            }}
+                                        }
+                                    }
+                                }
+                            }
+                        } else if !state.catalog_query.read().is_empty() {
+                            rsx! { div { style: "color: {COLOR_TEXT_DIM}; font-size: 12px; margin-top: 8px;", "No matches." } }
+                        } else {
+                            rsx! { div { style: "color: {COLOR_TEXT_DIM}; font-size: 12px; margin-top: 8px;", "Type a query and press Search." } }
+                        }
+                    }
                 }
             }
             if *show_import.read() {
@@ -464,10 +677,35 @@ pub fn SkillsPage() -> Element {
                                 show_import.set(false);
                             }
                         }}
+                        SecondaryButton { label: "Cancel".to_string(), onclick: move |_| show_import.set(false) }
                     }
                 }
             }
-            EmptyState { icon: "\u{2728}", title: "No skills installed", description: "Browse the catalog to install skills, or import from a local TOML/JSON file." }
+            {
+                let skills = state.skills.read();
+                if skills.is_empty() {
+                    rsx! { EmptyState { icon: "\u{2728}", title: "No skills installed", description: "Browse the catalog to install skills, or import from a local TOML/JSON file." } }
+                } else {
+                    rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 6px;",
+                            for s in skills.iter() {
+                                Panel { title: format!("{} ({})", s.name, s.source),
+                                    div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 4px;",
+                                        "v{s.version} • installed {s.installed_at}"
+                                    }
+                                    div { style: "font-size: 13px; color: {COLOR_TEXT}; margin-bottom: 8px;",
+                                        "{s.description}"
+                                    }
+                                    DangerButton { label: "Uninstall".to_string(), onclick: {
+                                        let n = s.name.clone();
+                                        move |_| state.fire(UiCommand::UninstallSkill { name: n.clone() })
+                                    }}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -475,13 +713,97 @@ pub fn SkillsPage() -> Element {
 #[component]
 pub fn RegistryPage() -> Element {
     let mut state: VoltState = use_context();
+    let mut new_name = use_signal(String::new);
+    let mut new_transport = use_signal(|| "stdio".to_string());
+    let mut new_command = use_signal(String::new);
+    let mut new_url = use_signal(String::new);
+    let mut show_create = use_signal(|| false);
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListMcpServers);
+        });
+    }
     rsx! {
-        PageHeader { title: "MCP Registry", subtitle: "Model Context Protocol server connections" }
+        PageHeader { title: "MCP Registry", subtitle: "Model Context Protocol server connections (~/.volt/mcp_servers.json)" }
         div { style: "padding: 24px 32px;",
-            div { style: "margin-bottom: 16px;",
+            div { style: "display: flex; gap: 8px; margin-bottom: 16px;",
+                PrimaryButton { label: "Register Server".to_string(), onclick: move |_| show_create.set(true) }
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListMcpServers) }
             }
-            EmptyState { icon: "\u{1F4E6}", title: "No MCP servers", description: "MCP servers extend Volt with remote tools. Use 'volt mcp-serve' or register via .volt/mcp.toml." }
+            if *show_create.read() {
+                Panel { title: "Register MCP Server",
+                    div { style: "display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;",
+                        input { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
+                            placeholder: "Server name",
+                            value: "{new_name.read()}",
+                            oninput: move |e| new_name.set(e.value().to_string()),
+                        }
+                        select { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
+                            value: "{new_transport.read()}",
+                            onchange: move |e| new_transport.set(e.value().to_string()),
+                            option { value: "stdio", "stdio" }
+                            option { value: "http", "http" }
+                            option { value: "websocket", "websocket" }
+                            option { value: "grpc", "grpc" }
+                        }
+                        if new_transport.read().as_str() == "stdio" {
+                            input { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px; font-family: {FONT_MONO};",
+                                placeholder: "Command (e.g. himalaya-mcp --stdio)",
+                                value: "{new_command.read()}",
+                                oninput: move |e| new_command.set(e.value().to_string()),
+                            }
+                        } else {
+                            input { style: "padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px; font-family: {FONT_MONO};",
+                                placeholder: "URL (e.g. https://mcp.example.com)",
+                                value: "{new_url.read()}",
+                                oninput: move |e| new_url.set(e.value().to_string()),
+                            }
+                        }
+                        div { style: "display: flex; gap: 8px;",
+                            PrimaryButton { label: "Register".to_string(), onclick: move |_| {
+                                let n = new_name.read().clone();
+                                let t = new_transport.read().clone();
+                                let c = new_command.read().clone();
+                                let u = new_url.read().clone();
+                                if !n.is_empty() {
+                                    state.fire(UiCommand::RegisterMcpServer {
+                                        name: n,
+                                        transport: t,
+                                        command: if c.is_empty() { None } else { Some(c) },
+                                        url: if u.is_empty() { None } else { Some(u) },
+                                    });
+                                    new_name.set(String::new());
+                                    new_command.set(String::new());
+                                    new_url.set(String::new());
+                                    show_create.set(false);
+                                }
+                            }}
+                            SecondaryButton { label: "Cancel".to_string(), onclick: move |_| show_create.set(false) }
+                        }
+                    }
+                }
+            }
+            {
+                let servers = state.mcp_servers.read();
+                if servers.is_empty() {
+                    rsx! { EmptyState { icon: "\u{1F4E6}", title: "No MCP servers", description: "Register one above. Stdio spawns a process, http/websocket/grpc connect to a remote endpoint." } }
+                } else {
+                    rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 6px;",
+                            for s in servers.iter() {
+                                Panel { title: format!("{} ({})", s.name, s.transport),
+                                    div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 4px;",
+                                        "Status: {s.status} • Tools: {s.tools_count}"
+                                    }
+                                    div { style: "font-size: 13px; color: {COLOR_TEXT}; font-family: {FONT_MONO};",
+                                        "{s.endpoint}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -490,6 +812,11 @@ pub fn RegistryPage() -> Element {
 pub fn AuditPage() -> Element {
     let mut state: VoltState = use_context();
     let mut filter_actor = use_signal(String::new);
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::GetAuditLog { limit: 200 });
+        });
+    }
     rsx! {
         PageHeader { title: "Audit Log", subtitle: "EU AI Act Art. 12 compliance: all agent actions, tool calls, and approvals" }
         div { style: "padding: 24px 32px;",
@@ -503,7 +830,37 @@ pub fn AuditPage() -> Element {
                 div { style: "flex: 1;" }
                 span { style: "color: {COLOR_TEXT_MUTED}; font-size: 11px;", "Persistent in .volt/audit.log + structured tracing" }
             }
-            EmptyState { icon: "\u{1F50D}", title: "No audit entries", description: "As you use Volt, every action will be recorded here. Audit log is tamper-evident via append-only writes." }
+            {
+                let entries = state.audit_entries.read();
+                let filter = filter_actor.read().to_lowercase();
+                let filtered: Vec<_> = entries
+                    .iter()
+                    .filter(|e| filter.is_empty() || e.actor.to_lowercase().contains(&filter))
+                    .collect();
+                if filtered.is_empty() {
+                    rsx! { EmptyState { icon: "\u{1F50D}", title: "No audit entries", description: "As you use Volt, every action will be recorded here. Audit log is tamper-evident via append-only writes." } }
+                } else {
+                    rsx! {
+                        div { style: "display: flex; flex-direction: column; gap: 4px;",
+                            for e in filtered {
+                                {
+                                    let ts = e.timestamp.format("%H:%M:%S").to_string();
+                                    let result_color = if e.result == "ok" { COLOR_SUCCESS } else { COLOR_DANGER };
+                                    rsx! {
+                                        div { style: "padding: 8px 12px; background-color: {COLOR_PANEL}; border-radius: 4px; display: flex; gap: 12px; align-items: center; font-size: 12px;",
+                                            span { style: "color: {COLOR_TEXT_MUTED}; min-width: 130px; font-family: {FONT_MONO};", "{ts}" }
+                                            span { style: "color: {COLOR_ACCENT}; min-width: 80px;", "{e.actor}" }
+                                            span { style: "color: {COLOR_TEXT}; min-width: 120px;", "{e.action}" }
+                                            span { style: "color: {COLOR_TEXT_DIM};", "{e.target}" }
+                                            span { style: "margin-left: auto; color: {result_color};", "{e.result}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

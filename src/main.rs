@@ -423,7 +423,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::AgentTui { .. } => {
             let log_dir = volt::config::volt_home().join("logs");
             if let Err(e) = volt::telemetry::init_otel_for_tui("volt", &log_dir) {
-                eprintln!("[warn] failed to open TUI log file, falling back to stderr: {}", e);
+                eprintln!(
+                    "[warn] failed to open TUI log file, falling back to stderr: {}",
+                    e
+                );
                 volt::telemetry::init_otel("volt");
             }
         }
@@ -564,8 +567,8 @@ async fn main() -> anyhow::Result<()> {
                 } => (model.clone(), *allow, *max_iterations, *worktree),
                 _ => unreachable!("matched above"),
             };
-            let mode = std::env::var("VOLT_CONTEXT_MODE")
-                .unwrap_or_else(|_| "balanced".to_string());
+            let mode =
+                std::env::var("VOLT_CONTEXT_MODE").unwrap_or_else(|_| "balanced".to_string());
             commands::agent_tui::run(commands::agent_tui::AgentTuiOptions {
                 model: commands::agent_tui::AgentTuiOptions::model_or_default(model),
                 allow,

@@ -37,12 +37,12 @@ pub mod telemetry;
 pub mod tool_failure_tracker;
 pub mod tools;
 pub mod tui;
-#[cfg(feature = "webui")]
-pub mod webui;
 #[cfg(feature = "tools-turbovec")]
 pub mod turbovec_index;
 pub mod validation;
 pub mod vector_index;
+#[cfg(feature = "webui")]
+pub mod webui;
 pub mod worker;
 
 #[cfg(any(test, feature = "testutils"))]

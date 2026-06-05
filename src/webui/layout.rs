@@ -1,17 +1,16 @@
-use dioxus::prelude::*;
 use super::commands::UiCommand;
 use super::routes::Page;
 use super::state::{
-    Toast, ToastLevel, VoltState, COLOR_BG, COLOR_BORDER,
-    COLOR_DANGER, COLOR_INFO, COLOR_PANEL, COLOR_SUCCESS, COLOR_TEXT,
-    COLOR_TEXT_DIM, COLOR_TEXT_MUTED, COLOR_WARNING, SIDEBAR_WIDTH,
+    Toast, ToastLevel, VoltState, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO, COLOR_PANEL,
+    COLOR_SUCCESS, COLOR_TEXT, COLOR_TEXT_DIM, COLOR_TEXT_MUTED, COLOR_WARNING, SIDEBAR_WIDTH,
 };
+use dioxus::prelude::*;
 
 #[component]
 pub fn AppLayout() -> Element {
     let state: VoltState = use_context();
     let current = *state.current_page.read();
-    let collapsed = *state.sidebar_collapsed.read();
+    let _collapsed = *state.sidebar_collapsed.read();
     let show_trace = *state.show_trace_panel.read();
     let show_palette = *state.show_command_palette.read();
 
@@ -99,8 +98,16 @@ fn Sidebar() -> Element {
 fn NavItem(page: Page, label: &'static str, current: Page) -> Element {
     let mut state: VoltState = use_context();
     let is_active = current == page;
-    let bg = if is_active { "background-color: rgba(168, 85, 247, 0.15); border-left: 3px solid #a855f7;" } else { "border-left: 3px solid transparent;" };
-    let color = if is_active { COLOR_TEXT } else { COLOR_TEXT_DIM };
+    let bg = if is_active {
+        "background-color: rgba(168, 85, 247, 0.15); border-left: 3px solid #a855f7;"
+    } else {
+        "border-left: 3px solid transparent;"
+    };
+    let color = if is_active {
+        COLOR_TEXT
+    } else {
+        COLOR_TEXT_DIM
+    };
     let icon = page.icon();
     rsx! {
         div {
@@ -168,7 +175,11 @@ pub enum HeaderAction {
 #[component]
 fn HeaderButton(label: String, active: bool, action: HeaderAction) -> Element {
     let mut state: VoltState = use_context();
-    let bg = if active { "background-color: rgba(168,85,247,0.2); color: #a855f7; border-color: #a855f7;" } else { "background-color: transparent; border: 1px solid #25254a; color: #9090a8;" };
+    let bg = if active {
+        "background-color: rgba(168,85,247,0.2); color: #a855f7; border-color: #a855f7;"
+    } else {
+        "background-color: transparent; border: 1px solid #25254a; color: #9090a8;"
+    };
     rsx! {
         button {
             style: "{bg} padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;",
@@ -191,9 +202,21 @@ fn HeaderButton(label: String, active: bool, action: HeaderAction) -> Element {
 #[component]
 fn StatusBar() -> Element {
     let state: VoltState = use_context();
-    let llm_color = if *state.llm_online.read() { COLOR_SUCCESS } else { COLOR_DANGER };
-    let db_color = if *state.db_connected.read() { COLOR_SUCCESS } else { COLOR_DANGER };
-    let emb_color = if *state.embedder_loaded.read() { COLOR_SUCCESS } else { COLOR_WARNING };
+    let llm_color = if *state.llm_online.read() {
+        COLOR_SUCCESS
+    } else {
+        COLOR_DANGER
+    };
+    let db_color = if *state.db_connected.read() {
+        COLOR_SUCCESS
+    } else {
+        COLOR_DANGER
+    };
+    let emb_color = if *state.embedder_loaded.read() {
+        COLOR_SUCCESS
+    } else {
+        COLOR_WARNING
+    };
     let events = *state.total_events.read();
     let cmds = *state.total_commands.read();
     rsx! {

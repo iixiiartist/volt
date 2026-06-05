@@ -22,7 +22,10 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiCommand {
     /// Run a chat turn. If `session_id` is `None` the runtime creates a new session.
-    Chat { session_id: Option<Uuid>, input: String },
+    Chat {
+        session_id: Option<Uuid>,
+        input: String,
+    },
 
     /// Abort the in-flight chat turn, if any.
     CancelChat,
@@ -31,7 +34,10 @@ pub enum UiCommand {
     ListTools,
 
     /// Invoke a tool directly without going through the agent.
-    ExecuteTool { name: String, args: serde_json::Value },
+    ExecuteTool {
+        name: String,
+        args: serde_json::Value,
+    },
 
     /// Request the list of stored sessions.
     ListSessions,
@@ -86,8 +92,34 @@ pub enum UiCommand {
     /// List scheduled jobs.
     ListJobs,
 
+    /// Create a new job row.
+    CreateJob { description: String },
+
+    /// Mark a job in-progress.
+    StartJob { id: Uuid, worker_id: Option<String> },
+
+    /// Mark a job complete.
+    CompleteJob { id: Uuid, output: String },
+
+    /// Mark a job failed.
+    FailJob { id: Uuid, error: String },
+
     /// List routines.
     ListRoutines,
+
+    /// Toggle a routine enabled/disabled.
+    ToggleRoutine { id: Uuid, enabled: bool },
+
+    /// Create a new routine.
+    CreateRoutine {
+        name: String,
+        action_prompt: String,
+        cron: Option<String>,
+        trigger_type: Option<String>,
+    },
+
+    /// Delete a routine.
+    DeleteRoutine { id: Uuid },
 
     /// List installed skills.
     ListSkills,
@@ -101,8 +133,19 @@ pub enum UiCommand {
     /// Import a skill from a local file path.
     ImportSkill { path: String },
 
+    /// Uninstall (delete) a skill by name.
+    UninstallSkill { name: String },
+
     /// List registered MCP servers.
     ListMcpServers,
+
+    /// Register a new MCP server.
+    RegisterMcpServer {
+        name: String,
+        transport: String,
+        command: Option<String>,
+        url: Option<String>,
+    },
 
     /// Request the most recent audit-log entries.
     GetAuditLog { limit: u32 },
@@ -199,11 +242,33 @@ pub enum UiEvent {
     /// A workflow run has started.
     WorkflowStarted { pattern: String, run_id: String },
 
+    /// A workflow run completed successfully.
+    WorkflowCompleted { pattern: String, run_id: String },
+
+    /// A workflow run failed.
+    WorkflowFailed {
+        pattern: String,
+        run_id: String,
+        error: String,
+    },
+
     /// Scheduled jobs snapshot.
     JobsListed { jobs: Vec<JobInfo> },
 
+    /// A new job was created.
+    JobCreated { id: String },
+
+    /// A job state changed (e.g. InProgress -> Completed).
+    JobUpdated { id: String, state: String },
+
     /// Routines snapshot.
     RoutinesListed { routines: Vec<RoutineInfo> },
+
+    /// A routine was toggled or created.
+    RoutineUpdated { id: String, enabled: bool },
+
+    /// A routine was deleted.
+    RoutineDeleted { id: String },
 
     /// Installed skills snapshot.
     SkillsListed { skills: Vec<SkillInfo> },
@@ -217,8 +282,14 @@ pub enum UiEvent {
     /// A skill was installed.
     SkillInstalled { name: String },
 
+    /// A skill was uninstalled.
+    SkillUninstalled { name: String },
+
     /// MCP servers snapshot.
     McpServersListed { servers: Vec<McpServerInfo> },
+
+    /// An MCP server was registered.
+    McpServerRegistered { name: String },
 
     /// Audit-log entries (most recent first).
     AuditLog { entries: Vec<AuditEntry> },
@@ -360,6 +431,11 @@ pub struct JobInfo {
     pub last_run: Option<DateTime<Utc>>,
     pub last_status: String,
     pub next_run: Option<DateTime<Utc>>,
+    pub attempt_count: i32,
+    pub worker_id: Option<String>,
+    pub output: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// A routine (event-triggered automation).
@@ -370,6 +446,8 @@ pub struct RoutineInfo {
     pub trigger: String,
     pub last_run: Option<DateTime<Utc>>,
     pub enabled: bool,
+    pub next_run: Option<DateTime<Utc>>,
+    pub action_prompt: String,
 }
 
 /// An installed skill.
@@ -419,4 +497,161 @@ pub struct AuditEntry {
     pub result: String,
     pub detail: serde_json::Value,
     pub session_id: Option<Uuid>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn round_trip_chat_chunk() {
+        let e = UiEvent::ChatChunk {
+            content: "hi".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        let v: UiEvent = serde_json::from_str(&s).unwrap();
+        match v {
+            UiEvent::ChatChunk { content } => assert_eq!(content, "hi"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_install_skill() {
+        let c = UiCommand::InstallSkill { name: "weather".into() };
+        let s = serde_json::to_string(&c).unwrap();
+        let v: UiCommand = serde_json::from_str(&s).unwrap();
+        match v {
+            UiCommand::InstallSkill { name } => assert_eq!(name, "weather"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_create_job() {
+        let c = UiCommand::CreateJob { description: "build the thing".into() };
+        let s = serde_json::to_string(&c).unwrap();
+        let v: UiCommand = serde_json::from_str(&s).unwrap();
+        match v {
+            UiCommand::CreateJob { description } => {
+                assert_eq!(description, "build the thing")
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_toggle_routine() {
+        let id = Uuid::new_v4();
+        let c = UiCommand::ToggleRoutine { id, enabled: false };
+        let s = serde_json::to_string(&c).unwrap();
+        let v: UiCommand = serde_json::from_str(&s).unwrap();
+        match v {
+            UiCommand::ToggleRoutine { id: i, enabled } => {
+                assert_eq!(i, id);
+                assert!(!enabled);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_register_mcp_server() {
+        let c = UiCommand::RegisterMcpServer {
+            name: "himalaya".into(),
+            transport: "stdio".into(),
+            command: Some("himalaya-mcp --stdio".into()),
+            url: None,
+        };
+        let s = serde_json::to_string(&c).unwrap();
+        let v: UiCommand = serde_json::from_str(&s).unwrap();
+        match v {
+            UiCommand::RegisterMcpServer { name, transport, command, url } => {
+                assert_eq!(name, "himalaya");
+                assert_eq!(transport, "stdio");
+                assert_eq!(command.as_deref(), Some("himalaya-mcp --stdio"));
+                assert!(url.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn round_trip_chat_complete_final_renamed() {
+        let e = UiEvent::ChatComplete {
+            final_text: "done".into(),
+            tokens_used: 42,
+            duration_ms: 123,
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        // Must serialize as "final", not "final_text"
+        assert!(s.contains("\"final\":\"done\""), "got {}", s);
+        let v: UiEvent = serde_json::from_str(&s).unwrap();
+        match v {
+            UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
+                assert_eq!(final_text, "done");
+                assert_eq!(tokens_used, 42);
+                assert_eq!(duration_ms, 123);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn job_info_serializes_with_all_fields() {
+        let j = JobInfo {
+            id: "abc-123".into(),
+            name: "build".into(),
+            schedule: String::new(),
+            last_run: None,
+            last_status: "Pending".into(),
+            next_run: None,
+            attempt_count: 0,
+            worker_id: None,
+            output: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let s = serde_json::to_string(&j).unwrap();
+        let v: JobInfo = serde_json::from_str(&s).unwrap();
+        assert_eq!(v.id, "abc-123");
+        assert_eq!(v.attempt_count, 0);
+    }
+
+    #[test]
+    fn workflow_completed_round_trip() {
+        let e = UiEvent::WorkflowCompleted {
+            pattern: "dag".into(),
+            run_id: "run-1".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        let v: UiEvent = serde_json::from_str(&s).unwrap();
+        match v {
+            UiEvent::WorkflowCompleted { pattern, run_id } => {
+                assert_eq!(pattern, "dag");
+                assert_eq!(run_id, "run-1");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn audit_entry_round_trip() {
+        let a = AuditEntry {
+            id: Uuid::new_v4(),
+            timestamp: Utc::now(),
+            actor: "user".into(),
+            action: "tool_call".into(),
+            target: "bash".into(),
+            result: "ok".into(),
+            detail: json!({"exit_code": 0}),
+            session_id: Some(Uuid::new_v4()),
+        };
+        let s = serde_json::to_string(&a).unwrap();
+        let v: AuditEntry = serde_json::from_str(&s).unwrap();
+        assert_eq!(v.actor, "user");
+        assert_eq!(v.action, "tool_call");
+        assert_eq!(v.result, "ok");
+    }
 }

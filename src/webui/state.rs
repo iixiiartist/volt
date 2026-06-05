@@ -1,7 +1,7 @@
-use dioxus::prelude::*;
 use super::commands::UiCommand;
 use super::routes::Page;
 use super::runtime::RuntimeHandle;
+use dioxus::prelude::*;
 
 pub const SIDEBAR_WIDTH: u32 = 240;
 pub const HEADER_HEIGHT: u32 = 56;
@@ -19,8 +19,10 @@ pub const COLOR_WARNING: &str = "#f59e0b";
 pub const COLOR_DANGER: &str = "#ef4444";
 pub const COLOR_INFO: &str = "#3b82f6";
 
-pub const FONT_FAMILY: &str = "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", sans-serif";
-pub const FONT_MONO: &str = "\"JetBrains Mono\", \"Fira Code\", Consolas, \"Courier New\", monospace";
+pub const FONT_FAMILY: &str =
+    "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", sans-serif";
+pub const FONT_MONO: &str =
+    "\"JetBrains Mono\", \"Fira Code\", Consolas, \"Courier New\", monospace";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastLevel {
@@ -92,18 +94,44 @@ pub struct VoltState {
     pub last_event_at: Signal<i64>,
     pub total_events: Signal<u64>,
     pub total_commands: Signal<u64>,
+
+    // Live data populated by events. Pages read these instead of
+    // their own use_signal to stay in sync with the runtime.
+    pub jobs: Signal<Vec<super::commands::JobInfo>>,
+    pub routines: Signal<Vec<super::commands::RoutineInfo>>,
+    pub skills: Signal<Vec<super::commands::SkillInfo>>,
+    pub catalog_results: Signal<Vec<super::commands::CatalogSkillInfo>>,
+    pub catalog_query: Signal<String>,
+    pub mcp_servers: Signal<Vec<super::commands::McpServerInfo>>,
+    pub audit_entries: Signal<Vec<super::commands::AuditEntry>>,
 }
 
 #[derive(Clone, Debug)]
 pub enum Modal {
-    NewSession { name: String },
+    NewSession {
+        name: String,
+    },
     ImportSkill,
-    InstallSkill { query: String },
-    RunWorkflow { pattern: String, agents: String, tasks: String },
-    ToolExecute { name: String, schema: serde_json::Value, args: String },
+    InstallSkill {
+        query: String,
+    },
+    RunWorkflow {
+        pattern: String,
+        agents: String,
+        tasks: String,
+    },
+    ToolExecute {
+        name: String,
+        schema: serde_json::Value,
+        args: String,
+    },
     About,
     Settings,
-    Confirm { title: String, message: String, action: String },
+    Confirm {
+        title: String,
+        message: String,
+        action: String,
+    },
 }
 
 impl Default for VoltState {
@@ -128,6 +156,13 @@ impl Default for VoltState {
             last_event_at: Signal::new(0),
             total_events: Signal::new(0),
             total_commands: Signal::new(0),
+            jobs: Signal::new(Vec::new()),
+            routines: Signal::new(Vec::new()),
+            skills: Signal::new(Vec::new()),
+            catalog_results: Signal::new(Vec::new()),
+            catalog_query: Signal::new(String::new()),
+            mcp_servers: Signal::new(Vec::new()),
+            audit_entries: Signal::new(Vec::new()),
         }
     }
 }
@@ -137,7 +172,11 @@ impl VoltState {
         let id = *self.toast_counter.read() + 1;
         self.toast_counter.set(id);
         let mut toasts = self.toasts.write();
-        toasts.push(Toast { id, level, message: message.into() });
+        toasts.push(Toast {
+            id,
+            level,
+            message: message.into(),
+        });
         if toasts.len() > 5 {
             toasts.remove(0);
         }

@@ -26,7 +26,7 @@ use crate::webui::commands::*;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
+use sqlx::{PgPool, SqlitePool};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,10 +87,13 @@ impl WebuiConfig {
     /// Build a config from the process environment with sensible fallbacks.
     pub fn load() -> Self {
         Self {
-            default_model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into()),
-            default_provider: std::env::var("LLM_DEFAULT_PROVIDER").unwrap_or_else(|_| "groq".into()),
+            default_model: std::env::var("LLM_MODEL")
+                .unwrap_or_else(|_| "llama-3.1-8b-instant".into()),
+            default_provider: std::env::var("LLM_DEFAULT_PROVIDER")
+                .unwrap_or_else(|_| "groq".into()),
             database_url: std::env::var("DATABASE_URL").ok(),
-            embedding_provider: std::env::var("EMBEDDING_PROVIDER").unwrap_or_else(|_| "nvidia".into()),
+            embedding_provider: std::env::var("EMBEDDING_PROVIDER")
+                .unwrap_or_else(|_| "nvidia".into()),
             embedding_model: std::env::var("EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "nvidia/llama-nemotron-embed-1b-v2".into()),
             max_iterations: parse_env_u32("VOLT_MAX_ITERATIONS", 8),
@@ -130,13 +133,22 @@ impl WebuiConfig {
 }
 
 fn parse_env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 fn parse_env_f32(key: &str, default: f32) -> f32 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 fn parse_env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 // =============================================================================
@@ -151,6 +163,12 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 pub struct Runtime {
     agent: Arc<Agent>,
     sqlite_pool: Option<SqlitePool>,
+    /// PostgreSQL connection pool. Populated from `DATABASE_URL` (or the
+    /// `database_url` config field) at startup. Used for jobs, routines,
+    /// skills (with embeddings), and doctor checks. Failure to connect is
+    /// non-fatal — Postgres-backed features surface an error on demand
+    /// and the UI still runs SQLite-only.
+    pg_pool: Option<Arc<PgPool>>,
     config: Arc<RwLock<WebuiConfig>>,
     /// Command receiver. Taken once at startup and moved into the
     /// command-processing task; left as `None` thereafter.
@@ -195,17 +213,11 @@ impl Runtime {
     /// command-processing task. Returns a clonable handle for the UI.
     pub async fn start() -> anyhow::Result<RuntimeHandle> {
         // 1) Tracing  ~/.volt/logs/webui.log
-        // Try to init; if a global subscriber is already set, that's fine.
+        // `init_otel_for_tui` uses `try_init` under the hood and is
+        // safe to call repeatedly; we still log file IO errors.
         let log_dir = crate::config::volt_home().join("logs");
-        match crate::telemetry::init_otel_for_tui("webui", &log_dir) {
-            Ok(_) => {}
-            Err(e) => {
-                // Already-initialized is not fatal; only log other errors.
-                let msg = e.to_string();
-                if !msg.contains("already been set") {
-                    eprintln!("[webui] failed to init tracing: {}", e);
-                }
-            }
+        if let Err(e) = crate::telemetry::init_otel_for_tui("webui", &log_dir) {
+            eprintln!("[webui] tracing init warning: {}", e);
         }
 
         // 2) Pick up .env so DATABASE_URL / GROQ_API_KEY etc. are visible.
@@ -231,20 +243,36 @@ impl Runtime {
             }
         };
 
+        // 4b) Connect to PostgreSQL. Used for jobs, routines, skills, and
+        //     the doctor check. Failure is non-fatal — features that
+        //     require it surface a clear error on demand.
+        let pg_pool = match config.database_url.as_deref() {
+            Some(url) => match crate::db::build_shared_pg_pool(url).await {
+                Ok(p) => {
+                    tracing::info!("[webui] postgres pool ready");
+                    Some(p)
+                }
+                Err(e) => {
+                    tracing::warn!("[webui] postgres unavailable: {}", e);
+                    None
+                }
+            },
+            None => {
+                tracing::info!("[webui] DATABASE_URL not set — postgres-backed features disabled");
+                None
+            }
+        };
+
         // 5) Build the tool registry + embedder.
         let embedder = crate::embedding::EmbeddingClient::new_smart().await;
-        let tools = crate::tools::setup_tools(
-            Some(&embedder),
-            config.database_url.as_deref(),
-        )
-        .await;
+        let tools =
+            crate::tools::setup_tools(Some(&embedder), config.database_url.as_deref()).await;
 
         // 6) Resolve an LLM provider. `build_provider` falls back to a
         //    generic LLM_API_KEY if the model is unknown, so this is
         //    safe even with no env vars.
         let model = config.default_model.clone();
-        let (provider, _provider_kind) =
-            crate::orchestrator::build_provider(&model, "volt-webui");
+        let (provider, _provider_kind) = crate::orchestrator::build_provider(&model, "volt-webui");
 
         // 7) Channels
         let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(CMD_CHANNEL_CAPACITY);
@@ -358,6 +386,7 @@ impl Runtime {
         let runtime = Runtime {
             agent: Arc::new(agent),
             sqlite_pool,
+            pg_pool,
             config: Arc::new(RwLock::new(config)),
             cmd_rx: Mutex::new(Some(cmd_rx)),
             internal_event_tx,
@@ -407,10 +436,7 @@ impl Runtime {
     // Command loop
     // -------------------------------------------------------------------------
 
-    async fn command_loop(
-        runtime: Arc<Runtime>,
-        mut cmd_rx: mpsc::Receiver<UiCommand>,
-    ) {
+    async fn command_loop(runtime: Arc<Runtime>, mut cmd_rx: mpsc::Receiver<UiCommand>) {
         while let Some(cmd) = cmd_rx.recv().await {
             tracing::info!(
                 target: "webui.cmd",
@@ -421,12 +447,11 @@ impl Runtime {
             // handler doesn't kill the loop. Most handlers return
             // `Result`-shaped errors via `UiEvent::Error`.
             let rt = runtime.clone();
-            let outcome = futures::FutureExt::catch_unwind(
-                std::panic::AssertUnwindSafe(async move {
+            let outcome =
+                futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(async move {
                     rt.process_command(cmd).await
-                }),
-            )
-            .await;
+                }))
+                .await;
             if let Err(e) = outcome {
                 tracing::error!("[webui] command handler panicked: {:?}", e);
                 let entry = AuditEntry {
@@ -439,7 +464,9 @@ impl Runtime {
                     detail: json!({ "panic": format!("{:?}", e) }),
                     session_id: None,
                 };
-                runtime.audit_log.lock().ok().map(|mut g| g.push(entry));
+                if let Ok(mut g) = runtime.audit_log.lock() {
+                    g.push(entry);
+                }
             }
         }
         tracing::info!("[webui] command loop exited");
@@ -452,37 +479,23 @@ impl Runtime {
     async fn process_command(&self, cmd: UiCommand) {
         match cmd {
             UiCommand::Ping => self.handle_ping().await,
-            UiCommand::Chat { session_id, input } => {
-                self.handle_chat(session_id, input).await
-            }
+            UiCommand::Chat { session_id, input } => self.handle_chat(session_id, input).await,
             UiCommand::CancelChat => self.handle_cancel_chat().await,
             UiCommand::ListTools => self.handle_list_tools().await,
-            UiCommand::ExecuteTool { name, args } => {
-                self.handle_execute_tool(name, args).await
-            }
+            UiCommand::ExecuteTool { name, args } => self.handle_execute_tool(name, args).await,
             UiCommand::ListSessions => self.handle_list_sessions().await,
             UiCommand::LoadSession { id } => self.handle_load_session(id).await,
-            UiCommand::CreateSession { name } => {
-                self.handle_create_session(name).await
-            }
+            UiCommand::CreateSession { name } => self.handle_create_session(name).await,
             UiCommand::ForkSession { id } => self.handle_fork_session(id).await,
             UiCommand::DeleteSession { id } => self.handle_delete_session(id).await,
             UiCommand::ListModels => self.handle_list_models().await,
             UiCommand::GetConfig => self.handle_get_config().await,
-            UiCommand::UpdateConfig { patch } => {
-                self.handle_update_config(patch).await
-            }
+            UiCommand::UpdateConfig { patch } => self.handle_update_config(patch).await,
             UiCommand::RunDoctor => self.handle_run_doctor().await,
             UiCommand::ListWorktrees => self.handle_list_worktrees().await,
-            UiCommand::WorktreeStatus { branch } => {
-                self.handle_worktree_status(branch).await
-            }
-            UiCommand::WorktreeMerge { branch } => {
-                self.handle_worktree_merge(branch).await
-            }
-            UiCommand::WorktreeClean { branch } => {
-                self.handle_worktree_clean(branch).await
-            }
+            UiCommand::WorktreeStatus { branch } => self.handle_worktree_status(branch).await,
+            UiCommand::WorktreeMerge { branch } => self.handle_worktree_merge(branch).await,
+            UiCommand::WorktreeClean { branch } => self.handle_worktree_clean(branch).await,
             UiCommand::ListWorkflows => self.handle_list_workflows().await,
             UiCommand::RunWorkflow {
                 pattern,
@@ -490,20 +503,46 @@ impl Runtime {
                 tasks,
                 allow,
             } => {
-                self.handle_run_workflow(pattern, agents, tasks, allow).await
+                self.handle_run_workflow(pattern, agents, tasks, allow)
+                    .await
             }
             UiCommand::ListJobs => self.handle_list_jobs().await,
+            UiCommand::CreateJob { description } => self.handle_create_job(description).await,
+            UiCommand::StartJob { id, worker_id } => self.handle_start_job(id, worker_id).await,
+            UiCommand::CompleteJob { id, output } => self.handle_complete_job(id, output).await,
+            UiCommand::FailJob { id, error } => self.handle_fail_job(id, error).await,
             UiCommand::ListRoutines => self.handle_list_routines().await,
+            UiCommand::ToggleRoutine { id, enabled } => {
+                self.handle_toggle_routine(id, enabled).await
+            }
+            UiCommand::CreateRoutine {
+                name,
+                action_prompt,
+                cron,
+                trigger_type,
+            } => {
+                self.handle_create_routine(name, action_prompt, cron, trigger_type)
+                    .await
+            }
+            UiCommand::DeleteRoutine { id } => self.handle_delete_routine(id).await,
             UiCommand::ListSkills => self.handle_list_skills().await,
             UiCommand::SearchCatalogSkills { query } => {
                 self.handle_search_catalog_skills(query).await
             }
             UiCommand::InstallSkill { name } => self.handle_install_skill(name).await,
             UiCommand::ImportSkill { path } => self.handle_import_skill(path).await,
+            UiCommand::UninstallSkill { name } => self.handle_uninstall_skill(name).await,
             UiCommand::ListMcpServers => self.handle_list_mcp_servers().await,
-            UiCommand::GetAuditLog { limit } => {
-                self.handle_get_audit_log(limit).await
+            UiCommand::RegisterMcpServer {
+                name,
+                transport,
+                command,
+                url,
+            } => {
+                self.handle_register_mcp_server(name, transport, command, url)
+                    .await
             }
+            UiCommand::GetAuditLog { limit } => self.handle_get_audit_log(limit).await,
             UiCommand::ApprovalResponse {
                 request_id,
                 allow,
@@ -563,8 +602,7 @@ impl Runtime {
                 for m in msgs {
                     let already = state.messages.iter().any(|existing| {
                         existing.id == m.id
-                            || (existing.role == m.role
-                                && existing.content == m.content)
+                            || (existing.role == m.role && existing.content == m.content)
                     });
                     if !already {
                         state.messages.push(m);
@@ -622,8 +660,8 @@ impl Runtime {
 
         let duration_ms = started.elapsed().as_millis() as u64;
         let state_snapshot = self.agent.state().lock().await.clone();
-        let tokens_used = (state_snapshot.total_prompt_tokens
-            + state_snapshot.total_completion_tokens) as u32;
+        let tokens_used =
+            (state_snapshot.total_prompt_tokens + state_snapshot.total_completion_tokens) as u32;
 
         match result {
             Ok(final_text) => {
@@ -651,7 +689,9 @@ impl Runtime {
                 if msg.contains("cancelled") {
                     self.emit(UiEvent::ChatCancelled);
                 } else {
-                    self.emit(UiEvent::ChatError { message: msg.clone() });
+                    self.emit(UiEvent::ChatError {
+                        message: msg.clone(),
+                    });
                 }
                 self.log_audit(AuditEntry {
                     id: Uuid::new_v4(),
@@ -749,7 +789,10 @@ impl Runtime {
 
     async fn handle_load_session(&self, id: Uuid) {
         let Some(pool) = self.sqlite_pool.clone() else {
-            self.emit(UiEvent::SessionLoaded { id, messages: vec![] });
+            self.emit(UiEvent::SessionLoaded {
+                id,
+                messages: vec![],
+            });
             return;
         };
         match session::load_messages(&pool, id).await {
@@ -779,7 +822,10 @@ impl Runtime {
                         timestamp: m.created_at,
                     })
                     .collect();
-                self.emit(UiEvent::SessionLoaded { id, messages: ui_msgs });
+                self.emit(UiEvent::SessionLoaded {
+                    id,
+                    messages: ui_msgs,
+                });
             }
             Err(e) => self.emit_error("load_session", e),
         }
@@ -849,8 +895,7 @@ impl Runtime {
                 "openai" => std::env::var("OPENAI_API_KEY").is_ok(),
                 "anthropic" => std::env::var("ANTHROPIC_API_KEY").is_ok(),
                 "ollama" => {
-                    std::env::var("OLLAMA_HOST").is_ok()
-                        || std::env::var("OLLAMA_API_KEY").is_ok()
+                    std::env::var("OLLAMA_HOST").is_ok() || std::env::var("OLLAMA_API_KEY").is_ok()
                 }
                 _ => true,
             };
@@ -906,7 +951,30 @@ impl Runtime {
     }
 
     async fn handle_run_doctor(&self) {
-        let report = build_doctor_report();
+        let mut report = build_doctor_report();
+        // Live-probe Postgres with a 2-second timeout so the doctor
+        // report reflects whether the pool is actually responsive,
+        // not just whether DATABASE_URL is set.
+        match &self.pg_pool {
+            Some(pool) => {
+                let probe = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    sqlx::query("SELECT 1").fetch_one(&**pool),
+                )
+                .await;
+                report.database = match probe {
+                    Ok(Ok(_)) => "ok".into(),
+                    Ok(Err(e)) => format!("unreachable: {}", e),
+                    Err(_) => "unreachable: timeout".into(),
+                };
+            }
+            None => {
+                report.database = match std::env::var("DATABASE_URL").is_ok() {
+                    true => "unreachable: failed to connect at startup".into(),
+                    false => "not configured".into(),
+                };
+            }
+        }
         self.emit(UiEvent::DoctorCompleted { report });
     }
 
@@ -1000,37 +1068,265 @@ impl Runtime {
         tasks: Option<String>,
         allow: bool,
     ) {
-        if let Err(e) = crate::commands::workflow::run(
-            pattern.clone(),
-            agents,
-            tasks,
-            None,
-            None,
-            allow,
-        )
-        .await
-        {
-            self.emit_error("run_workflow", e);
-            return;
-        }
+        let run_id = Uuid::new_v4().to_string();
         self.emit(UiEvent::WorkflowStarted {
-            pattern,
-            run_id: Uuid::new_v4().to_string(),
+            pattern: pattern.clone(),
+            run_id: run_id.clone(),
         });
+        match crate::commands::workflow::run(pattern.clone(), agents, tasks, None, None, allow)
+            .await
+        {
+            Ok(()) => self.emit(UiEvent::WorkflowCompleted { pattern, run_id }),
+            Err(e) => {
+                self.emit(UiEvent::WorkflowFailed {
+                    pattern,
+                    run_id,
+                    error: e.to_string(),
+                });
+                self.emit_error("run_workflow", e);
+            }
+        }
     }
 
     async fn handle_list_jobs(&self) {
-        // Jobs live in Postgres; the webui is sqlite-only.
-        self.emit(UiEvent::JobsListed { jobs: vec![] });
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit(UiEvent::JobsListed { jobs: vec![] });
+            return;
+        };
+        let mgr = crate::jobs::JobManager::new(Some((*pool).clone()));
+        match mgr.list_jobs(None).await {
+            Ok(rows) => {
+                let jobs: Vec<JobInfo> = rows
+                    .into_iter()
+                    .map(|j| JobInfo {
+                        id: j.id.to_string(),
+                        name: j.description.clone(),
+                        schedule: String::new(),
+                        last_run: j.completed_at,
+                        last_status: j.state.to_string(),
+                        next_run: None,
+                        attempt_count: j.attempt_count,
+                        worker_id: j.worker_id,
+                        output: j.output,
+                        created_at: j.created_at,
+                        updated_at: j.updated_at,
+                    })
+                    .collect();
+                self.emit(UiEvent::JobsListed { jobs });
+            }
+            Err(e) => self.emit_error("list_jobs", e),
+        }
+    }
+
+    async fn handle_create_job(&self, description: String) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit(UiEvent::Error {
+                source: "create_job".into(),
+                message: "PostgreSQL not available — set DATABASE_URL".into(),
+            });
+            return;
+        };
+        let mgr = crate::jobs::JobManager::new(Some((*pool).clone()));
+        match mgr
+            .create_job(&description, serde_json::json!({ "source": "webui" }))
+            .await
+        {
+            Ok(id) => self.emit(UiEvent::JobCreated { id: id.to_string() }),
+            Err(e) => self.emit_error("create_job", e),
+        }
+    }
+
+    async fn handle_start_job(&self, id: Uuid, worker_id: Option<String>) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error("start_job", anyhow::anyhow!("PostgreSQL not available"));
+            return;
+        };
+        let mgr = crate::jobs::JobManager::new(Some((*pool).clone()));
+        match mgr.start_job(id, worker_id.as_deref()).await {
+            Ok(()) => self.emit(UiEvent::JobUpdated {
+                id: id.to_string(),
+                state: "InProgress".into(),
+            }),
+            Err(e) => self.emit_error("start_job", e),
+        }
+    }
+
+    async fn handle_complete_job(&self, id: Uuid, output: String) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error("complete_job", anyhow::anyhow!("PostgreSQL not available"));
+            return;
+        };
+        let mgr = crate::jobs::JobManager::new(Some((*pool).clone()));
+        match mgr.complete_job(id, &output).await {
+            Ok(()) => self.emit(UiEvent::JobUpdated {
+                id: id.to_string(),
+                state: "Completed".into(),
+            }),
+            Err(e) => self.emit_error("complete_job", e),
+        }
+    }
+
+    async fn handle_fail_job(&self, id: Uuid, error: String) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error("fail_job", anyhow::anyhow!("PostgreSQL not available"));
+            return;
+        };
+        let mgr = crate::jobs::JobManager::new(Some((*pool).clone()));
+        match mgr.fail_job(id, &error).await {
+            Ok(()) => self.emit(UiEvent::JobUpdated {
+                id: id.to_string(),
+                state: "Failed".into(),
+            }),
+            Err(e) => self.emit_error("fail_job", e),
+        }
     }
 
     async fn handle_list_routines(&self) {
-        // Routines live in Postgres; the webui is sqlite-only.
-        self.emit(UiEvent::RoutinesListed { routines: vec![] });
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit(UiEvent::RoutinesListed { routines: vec![] });
+            return;
+        };
+        match crate::db::list_routines(&pool).await {
+            Ok(rows) => {
+                let routines: Vec<RoutineInfo> = rows
+                    .into_iter()
+                    .map(|r| {
+                        let id = r
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let name = r
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let cron = r
+                            .get("cron")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let trigger_type = r
+                            .get("trigger_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let trigger = if cron.is_empty() {
+                            trigger_type.clone()
+                        } else {
+                            format!("{} ({})", trigger_type, cron)
+                        };
+                        let enabled = r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let last_run = r
+                            .get("last_run")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|d| d.with_timezone(&chrono::Utc));
+                        let next_run = r
+                            .get("next_run")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|d| d.with_timezone(&chrono::Utc));
+                        let action_prompt = r
+                            .get("action_prompt")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        RoutineInfo {
+                            id,
+                            name,
+                            trigger,
+                            last_run,
+                            enabled,
+                            next_run,
+                            action_prompt,
+                        }
+                    })
+                    .collect();
+                self.emit(UiEvent::RoutinesListed { routines });
+            }
+            Err(e) => self.emit_error("list_routines", e),
+        }
+    }
+
+    async fn handle_toggle_routine(&self, id: Uuid, enabled: bool) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error(
+                "toggle_routine",
+                anyhow::anyhow!("PostgreSQL not available"),
+            );
+            return;
+        };
+        let res = sqlx::query("UPDATE routines SET enabled = $2 WHERE id = $1")
+            .bind(id)
+            .bind(enabled)
+            .execute(&*pool)
+            .await;
+        match res {
+            Ok(_) => self.emit(UiEvent::RoutineUpdated {
+                id: id.to_string(),
+                enabled,
+            }),
+            Err(e) => self.emit_error("toggle_routine", e),
+        }
+    }
+
+    async fn handle_create_routine(
+        &self,
+        name: String,
+        action_prompt: String,
+        cron: Option<String>,
+        trigger_type: Option<String>,
+    ) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error(
+                "create_routine",
+                anyhow::anyhow!("PostgreSQL not available"),
+            );
+            return;
+        };
+        let new_id = Uuid::new_v4();
+        let trigger = trigger_type.unwrap_or_else(|| "cron".to_string());
+        let res = sqlx::query(
+            "INSERT INTO routines (id, name, action_prompt, enabled, trigger_type, cron) VALUES ($1, $2, $3, true, $4, $5)",
+        )
+        .bind(new_id)
+        .bind(&name)
+        .bind(&action_prompt)
+        .bind(&trigger)
+        .bind(cron.as_deref())
+        .execute(&*pool)
+        .await;
+        match res {
+            Ok(_) => self.emit(UiEvent::RoutineUpdated {
+                id: new_id.to_string(),
+                enabled: true,
+            }),
+            Err(e) => self.emit_error("create_routine", e),
+        }
+    }
+
+    async fn handle_delete_routine(&self, id: Uuid) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error(
+                "delete_routine",
+                anyhow::anyhow!("PostgreSQL not available"),
+            );
+            return;
+        };
+        let res = sqlx::query("DELETE FROM routines WHERE id = $1")
+            .bind(id)
+            .execute(&*pool)
+            .await;
+        match res {
+            Ok(_) => self.emit(UiEvent::RoutineDeleted { id: id.to_string() }),
+            Err(e) => self.emit_error("delete_routine", e),
+        }
     }
 
     async fn handle_list_skills(&self) {
         let mut skills: Vec<SkillInfo> = Vec::new();
+        // 1) Local files in ~/.volt/skills/*.md
         if let Some(home) = dirs_home() {
             let skills_dir = home.join("skills");
             if let Ok(read) = std::fs::read_dir(&skills_dir) {
@@ -1048,6 +1344,29 @@ impl Runtime {
                             source: "local".into(),
                         });
                     }
+                }
+            }
+        }
+        // 2) Database skills (with embeddings, search-indexed)
+        if let Some(pool) = self.pg_pool.clone() {
+            match crate::db::list_skills(&pool).await {
+                Ok(rows) => {
+                    for s in rows {
+                        skills.push(SkillInfo {
+                            name: s.name.clone(),
+                            description: s.description.clone(),
+                            version: s.version.clone(),
+                            installed_at: s.created_at,
+                            source: if s.source_path.is_some() {
+                                "imported".into()
+                            } else {
+                                "catalog".into()
+                            },
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[webui] list_skills db: {}", e);
                 }
             }
         }
@@ -1077,14 +1396,78 @@ impl Runtime {
     }
 
     async fn handle_install_skill(&self, name: String) {
-        // Without a pg pool we cannot compile a skill into the
-        // database. Emit a hint error so the UI can surface it.
-        tracing::info!("[webui] install_skill({}) — pg pool required", name);
-        self.emit(UiEvent::Error {
-            source: "install_skill".into(),
-            message: "skill installation requires a Postgres connection; the webui is sqlite-only"
-                .into(),
-        });
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit(UiEvent::Error {
+                source: "install_skill".into(),
+                message: "skill installation requires a Postgres connection (set DATABASE_URL)"
+                    .into(),
+            });
+            return;
+        };
+        // 1) Fetch the catalog entry
+        let catalog = match crate::skills::catalog::fetch_catalog(None).await {
+            Ok(c) => c,
+            Err(e) => {
+                self.emit_error("install_skill", e);
+                return;
+            }
+        };
+        let entry = match catalog.skills.iter().find(|e| e.name == name).cloned() {
+            Some(e) => e,
+            None => {
+                self.emit(UiEvent::Error {
+                    source: "install_skill".into(),
+                    message: format!("skill '{}' not found in catalog", name),
+                });
+                return;
+            }
+        };
+        // 2) Embed the description so search_skills works
+        let embedder = crate::embedding::EmbeddingClient::new_smart().await;
+        let embedding = match embedder.embed_description(&entry.description).await {
+            Ok(v) => v,
+            Err(e) => {
+                self.emit_error("install_skill", e);
+                return;
+            }
+        };
+        // 3) Upsert into Postgres
+        let id = Uuid::new_v4();
+        let mcp_servers: Vec<String> = vec![];
+        let res = crate::db::upsert_skill(
+            &pool,
+            id,
+            &entry.name,
+            &entry.description,
+            "1.0.0",
+            &entry.description,
+            &embedding,
+            &mcp_servers,
+            Some("catalog"),
+        )
+        .await;
+        match res {
+            Ok(()) => self.emit(UiEvent::SkillInstalled { name }),
+            Err(e) => self.emit_error("install_skill", e),
+        }
+    }
+
+    async fn handle_uninstall_skill(&self, name: String) {
+        let Some(pool) = self.pg_pool.clone() else {
+            self.emit_error(
+                "uninstall_skill",
+                anyhow::anyhow!("PostgreSQL not available"),
+            );
+            return;
+        };
+        let res = sqlx::query("DELETE FROM skills WHERE name = $1")
+            .bind(&name)
+            .execute(&*pool)
+            .await;
+        match res {
+            Ok(_) => self.emit(UiEvent::SkillUninstalled { name }),
+            Err(e) => self.emit_error("uninstall_skill", e),
+        }
     }
 
     async fn handle_import_skill(&self, path: String) {
@@ -1097,8 +1480,7 @@ impl Runtime {
             }
         };
         let fmt = crate::skills::importer::detect_format(&p, &content);
-        let converted =
-            crate::skills::importer::convert_to_volt_skill(&p, &content, &fmt, None);
+        let converted = crate::skills::importer::convert_to_volt_skill(&p, &content, &fmt, None);
         let Some(home) = dirs_home() else { return };
         let skills_dir = home.join("skills");
         if let Err(e) = std::fs::create_dir_all(&skills_dir) {
@@ -1119,9 +1501,81 @@ impl Runtime {
     }
 
     async fn handle_list_mcp_servers(&self) {
-        // The webui has no MCP server registry of its own; the agent's
-        // tools may have been populated by an MCP client at startup.
-        self.emit(UiEvent::McpServersListed { servers: vec![] });
+        let path = mcp_servers_path();
+        let servers = match std::fs::read_to_string(&path) {
+            Ok(s) => serde_json::from_str::<Vec<serde_json::Value>>(&s)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|v| {
+                    let command = v
+                        .get("command")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string);
+                    let url = v.get("url").and_then(|x| x.as_str()).map(str::to_string);
+                    let endpoint = command.clone().or_else(|| url.clone()).unwrap_or_default();
+                    McpServerInfo {
+                        name: v
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("?")
+                            .to_string(),
+                        transport: v
+                            .get("transport")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("stdio")
+                            .to_string(),
+                        status: "registered".into(),
+                        tools_count: 0,
+                        endpoint,
+                    }
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        self.emit(UiEvent::McpServersListed { servers });
+    }
+
+    async fn handle_register_mcp_server(
+        &self,
+        name: String,
+        transport: String,
+        command: Option<String>,
+        url: Option<String>,
+    ) {
+        let path = mcp_servers_path();
+        let mut servers: Vec<serde_json::Value> = match std::fs::read_to_string(&path) {
+            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        // Replace if same name exists, else append.
+        if let Some(idx) = servers
+            .iter()
+            .position(|v| v.get("name").and_then(|x| x.as_str()) == Some(&name))
+        {
+            servers[idx] = json!({
+                "name": name,
+                "transport": transport,
+                "command": command,
+                "url": url,
+            });
+        } else {
+            servers.push(json!({
+                "name": name,
+                "transport": transport,
+                "command": command,
+                "url": url,
+            }));
+        }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(&servers)
+            .map_err(|e| anyhow::anyhow!(e))
+            .and_then(|s| std::fs::write(&path, s).map_err(|e| anyhow::anyhow!(e)))
+        {
+            Ok(()) => self.emit(UiEvent::McpServerRegistered { name }),
+            Err(e) => self.emit_error("register_mcp_server", e),
+        }
     }
 
     async fn handle_get_audit_log(&self, limit: u32) {
@@ -1135,12 +1589,7 @@ impl Runtime {
         self.emit(UiEvent::AuditLog { entries });
     }
 
-    async fn handle_approval_response(
-        &self,
-        request_id: Uuid,
-        allow: bool,
-        allow_session: bool,
-    ) {
+    async fn handle_approval_response(&self, request_id: Uuid, allow: bool, allow_session: bool) {
         let decision = if !allow {
             ApprovalDecision::Deny
         } else if allow_session {
@@ -1275,10 +1724,7 @@ impl RuntimeHandle {
     /// if no event is available.
     pub fn try_recv(&self) -> Option<UiEvent> {
         let mut guard = self.event_rx.lock().ok()?;
-        match guard.try_recv() {
-            Ok(ev) => Some(ev),
-            Err(_) => None,
-        }
+        guard.try_recv().ok()
     }
 
     /// Mint a fresh broadcast receiver. Each subscriber gets its own
@@ -1302,9 +1748,7 @@ fn dirs_home() -> Option<PathBuf> {
 
 /// Pull the agent's capability manager. Done in a free function so we
 /// don't need to add a public accessor on `Agent` itself.
-fn agent_capability_manager(
-    agent: &Agent,
-) -> Arc<crate::capability::CapabilityManager> {
+fn agent_capability_manager(agent: &Agent) -> Arc<crate::capability::CapabilityManager> {
     // The `capability_manager` field on `Agent` is private (pub(crate)).
     // We can reach it through the crate-internal `Arc::clone` since
     // we're in the same crate. Use a small helper.
@@ -1359,10 +1803,7 @@ fn build_doctor_report() -> DoctorReport {
             .map(|n| {
                 let p = std::path::Path::new(n);
                 let present = p.exists();
-                let bytes = p
-                    .metadata()
-                    .map(|m| m.len())
-                    .unwrap_or(0);
+                let bytes = p.metadata().map(|m| m.len()).unwrap_or(0);
                 WorkspaceFileStatus {
                     name: (*n).to_string(),
                     present,
@@ -1374,16 +1815,14 @@ fn build_doctor_report() -> DoctorReport {
     DoctorReport {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
-        rust_channel: std::env::var("RUSTUP_TOOLCHAIN")
-            .unwrap_or_else(|_| "stable".into()),
+        rust_channel: std::env::var("RUSTUP_TOOLCHAIN").unwrap_or_else(|_| "stable".into()),
         api_keys,
         database: if std::env::var("DATABASE_URL").is_ok() {
             "ok".into()
         } else {
             "not configured".into()
         },
-        embedder_provider: std::env::var("EMBEDDING_PROVIDER")
-            .unwrap_or_else(|_| "nvidia".into()),
+        embedder_provider: std::env::var("EMBEDDING_PROVIDER").unwrap_or_else(|_| "nvidia".into()),
         embedder_model: std::env::var("EMBEDDING_MODEL")
             .unwrap_or_else(|_| "nvidia/llama-nemotron-embed-1b-v2".into()),
         disk_free_gb: 0.0,
@@ -1422,7 +1861,9 @@ async fn worktree_diff_summary(branch: &str) -> anyhow::Result<String> {
         .await?
         .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
     let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    mgr.diff_summary(branch).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+    mgr.diff_summary(branch)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 async fn worktree_merge_back(branch: &str) -> anyhow::Result<String> {
@@ -1431,7 +1872,9 @@ async fn worktree_merge_back(branch: &str) -> anyhow::Result<String> {
         .await?
         .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
     let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    mgr.merge_back(branch).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+    mgr.merge_back(branch)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 async fn worktree_remove(branch: &str) -> anyhow::Result<()> {
@@ -1440,7 +1883,10 @@ async fn worktree_remove(branch: &str) -> anyhow::Result<()> {
         .await?
         .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
     let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    let infos = mgr.list().await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let infos = mgr
+        .list()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let path = infos
         .iter()
         .find(|w| w.branch == branch)
@@ -1449,6 +1895,11 @@ async fn worktree_remove(branch: &str) -> anyhow::Result<()> {
     mgr.remove(&path, true)
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+/// Path to the user's MCP-server config JSON file (`~/.volt/mcp_servers.json`).
+fn mcp_servers_path() -> std::path::PathBuf {
+    crate::config::volt_home().join("mcp_servers.json")
 }
 
 /// Compact, log-friendly summary of a `UiCommand`.
@@ -1478,14 +1929,29 @@ fn command_short(cmd: &UiCommand) -> String {
         UiCommand::ListWorkflows => "ListWorkflows".into(),
         UiCommand::RunWorkflow { pattern, .. } => format!("RunWorkflow({})", pattern),
         UiCommand::ListJobs => "ListJobs".into(),
+        UiCommand::CreateJob { description } => {
+            format!("CreateJob({})", description)
+        }
+        UiCommand::StartJob { id, .. } => format!("StartJob({})", id),
+        UiCommand::CompleteJob { id, .. } => format!("CompleteJob({})", id),
+        UiCommand::FailJob { id, .. } => format!("FailJob({})", id),
         UiCommand::ListRoutines => "ListRoutines".into(),
+        UiCommand::ToggleRoutine { id, enabled } => {
+            format!("ToggleRoutine({}={})", id, enabled)
+        }
+        UiCommand::CreateRoutine { name, .. } => format!("CreateRoutine({})", name),
+        UiCommand::DeleteRoutine { id } => format!("DeleteRoutine({})", id),
         UiCommand::ListSkills => "ListSkills".into(),
         UiCommand::SearchCatalogSkills { query } => format!("SearchCatalogSkills({})", query),
         UiCommand::InstallSkill { name } => format!("InstallSkill({})", name),
         UiCommand::ImportSkill { path } => format!("ImportSkill({})", path),
+        UiCommand::UninstallSkill { name } => format!("UninstallSkill({})", name),
         UiCommand::ListMcpServers => "ListMcpServers".into(),
+        UiCommand::RegisterMcpServer { name, .. } => format!("RegisterMcpServer({})", name),
         UiCommand::GetAuditLog { limit } => format!("GetAuditLog({})", limit),
-        UiCommand::ApprovalResponse { request_id, allow, .. } => {
+        UiCommand::ApprovalResponse {
+            request_id, allow, ..
+        } => {
             format!("ApprovalResponse({} allow={})", request_id, allow)
         }
     }
@@ -1527,18 +1993,40 @@ fn event_short(event: &UiEvent) -> String {
             format!("WorkflowsListed({})", workflows.len())
         }
         UiEvent::WorkflowStarted { pattern, .. } => format!("WorkflowStarted({})", pattern),
+        UiEvent::WorkflowCompleted { pattern, .. } => {
+            format!("WorkflowCompleted({})", pattern)
+        }
+        UiEvent::WorkflowFailed { pattern, error, .. } => {
+            format!("WorkflowFailed({} err={})", pattern, error)
+        }
         UiEvent::JobsListed { jobs } => format!("JobsListed({})", jobs.len()),
+        UiEvent::JobCreated { id } => format!("JobCreated({})", id),
+        UiEvent::JobUpdated { id, state } => {
+            format!("JobUpdated({}={})", id, state)
+        }
         UiEvent::RoutinesListed { routines } => format!("RoutinesListed({})", routines.len()),
+        UiEvent::RoutineUpdated { id, enabled } => {
+            format!("RoutineUpdated({}={})", id, enabled)
+        }
+        UiEvent::RoutineDeleted { id } => format!("RoutineDeleted({})", id),
         UiEvent::SkillsListed { skills } => format!("SkillsListed({})", skills.len()),
         UiEvent::CatalogResults { query, skills } => {
             format!("CatalogResults({}={})", query, skills.len())
         }
         UiEvent::SkillInstalled { name } => format!("SkillInstalled({})", name),
+        UiEvent::SkillUninstalled { name } => format!("SkillUninstalled({})", name),
         UiEvent::McpServersListed { servers } => {
             format!("McpServersListed({})", servers.len())
         }
+        UiEvent::McpServerRegistered { name } => {
+            format!("McpServerRegistered({})", name)
+        }
         UiEvent::AuditLog { entries } => format!("AuditLog({})", entries.len()),
-        UiEvent::ApprovalRequest { request_id, tool_name, .. } => {
+        UiEvent::ApprovalRequest {
+            request_id,
+            tool_name,
+            ..
+        } => {
             format!("ApprovalRequest({} for {})", request_id, tool_name)
         }
         UiEvent::Pong => "Pong".into(),
