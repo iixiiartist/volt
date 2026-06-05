@@ -11,6 +11,7 @@ pub enum Event {
 
 /// Lightweight event bus for reactive routines.
 /// Uses tokio broadcast channels for decoupled publisher/subscriber.
+#[derive(Clone)]
 pub struct EventBus {
     tx: tokio::sync::broadcast::Sender<Event>,
 }
