@@ -2,7 +2,7 @@ use sqlx::{PgPool, Row};
 
 pub async fn list_routines(pool: &PgPool) -> anyhow::Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        r#"SELECT id, name, cron, action_prompt, enabled, last_run, next_run, trigger_type, trigger_config, guardrails_max_tokens, guardrails_max_tool_calls, guardrails_allowed_tools, guardrails_timeout_secs FROM routines ORDER BY name"#
+        r#"SELECT id, name, cron, action_prompt, enabled, last_run, next_run, trigger_type, trigger_config, guardrails, created_at FROM routines ORDER BY name"#,
     )
     .fetch_all(pool)
     .await?;
@@ -18,10 +18,8 @@ pub async fn list_routines(pool: &PgPool) -> anyhow::Result<Vec<serde_json::Valu
             "next_run": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("next_run")?,
             "trigger_type": row.try_get::<String, _>("trigger_type")?,
             "trigger_config": row.try_get::<Option<serde_json::Value>, _>("trigger_config")?,
-            "guardrails_max_tokens": row.try_get::<Option<i64>, _>("guardrails_max_tokens")?,
-            "guardrails_max_tool_calls": row.try_get::<Option<i32>, _>("guardrails_max_tool_calls")?,
-            "guardrails_allowed_tools": row.try_get::<Option<Vec<String>>, _>("guardrails_allowed_tools")?,
-            "guardrails_timeout_secs": row.try_get::<Option<i64>, _>("guardrails_timeout_secs")?,
+            "guardrails": row.try_get::<Option<serde_json::Value>, _>("guardrails")?,
+            "created_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")?,
         }));
     }
     Ok(out)
