@@ -161,9 +161,8 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 /// inside an `Arc` by the command-loop task; once the task exits, the
 /// runtime is dropped.
 pub struct Runtime {
-    /// The agent is wrapped in async `Mutex` (not `Arc`) so per-turn
-    /// mutations like `set_session_id` are possible from a `&self`
-    /// command-loop. The mutex is held only briefly.
+    /// The agent is wrapped in async `Mutex` so per-turn mutations
+    /// like `set_session_id` are possible from a `&self` command-loop.
     agent: AsyncMutex<Agent>,
     sqlite_pool: Option<SqlitePool>,
     /// PostgreSQL connection pool. Populated from `DATABASE_URL` (or the
@@ -173,12 +172,6 @@ pub struct Runtime {
     /// and the UI still runs SQLite-only.
     pg_pool: Option<Arc<PgPool>>,
     config: Arc<RwLock<WebuiConfig>>,
-    /// Command receiver. Taken once at startup and moved into the
-    /// command-processing task; left as `None` thereafter.
-    cmd_rx: Mutex<Option<mpsc::Receiver<UiCommand>>>,
-    /// Internal single-producer event channel; the background emitter
-    /// task drains it into the broadcast channel.
-    internal_event_tx: mpsc::Sender<UiEvent>,
     /// Public broadcast channel that all handles subscribe to.
     event_tx: broadcast::Sender<UiEvent>,
     /// Atomic flag the cancel-chat command flips. Mirrored to the
@@ -279,8 +272,6 @@ impl Runtime {
 
         // 7) Channels
         let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(CMD_CHANNEL_CAPACITY);
-        let (internal_event_tx, mut internal_event_rx) =
-            mpsc::channel::<UiEvent>(CMD_CHANNEL_CAPACITY);
         let (event_tx, _) = broadcast::channel::<UiEvent>(BROADCAST_CAPACITY);
 
         // 8) Shared state used by the approval callback
@@ -290,10 +281,11 @@ impl Runtime {
 
         // 9) Streaming token callback — fires for every token the
         //    provider emits, regardless of the chat's session ID.
-        let stream_tx = internal_event_tx.clone();
+        let stream_tx = event_tx.clone();
         let on_token: crate::llm::provider::TokenCallback = Arc::new(move |token: &str| {
-            // Best-effort send; drop on full channel.
-            let _ = stream_tx.try_send(UiEvent::ChatChunk {
+            // Broadcast send fails only if there are zero subscribers;
+            // safe to ignore.
+            let _ = stream_tx.send(UiEvent::ChatChunk {
                 content: token.to_string(),
             });
         });
@@ -303,7 +295,7 @@ impl Runtime {
         //     to Deny on timeout so an unattended UI never auto-runs a
         //     privileged tool.
         let approval_pending = pending_approvals.clone();
-        let approval_event_tx = internal_event_tx.clone();
+        let approval_event_tx = event_tx.clone();
         let approval_fn: ApprovalCallback = Arc::new(
             move |tool: &str, args: &Value| -> BoxFuture<'static, ApprovalDecision> {
                 let pending = approval_pending.clone();
@@ -318,7 +310,7 @@ impl Runtime {
                     } else {
                         tracing::error!("[webui] pending_approvals poisoned");
                     }
-                    let _ = tx.try_send(UiEvent::ApprovalRequest {
+                    let _ = tx.send(UiEvent::ApprovalRequest {
                         request_id,
                         tool_name: tool,
                         args,
@@ -376,14 +368,14 @@ impl Runtime {
             .with_event_bus(event_bus.clone())
             .with_approval(approval_fn)
             .with_stream(on_token);
+        // Bind the SQLite pool once at startup so messages can be
+        // persisted on every chat. The session_id itself is bound
+        // lazily per chat (via `set_session_id` in `handle_chat`),
+        // because a fresh session is minted on the first turn.
         if let Some(ref pool) = sqlite_pool {
-            // Bind a fresh session id so the agent has somewhere to save
-            // messages. The actual session row is created lazily by
-            // `handle_chat` (the agent upserts via the session_id
-            // column on the messages table).
-            agent = agent.with_session(Uuid::new_v4(), pool.clone());
+            agent = agent.with_sqlite_pool(pool.clone());
         }
-        let capability_manager = agent_capability_manager(&agent);
+        let capability_manager = agent.capability_manager.clone();
 
         // 12) Construct the runtime
         let runtime = Runtime {
@@ -391,8 +383,6 @@ impl Runtime {
             sqlite_pool,
             pg_pool,
             config: Arc::new(RwLock::new(config)),
-            cmd_rx: Mutex::new(Some(cmd_rx)),
-            internal_event_tx,
             event_tx: event_tx.clone(),
             cancel: Arc::new(AtomicBool::new(false)),
             pending_approvals,
@@ -405,27 +395,8 @@ impl Runtime {
         };
         let runtime = Arc::new(runtime);
 
-        // 13) Spawn the background event-emitter task — drains the
-        //     internal mpsc and fans out to broadcast. The handle's
-        //     `subscribe()` is the public entry point for new consumers.
-        let event_tx_for_emitter = event_tx.clone();
-        tokio::spawn(async move {
-            while let Some(event) = internal_event_rx.recv().await {
-                let _ = event_tx_for_emitter.send(event);
-            }
-        });
-
-        // 14) Spawn the command-processing task. Holds the only strong
-        //     `Arc<Runtime>` reference (alongside the implicit strong
-        //     ref on `event_tx` clones — but those don't keep `Runtime`
-        //     alive because the broadcast channel is held via `event_tx`
-        //     on the runtime itself, not on the struct).
-        let cmd_rx = runtime
-            .cmd_rx
-            .lock()
-            .ok()
-            .and_then(|mut g| g.take())
-            .ok_or_else(|| anyhow::anyhow!("command receiver already taken"))?;
+        // 13) Spawn the command-processing task. The task owns the
+        //     `cmd_rx` directly — no Mutex/Option dance needed.
         let runtime_for_task = runtime.clone();
         tokio::spawn(async move {
             Self::command_loop(runtime_for_task, cmd_rx).await;
@@ -625,11 +596,11 @@ impl Runtime {
         // the UI as `ToolCallEnd`. Subscribed for the lifetime of this
         // chat only.
         let mut bus_rx = self.event_bus.subscribe();
-        let tool_event_tx = self.internal_event_tx.clone();
+        let tool_event_tx = self.event_tx.clone();
         let tool_event_handle = tokio::spawn(async move {
             while let Ok(ev) = bus_rx.recv().await {
                 if let crate::events::Event::ToolExecuted { tool_name, success } = ev {
-                    let _ = tool_event_tx.try_send(UiEvent::ToolCallEnd {
+                    let _ = tool_event_tx.send(UiEvent::ToolCallEnd {
                         id: Uuid::new_v4().to_string(),
                         result: json!({ "tool_name": tool_name, "success": success }),
                         error: if success {
@@ -1647,9 +1618,9 @@ impl Runtime {
             "emit: {}",
             event_short(&event)
         );
-        if let Err(e) = self.internal_event_tx.try_send(event) {
-            tracing::warn!("[webui] internal event channel full: {}", e);
-        }
+        // Broadcast send only fails if there are zero subscribers.
+        // That's fine — the UI is allowed to be temporarily disconnected.
+        let _ = self.event_tx.send(event);
     }
 
     /// Emit a generic `UiEvent::Error` from a `source: &'static str`
@@ -1691,13 +1662,11 @@ impl Runtime {
 /// handle and use it to send commands and subscribe to events.
 #[derive(Clone)]
 pub struct RuntimeHandle {
+    /// Keeps the `Runtime` (and its `event_tx` broadcast) alive even
+    /// after the command-loop task exits. Cloning is cheap — just an
+    /// `Arc::clone` and an `mpsc::Sender::clone`.
+    _runtime: Arc<Runtime>,
     cmd_tx: mpsc::Sender<UiCommand>,
-    /// Wrapped in a `Mutex` so multiple `try_recv` callers don't fight
-    /// over the same `Receiver`. Subscribers who want a private stream
-    /// should call [`subscribe`] instead.
-    event_rx: Arc<Mutex<broadcast::Receiver<UiEvent>>>,
-    /// Public broadcast sender — `subscribe` calls `event_tx.subscribe()`
-    /// to mint a fresh receiver.
     event_tx: broadcast::Sender<UiEvent>,
 }
 
@@ -1708,33 +1677,22 @@ impl std::fmt::Debug for RuntimeHandle {
 }
 
 impl RuntimeHandle {
-    /// Wrap an existing `Arc<Runtime>` in a handle. The runtime must
+    /// Wrap a started `Arc<Runtime>` in a handle. The runtime must
     /// have been started via `Runtime::start()` (otherwise no command
     /// receiver is listening). Does not spawn any new tasks.
     pub fn new(runtime: Arc<Runtime>, cmd_tx: mpsc::Sender<UiCommand>) -> Self {
-        // Cheap clones of the broadcast sender; subscribe a fresh
-        // receiver for the try_recv path.
         let event_tx = runtime.event_tx.clone();
-        let event_rx = Arc::new(Mutex::new(event_tx.subscribe()));
         Self {
+            _runtime: runtime,
             cmd_tx,
-            event_rx,
             event_tx,
         }
     }
 
     /// Send a command to the runtime. The command is enqueued on the
-    /// internal mpsc channel and processed asynchronously by the
-    /// command-loop task.
+    /// mpsc channel and processed asynchronously by the command-loop task.
     pub async fn send(&self, cmd: UiCommand) -> Result<(), String> {
         self.cmd_tx.send(cmd).await.map_err(|e| e.to_string())
-    }
-
-    /// Try to receive the next event without blocking. Returns `None`
-    /// if no event is available.
-    pub fn try_recv(&self) -> Option<UiEvent> {
-        let mut guard = self.event_rx.lock().ok()?;
-        guard.try_recv().ok()
     }
 
     /// Mint a fresh broadcast receiver. Each subscriber gets its own
@@ -1754,15 +1712,6 @@ impl RuntimeHandle {
 /// path can't be determined.
 fn dirs_home() -> Option<PathBuf> {
     Some(crate::config::volt_home())
-}
-
-/// Pull the agent's capability manager. Done in a free function so we
-/// don't need to add a public accessor on `Agent` itself.
-fn agent_capability_manager(agent: &Agent) -> Arc<crate::capability::CapabilityManager> {
-    // The `capability_manager` field on `Agent` is private (pub(crate)).
-    // We can reach it through the crate-internal `Arc::clone` since
-    // we're in the same crate. Use a small helper.
-    agent.capability_manager_inner()
 }
 
 /// Map a `PermissionLevel` to the string label the UI displays.
@@ -2041,15 +1990,5 @@ fn event_short(event: &UiEvent) -> String {
         }
         UiEvent::Pong => "Pong".into(),
         UiEvent::Error { source, message } => format!("Error({}: {})", source, message),
-    }
-}
-
-impl Agent {
-    /// Crate-internal accessor for the agent's `capability_manager`
-    /// field. Wraps the `Arc::clone` so callers can pass it to
-    /// `ToolRegistry::execute_gated` without needing to make the
-    /// field public.
-    pub(crate) fn capability_manager_inner(&self) -> Arc<crate::capability::CapabilityManager> {
-        self.capability_manager.clone()
     }
 }

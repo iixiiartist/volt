@@ -113,12 +113,31 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
             tool_name,
             args,
         } => {
-            state.pending_approval.set(Some(UiEvent::ApprovalRequest {
-                request_id,
-                tool_name,
-                args,
-            }));
-            state.toast(ToastLevel::Warning, "Tool approval required");
+            // Surface as a toast only — the user replies via the
+            // UiCommand::ApprovalResponse command from the same
+            // request_id. The full approval modal can be added later.
+            let args_preview = args
+                .as_object()
+                .map(|m| {
+                    m.iter()
+                        .take(2)
+                        .map(|(k, v)| {
+                            let v = v.to_string();
+                            if v.len() > 40 {
+                                format!("{}={}…", k, &v[..40])
+                            } else {
+                                format!("{}={}", k, v)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            state.toast(
+                ToastLevel::Warning,
+                format!("Approve {} ({})? Send Allow/Deny to continue.", tool_name, args_preview),
+            );
+            let _ = request_id;
         }
         UiEvent::Error { source, message } => {
             state.toast(ToastLevel::Error, format!("{}: {}", source, message));

@@ -150,6 +150,14 @@ impl Agent {
         self
     }
 
+    /// Set just the SQLite pool (no session yet). The webui uses this
+    /// at startup so the agent can persist messages, then binds a real
+    /// session_id per chat via `set_session_id`.
+    pub fn with_sqlite_pool(mut self, sqlite_pool: sqlx::SqlitePool) -> Self {
+        self.sqlite_pool = Some(sqlite_pool);
+        self
+    }
+
     /// Re-bind the session_id on an already-built agent. Used by the
     /// webui runtime which mints a fresh session per `Chat` turn.
     pub fn set_session_id(&mut self, session_id: uuid::Uuid) {
