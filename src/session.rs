@@ -559,10 +559,35 @@ pub async fn fork_session(
     Ok(new_id)
 }
 
-pub async fn delete_session_messages(pool: &SqlitePool, session_id: Uuid) -> anyhow::Result<()> {
+/// Delete all messages for a session. Generic over the executor so
+/// the caller can pass either a `&SqlitePool` (auto-commit) or a
+/// `Transaction<'_, Sqlite>` (rolled into a larger transaction).
+pub async fn delete_session_messages<'e, E>(
+    executor: E,
+    session_id: Uuid,
+) -> anyhow::Result<()>
+where
+    E: sqlx::SqliteExecutor<'e>,
+{
     sqlx::query("DELETE FROM messages WHERE session_id = ?")
         .bind(session_id.to_string())
-        .execute(pool)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// Delete all checkpoints for a session. Same executor-generic
+/// pattern as `delete_session_messages`.
+pub async fn delete_session_checkpoints<'e, E>(
+    executor: E,
+    session_id: Uuid,
+) -> anyhow::Result<()>
+where
+    E: sqlx::SqliteExecutor<'e>,
+{
+    sqlx::query("DELETE FROM checkpoints WHERE session_id = ?")
+        .bind(session_id.to_string())
+        .execute(executor)
         .await?;
     Ok(())
 }

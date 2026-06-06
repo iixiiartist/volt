@@ -1,6 +1,7 @@
-use super::commands::{UiCommand, UiEvent};
+use super::commands::{ChatMessage, ChatRole, UiCommand, UiEvent};
 use super::state::{ConnectionStatus, ToastLevel, VoltState};
 use dioxus::prelude::*;
+use uuid::Uuid;
 
 #[component]
 pub fn App() -> Element {
@@ -48,53 +49,11 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
             state.chat_streaming.set(true);
         }
         UiEvent::ChatChunk { content } => {
-            // Append (or create) the in-progress assistant message.
-            // We always replace the whole Vec so Dioxus's signal
-            // sees a fresh reference and re-renders (mutating in
-            // place via ReadGuard doesn't always trigger updates).
-            let mut msgs = state.chat_messages.read().clone();
-            if let Some(last) = msgs.last_mut() {
-                if last.role == "assistant" && last.id.is_nil() {
-                    last.content.push_str(&content);
-                } else {
-                    msgs.push(super::commands::ChatMessage {
-                        id: uuid::Uuid::nil(),
-                        role: "assistant".into(),
-                        content,
-                        tool_calls: Vec::new(),
-                        timestamp: chrono::Utc::now(),
-                    });
-                }
-            } else {
-                msgs.push(super::commands::ChatMessage {
-                    id: uuid::Uuid::nil(),
-                    role: "assistant".into(),
-                    content,
-                    tool_calls: Vec::new(),
-                    timestamp: chrono::Utc::now(),
-                });
-            }
-            state.chat_messages.set(msgs);
+            append_assistant_chunk(state, &content);
         }
         UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
             state.chat_streaming.set(false);
-            let mut msgs = state.chat_messages.read().clone();
-            if let Some(last) = msgs.last_mut() {
-                if last.role == "assistant" && last.id.is_nil() {
-                    last.content = final_text.clone();
-                    last.id = uuid::Uuid::new_v4();
-                } else {
-                    // No streaming bubble — push a fresh one
-                    msgs.push(super::commands::ChatMessage {
-                        id: uuid::Uuid::new_v4(),
-                        role: "assistant".into(),
-                        content: final_text.clone(),
-                        tool_calls: Vec::new(),
-                        timestamp: chrono::Utc::now(),
-                    });
-                }
-            }
-            state.chat_messages.set(msgs);
+            finalize_assistant_message(state, &final_text);
             state.toast(
                 ToastLevel::Success,
                 format!("Done ({} tokens, {}ms)", tokens_used, duration_ms),
@@ -221,4 +180,47 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
         }
         _ => {}
     }
+}
+
+/// Append a streamed chunk to the in-progress assistant bubble, or
+/// start a new one. The in-progress bubble is identified by
+/// `id == Uuid::nil()` so `ChatComplete` can finalize it later.
+fn append_assistant_chunk(state: &mut VoltState, content: &str) {
+    let mut msgs = state.chat_messages.read().clone();
+    if let Some(last) = msgs
+        .last_mut()
+        .filter(|m| m.role == ChatRole::Assistant && m.id.is_nil())
+    {
+        last.content.push_str(content);
+    } else {
+        msgs.push(ChatMessage {
+            timestamp: chrono::Utc::now(),
+            role: ChatRole::Assistant,
+            content: content.into(),
+            ..Default::default()
+        });
+    }
+    state.chat_messages.set(msgs);
+}
+
+/// Finalize the in-progress assistant bubble with the model's full
+/// final text. If no streaming happened, push a fresh completed message.
+fn finalize_assistant_message(state: &mut VoltState, final_text: &str) {
+    let mut msgs = state.chat_messages.read().clone();
+    if let Some(last) = msgs
+        .last_mut()
+        .filter(|m| m.role == ChatRole::Assistant && m.id.is_nil())
+    {
+        last.content = final_text.into();
+        last.id = Uuid::new_v4();
+    } else {
+        msgs.push(ChatMessage {
+            id: Uuid::new_v4(),
+            timestamp: chrono::Utc::now(),
+            role: ChatRole::Assistant,
+            content: final_text.into(),
+            ..Default::default()
+        });
+    }
+    state.chat_messages.set(msgs);
 }

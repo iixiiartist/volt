@@ -90,7 +90,6 @@ pub struct VoltState {
     pub show_command_palette: Signal<bool>,
     pub show_trace_panel: Signal<bool>,
 
-    pub last_event_at: Signal<i64>,
     pub total_events: Signal<u64>,
     pub total_commands: Signal<u64>,
 
@@ -159,7 +158,6 @@ impl Default for VoltState {
             sidebar_collapsed: Signal::new(false),
             show_command_palette: Signal::new(false),
             show_trace_panel: Signal::new(false),
-            last_event_at: Signal::new(0),
             total_events: Signal::new(0),
             total_commands: Signal::new(0),
             jobs: Signal::new(Vec::new()),

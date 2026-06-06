@@ -414,8 +414,7 @@ impl Runtime {
         while let Some(cmd) = cmd_rx.recv().await {
             tracing::info!(
                 target: "webui.cmd",
-                "received command: {}",
-                command_short(&cmd)
+                "received: {cmd:?}"
             );
             // `catch_unwind` + `AssertUnwindSafe` so a panic in one
             // handler doesn't kill the loop. Most handlers return
@@ -431,10 +430,10 @@ impl Runtime {
                 let entry = AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
-                    actor: "agent".into(),
-                    action: "chat".into(),
+                    actor: AuditActor::Agent,
+                    action: AuditAction::Chat,
                     target: "panic".into(),
-                    result: "error".into(),
+                    result: AuditResult::Error,
                     detail: json!({ "panic": format!("{:?}", e) }),
                     session_id: None,
                 };
@@ -618,10 +617,10 @@ impl Runtime {
         self.log_audit(AuditEntry {
             id: Uuid::new_v4(),
             timestamp: chrono::Utc::now(),
-            actor: "user".into(),
-            action: "chat".into(),
+            actor: AuditActor::User,
+            action: AuditAction::Chat,
             target: session_id.to_string(),
-            result: "ok".into(),
+            result: AuditResult::Ok,
             detail: json!({ "input_chars": input.len() }),
             session_id: Some(session_id),
         });
@@ -654,10 +653,10 @@ impl Runtime {
                 self.log_audit(AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
-                    actor: "agent".into(),
-                    action: "chat".into(),
+                    actor: AuditActor::Agent,
+                    action: AuditAction::Chat,
                     target: session_id.to_string(),
-                    result: "ok".into(),
+                    result: AuditResult::Ok,
                     detail: json!({
                         "tokens_used": tokens_used,
                         "duration_ms": duration_ms,
@@ -677,10 +676,10 @@ impl Runtime {
                 self.log_audit(AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
-                    actor: "agent".into(),
-                    action: "chat".into(),
+                    actor: AuditActor::Agent,
+                    action: AuditAction::Chat,
                     target: session_id.to_string(),
-                    result: "error".into(),
+                    result: AuditResult::Error,
                     detail: json!({ "error": msg }),
                     session_id: Some(session_id),
                 });
@@ -703,7 +702,7 @@ impl Runtime {
                 name: d.name.clone(),
                 description: d.description.clone(),
                 category: d.category.clone(),
-                permission: permission_label(perm),
+                permission: permission_to_info(perm),
                 schema: d.input_schema.clone(),
                 enabled: !matches!(perm, crate::models::PermissionLevel::Blocked),
             });
@@ -735,10 +734,10 @@ impl Runtime {
         self.log_audit(AuditEntry {
             id: Uuid::new_v4(),
             timestamp: chrono::Utc::now(),
-            actor: "user".into(),
-            action: "tool_call".into(),
+            actor: AuditActor::User,
+            action: AuditAction::ToolCall,
             target: name,
-            result: "ok".into(),
+            result: AuditResult::Ok,
             detail: json!({ "args": args }),
             session_id: None,
         });
@@ -782,7 +781,7 @@ impl Runtime {
                     .into_iter()
                     .map(|m| ChatMessage {
                         id: m.id,
-                        role: m.role,
+                        role: parse_chat_role(&m.role),
                         content: m.content.as_str().to_string(),
                         tool_calls: m
                             .tool_calls
@@ -851,19 +850,29 @@ impl Runtime {
 
     async fn handle_delete_session(&self, id: Uuid) {
         let Some(pool) = self.sqlite_pool.clone() else {
+            // No DB to delete from — still emit so the UI removes
+            // the row optimistically.
             self.emit(UiEvent::SessionDeleted { id });
             return;
         };
-        // Drop messages first (foreign key), then the row.
-        let r1 = session::delete_session_messages(&pool, id).await;
-        let r2 = sqlx::query("DELETE FROM sessions WHERE id = ?")
-            .bind(id.to_string())
-            .execute(&pool)
-            .await;
-        match (r1, r2) {
-            (Ok(_), Ok(_)) => self.emit(UiEvent::SessionDeleted { id }),
-            (Err(e), _) => self.emit_error("delete_session", e),
-            (_, Err(e)) => self.emit_error("delete_session", e),
+        // Wrap in a transaction so the messages + checkpoints + row
+        // either all go or none of them does. The FK constraints
+        // require messages/checkpoints to be deleted before the row.
+        let result: anyhow::Result<()> = async {
+            let mut tx = pool.begin().await?;
+            session::delete_session_messages(&mut *tx, id).await?;
+            session::delete_session_checkpoints(&mut *tx, id).await?;
+            sqlx::query("DELETE FROM sessions WHERE id = ?")
+                .bind(id.to_string())
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => self.emit(UiEvent::SessionDeleted { id }),
+            Err(e) => self.emit_error("delete_session", e),
         }
     }
 
@@ -970,10 +979,10 @@ impl Runtime {
                 entries: vec![AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
-                    actor: "user".into(),
-                    action: "tool_call".into(),
+                    actor: AuditActor::User,
+                    action: AuditAction::ToolCall,
                     target: branch,
-                    result: "ok".into(),
+                    result: AuditResult::Ok,
                     detail: json!({ "diff": summary }),
                     session_id: None,
                 }],
@@ -990,10 +999,10 @@ impl Runtime {
                     entries: vec![AuditEntry {
                         id: Uuid::new_v4(),
                         timestamp: chrono::Utc::now(),
-                        actor: "user".into(),
-                        action: "tool_call".into(),
+                        actor: AuditActor::User,
+                        action: AuditAction::ToolCall,
                         target: branch.clone(),
-                        result: "ok".into(),
+                        result: AuditResult::Ok,
                         detail: json!({ "merge_output": msg }),
                         session_id: None,
                     }],
@@ -1322,7 +1331,7 @@ impl Runtime {
                             description: manifest.description,
                             version: manifest.version,
                             installed_at: chrono::Utc::now(),
-                            source: "local".into(),
+                            source: SkillSource::Local,
                         });
                     }
                 }
@@ -1339,9 +1348,9 @@ impl Runtime {
                             version: s.version.clone(),
                             installed_at: s.created_at,
                             source: if s.source_path.is_some() {
-                                "imported".into()
+                                SkillSource::Imported
                             } else {
-                                "catalog".into()
+                                SkillSource::Catalog
                             },
                         });
                     }
@@ -1503,9 +1512,9 @@ impl Runtime {
                         transport: v
                             .get("transport")
                             .and_then(|x| x.as_str())
-                            .unwrap_or("stdio")
-                            .to_string(),
-                        status: "registered".into(),
+                            .map(parse_mcp_transport)
+                            .unwrap_or(McpTransport::Stdio),
+                        status: McpStatus::Disconnected,
                         tools_count: 0,
                         endpoint,
                     }
@@ -1589,10 +1598,10 @@ impl Runtime {
                 self.log_audit(AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
-                    actor: "user".into(),
-                    action: "approval".into(),
+                    actor: AuditActor::User,
+                    action: AuditAction::Approval,
                     target: request_id.to_string(),
-                    result: if allow { "ok" } else { "denied" }.into(),
+                    result: if allow { AuditResult::Ok } else { AuditResult::Denied },
                     detail: json!({ "allow_session": allow_session }),
                     session_id: None,
                 });
@@ -1615,8 +1624,7 @@ impl Runtime {
     fn emit(&self, event: UiEvent) {
         tracing::info!(
             target: "webui.event",
-            "emit: {}",
-            event_short(&event)
+            "emit: {event:?}"
         );
         // Broadcast send only fails if there are zero subscribers.
         // That's fine — the UI is allowed to be temporarily disconnected.
@@ -1714,13 +1722,34 @@ fn dirs_home() -> Option<PathBuf> {
     Some(crate::config::volt_home())
 }
 
-/// Map a `PermissionLevel` to the string label the UI displays.
-fn permission_label(perm: crate::models::PermissionLevel) -> String {
+/// Map a `PermissionLevel` to the wire-level permission enum.
+fn permission_to_info(perm: crate::models::PermissionLevel) -> ToolPermission {
     match perm {
-        crate::models::PermissionLevel::Allow => "allow".into(),
-        crate::models::PermissionLevel::Prompt => "prompt".into(),
-        crate::models::PermissionLevel::ReadOnly => "allow".into(),
-        crate::models::PermissionLevel::Blocked => "deny".into(),
+        crate::models::PermissionLevel::Allow => ToolPermission::Allow,
+        crate::models::PermissionLevel::Prompt => ToolPermission::Prompt,
+        crate::models::PermissionLevel::ReadOnly => ToolPermission::Allow,
+        crate::models::PermissionLevel::Blocked => ToolPermission::Deny,
+    }
+}
+
+/// Map a runtime `role` string (as stored in SQLite) to a `ChatRole`.
+/// Unknown roles default to `User` so the UI never breaks on legacy data.
+fn parse_chat_role(s: &str) -> ChatRole {
+    match s {
+        "assistant" => ChatRole::Assistant,
+        "tool" => ChatRole::Tool,
+        "system" => ChatRole::System,
+        _ => ChatRole::User,
+    }
+}
+
+/// Map an MCP transport string (as stored in JSON config) to an enum.
+fn parse_mcp_transport(s: &str) -> McpTransport {
+    match s {
+        "http" => McpTransport::Http,
+        "websocket" => McpTransport::Websocket,
+        "grpc" => McpTransport::Grpc,
+        _ => McpTransport::Stdio,
     }
 }
 
@@ -1861,134 +1890,3 @@ fn mcp_servers_path() -> std::path::PathBuf {
     crate::config::volt_home().join("mcp_servers.json")
 }
 
-/// Compact, log-friendly summary of a `UiCommand`.
-fn command_short(cmd: &UiCommand) -> String {
-    match cmd {
-        UiCommand::Ping => "Ping".into(),
-        UiCommand::Chat { session_id, .. } => match session_id {
-            Some(id) => format!("Chat(session={})", id),
-            None => "Chat(new)".into(),
-        },
-        UiCommand::CancelChat => "CancelChat".into(),
-        UiCommand::ListTools => "ListTools".into(),
-        UiCommand::ExecuteTool { name, .. } => format!("ExecuteTool({})", name),
-        UiCommand::ListSessions => "ListSessions".into(),
-        UiCommand::LoadSession { id } => format!("LoadSession({})", id),
-        UiCommand::CreateSession { name } => format!("CreateSession({})", name),
-        UiCommand::ForkSession { id } => format!("ForkSession({})", id),
-        UiCommand::DeleteSession { id } => format!("DeleteSession({})", id),
-        UiCommand::ListModels => "ListModels".into(),
-        UiCommand::GetConfig => "GetConfig".into(),
-        UiCommand::UpdateConfig { .. } => "UpdateConfig".into(),
-        UiCommand::RunDoctor => "RunDoctor".into(),
-        UiCommand::ListWorktrees => "ListWorktrees".into(),
-        UiCommand::WorktreeStatus { branch } => format!("WorktreeStatus({})", branch),
-        UiCommand::WorktreeMerge { branch } => format!("WorktreeMerge({})", branch),
-        UiCommand::WorktreeClean { branch } => format!("WorktreeClean({})", branch),
-        UiCommand::ListWorkflows => "ListWorkflows".into(),
-        UiCommand::RunWorkflow { pattern, .. } => format!("RunWorkflow({})", pattern),
-        UiCommand::ListJobs => "ListJobs".into(),
-        UiCommand::CreateJob { description } => {
-            format!("CreateJob({})", description)
-        }
-        UiCommand::StartJob { id, .. } => format!("StartJob({})", id),
-        UiCommand::CompleteJob { id, .. } => format!("CompleteJob({})", id),
-        UiCommand::FailJob { id, .. } => format!("FailJob({})", id),
-        UiCommand::ListRoutines => "ListRoutines".into(),
-        UiCommand::ToggleRoutine { id, enabled } => {
-            format!("ToggleRoutine({}={})", id, enabled)
-        }
-        UiCommand::CreateRoutine { name, .. } => format!("CreateRoutine({})", name),
-        UiCommand::DeleteRoutine { id } => format!("DeleteRoutine({})", id),
-        UiCommand::ListSkills => "ListSkills".into(),
-        UiCommand::SearchCatalogSkills { query } => format!("SearchCatalogSkills({})", query),
-        UiCommand::InstallSkill { name } => format!("InstallSkill({})", name),
-        UiCommand::ImportSkill { path } => format!("ImportSkill({})", path),
-        UiCommand::UninstallSkill { name } => format!("UninstallSkill({})", name),
-        UiCommand::ListMcpServers => "ListMcpServers".into(),
-        UiCommand::RegisterMcpServer { name, .. } => format!("RegisterMcpServer({})", name),
-        UiCommand::GetAuditLog { limit } => format!("GetAuditLog({})", limit),
-        UiCommand::ApprovalResponse {
-            request_id, allow, ..
-        } => {
-            format!("ApprovalResponse({} allow={})", request_id, allow)
-        }
-    }
-}
-
-/// Compact, log-friendly summary of a `UiEvent`.
-fn event_short(event: &UiEvent) -> String {
-    match event {
-        UiEvent::ChatStarted { session_id } => format!("ChatStarted({})", session_id),
-        UiEvent::ChatChunk { content } => format!("ChatChunk({} chars)", content.len()),
-        UiEvent::ToolCallStart { id, name, .. } => format!("ToolCallStart({}={})", id, name),
-        UiEvent::ToolCallEnd { id, error, .. } => {
-            if let Some(e) = error {
-                format!("ToolCallEnd({} err={})", id, e)
-            } else {
-                format!("ToolCallEnd({})", id)
-            }
-        }
-        UiEvent::ChatComplete { final_text, .. } => {
-            format!("ChatComplete({} chars)", final_text.len())
-        }
-        UiEvent::ChatError { message } => format!("ChatError({})", message),
-        UiEvent::ChatCancelled => "ChatCancelled".into(),
-        UiEvent::ToolsListed { tools } => format!("ToolsListed({})", tools.len()),
-        UiEvent::SessionsListed { sessions } => format!("SessionsListed({})", sessions.len()),
-        UiEvent::SessionLoaded { id, messages } => {
-            format!("SessionLoaded({} msg={})", id, messages.len())
-        }
-        UiEvent::SessionCreated { id } => format!("SessionCreated({})", id),
-        UiEvent::SessionDeleted { id } => format!("SessionDeleted({})", id),
-        UiEvent::ModelsListed { models } => format!("ModelsListed({})", models.len()),
-        UiEvent::ConfigLoaded { .. } => "ConfigLoaded".into(),
-        UiEvent::ConfigUpdated => "ConfigUpdated".into(),
-        UiEvent::DoctorCompleted { .. } => "DoctorCompleted".into(),
-        UiEvent::WorktreesListed { worktrees } => {
-            format!("WorktreesListed({})", worktrees.len())
-        }
-        UiEvent::WorkflowsListed { workflows } => {
-            format!("WorkflowsListed({})", workflows.len())
-        }
-        UiEvent::WorkflowStarted { pattern, .. } => format!("WorkflowStarted({})", pattern),
-        UiEvent::WorkflowCompleted { pattern, .. } => {
-            format!("WorkflowCompleted({})", pattern)
-        }
-        UiEvent::WorkflowFailed { pattern, error, .. } => {
-            format!("WorkflowFailed({} err={})", pattern, error)
-        }
-        UiEvent::JobsListed { jobs } => format!("JobsListed({})", jobs.len()),
-        UiEvent::JobCreated { id } => format!("JobCreated({})", id),
-        UiEvent::JobUpdated { id, state } => {
-            format!("JobUpdated({}={})", id, state)
-        }
-        UiEvent::RoutinesListed { routines } => format!("RoutinesListed({})", routines.len()),
-        UiEvent::RoutineUpdated { id, enabled } => {
-            format!("RoutineUpdated({}={})", id, enabled)
-        }
-        UiEvent::RoutineDeleted { id } => format!("RoutineDeleted({})", id),
-        UiEvent::SkillsListed { skills } => format!("SkillsListed({})", skills.len()),
-        UiEvent::CatalogResults { query, skills } => {
-            format!("CatalogResults({}={})", query, skills.len())
-        }
-        UiEvent::SkillInstalled { name } => format!("SkillInstalled({})", name),
-        UiEvent::SkillUninstalled { name } => format!("SkillUninstalled({})", name),
-        UiEvent::McpServersListed { servers } => {
-            format!("McpServersListed({})", servers.len())
-        }
-        UiEvent::McpServerRegistered { name } => {
-            format!("McpServerRegistered({})", name)
-        }
-        UiEvent::AuditLog { entries } => format!("AuditLog({})", entries.len()),
-        UiEvent::ApprovalRequest {
-            request_id,
-            tool_name,
-            ..
-        } => {
-            format!("ApprovalRequest({} for {})", request_id, tool_name)
-        }
-        UiEvent::Pong => "Pong".into(),
-        UiEvent::Error { source, message } => format!("Error({}: {})", source, message),
-    }
-}

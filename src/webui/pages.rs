@@ -2,7 +2,7 @@
 // we just want it to run on first mount of each page.
 #![allow(clippy::let_underscore_future)]
 
-use super::commands::{ToolInfo, UiCommand, UiEvent};
+use super::commands::{ToolInfo, UiCommand, AuditResult};
 use super::routes::Page;
 use super::state::{
     ToastLevel, VoltState, COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO,
@@ -184,7 +184,7 @@ pub fn ChatPage() -> Element {
                         } else {
                             rsx! {
                                 for m in messages.iter() {
-                                    ChatBubble { role: m.role.clone(), content: m.content.clone() }
+                                    ChatBubble { role: m.role, content: m.content.clone() }
                                 }
                             }
                         }
@@ -213,15 +213,13 @@ pub fn ChatPage() -> Element {
                                     let sid = *state.chat_session.read();
                                     input.set(String::new());
                                     state.chat_streaming.set(true);
-                                    let mut msgs = state.chat_messages.write();
-                                    msgs.push(super::commands::ChatMessage {
+                                    state.chat_messages.write().push(super::commands::ChatMessage {
                                         id: uuid::Uuid::new_v4(),
-                                        role: "user".into(),
+                                        role: super::commands::ChatRole::User,
                                         content: text.clone(),
                                         tool_calls: Vec::new(),
                                         timestamp: chrono::Utc::now(),
                                     });
-                                    drop(msgs);
                                     state.fire(UiCommand::Chat { session_id: sid, input: text });
                                 }
                             }
@@ -242,15 +240,13 @@ pub fn ChatPage() -> Element {
                                 let sid = *state.chat_session.read();
                                 input.set(String::new());
                                 state.chat_streaming.set(true);
-                                let mut msgs = state.chat_messages.write();
-                                msgs.push(super::commands::ChatMessage {
+                                state.chat_messages.write().push(super::commands::ChatMessage {
                                     id: uuid::Uuid::new_v4(),
-                                    role: "user".into(),
+                                    role: super::commands::ChatRole::User,
                                     content: text.clone(),
                                     tool_calls: Vec::new(),
                                     timestamp: chrono::Utc::now(),
                                 });
-                                drop(msgs);
                                 state.fire(UiCommand::Chat { session_id: sid, input: text });
                             }
                         },
@@ -380,8 +376,8 @@ pub fn SessionsPage() -> Element {
             }
             {
                 let _ = use_resource(move || async move {
-                    state.fire(UiCommand::ListSessions);
-                });
+            state.fire(UiCommand::ListSessions);
+        });
             }
             SessionsList {}
         }
@@ -390,21 +386,12 @@ pub fn SessionsPage() -> Element {
 
 #[component]
 fn SessionsList() -> Element {
+    // `state.sessions_cache` is already populated by the global event
+    // loop in `app.rs` whenever `SessionsListed` arrives. Reading it
+    // here gives us a reactive view of the latest snapshot without
+    // opening a second broadcast subscriber (which would race the
+    // global one and waste memory).
     let mut state: VoltState = use_context();
-    {
-        // Drain runtime events into the sessions cache.
-        let _ = use_resource(move || async move {
-            let handle_opt = state.handle.read().clone();
-            if let Some(h) = handle_opt {
-                let mut rx = h.subscribe();
-                while let Ok(ev) = rx.recv().await {
-                    if let UiEvent::SessionsListed { sessions: s } = ev {
-                        state.sessions_cache.set(s);
-                    }
-                }
-            }
-        });
-    }
     let cached = state.sessions_cache.read().clone();
     if cached.is_empty() {
         rsx! { EmptyState { icon: "\u{1F4C1}", title: "No sessions yet", description: "Start a chat to create your first session, or click 'New Session' to create one." } }
@@ -974,7 +961,9 @@ pub fn AuditPage() -> Element {
                 let filter = filter_actor.read().to_lowercase();
                 let filtered: Vec<_> = entries
                     .iter()
-                    .filter(|e| filter.is_empty() || e.actor.to_lowercase().contains(&filter))
+                    .filter(|e| {
+                        filter.is_empty() || e.actor.to_string().to_lowercase().contains(&filter)
+                    })
                     .collect();
                 if filtered.is_empty() {
                     rsx! { EmptyState { icon: "\u{1F50D}", title: "No audit entries", description: "As you use Volt, every action will be recorded here. Audit log is tamper-evident via append-only writes." } }
@@ -984,7 +973,7 @@ pub fn AuditPage() -> Element {
                             for e in filtered {
                                 {
                                     let ts = e.timestamp.format("%H:%M:%S").to_string();
-                                    let result_color = if e.result == "ok" { COLOR_SUCCESS } else { COLOR_DANGER };
+                                    let result_color = if e.result == AuditResult::Ok { COLOR_SUCCESS } else { COLOR_DANGER };
                                     rsx! {
                                         div { style: "padding: 8px 12px; background-color: {COLOR_PANEL}; border-radius: 4px; display: flex; gap: 12px; align-items: center; font-size: 12px;",
                                             span { style: "color: {COLOR_TEXT_MUTED}; min-width: 130px; font-family: {FONT_MONO};", "{ts}" }

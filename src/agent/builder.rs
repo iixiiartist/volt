@@ -42,42 +42,18 @@ impl Agent {
             updated_at: chrono::Utc::now(),
         };
         let mgr = Arc::new(crate::capability::CapabilityManager::new());
-        mgr.issue(
-            crate::capability::CapabilityScope::FsRead,
-            100,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::FsWrite,
-            50,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::System,
-            20,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::Network,
-            200,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::Database,
-            30,
-            chrono::Duration::hours(24),
-        )
-        .await;
-        mgr.issue(
-            crate::capability::CapabilityScope::Memory,
-            50,
-            chrono::Duration::hours(24),
-        )
-        .await;
+        // Default capability allocation for new agents. Tokens are
+        // consumed per-call; quotas reset every 24 hours.
+        for (scope, quota) in [
+            (crate::capability::CapabilityScope::FsRead, 100u64),
+            (crate::capability::CapabilityScope::FsWrite, 50),
+            (crate::capability::CapabilityScope::System, 20),
+            (crate::capability::CapabilityScope::Network, 200),
+            (crate::capability::CapabilityScope::Database, 30),
+            (crate::capability::CapabilityScope::Memory, 50),
+        ] {
+            mgr.issue(scope, quota, chrono::Duration::hours(24)).await;
+        }
         Self {
             config,
             state: Arc::new(Mutex::new(state)),

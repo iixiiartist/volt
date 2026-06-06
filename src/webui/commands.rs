@@ -312,25 +312,193 @@ pub enum UiEvent {
 // Supporting DTOs
 // =============================================================================
 
+/// Role of a chat-message author. Wire-level values stay lowercase so
+/// the runtime can keep emitting `"user"` / `"assistant"` strings
+/// without conversion.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    #[default]
+    User,
+    Assistant,
+    Tool,
+    System,
+}
+
+/// Whether the runtime is allowed to auto-run a tool, must prompt the
+/// user, or is blocked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolPermission {
+    #[default]
+    Allow,
+    Prompt,
+    Deny,
+}
+
+/// A single transport for an MCP server connection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    #[default]
+    Stdio,
+    Http,
+    Websocket,
+    Grpc,
+}
+
+/// Connection state of a registered MCP server.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpStatus {
+    #[default]
+    Disconnected,
+    Connected,
+    Error,
+}
+
+/// Who initiated an audit-logged action.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuditActor {
+    #[default]
+    User,
+    Agent,
+    Tool,
+}
+
+/// Category of audited action.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditAction {
+    #[default]
+    Chat,
+    ToolCall,
+    ConfigChange,
+    Approval,
+}
+
+/// Outcome of an audited action.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuditResult {
+    #[default]
+    Ok,
+    Denied,
+    Error,
+}
+
+/// Origin of an installed skill.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillSource {
+    #[default]
+    Local,
+    Catalog,
+    Imported,
+}
+
+impl std::fmt::Display for ChatRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ChatRole::User => "user",
+            ChatRole::Assistant => "assistant",
+            ChatRole::Tool => "tool",
+            ChatRole::System => "system",
+        })
+    }
+}
+
+impl std::fmt::Display for ToolPermission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ToolPermission::Allow => "allow",
+            ToolPermission::Prompt => "prompt",
+            ToolPermission::Deny => "deny",
+        })
+    }
+}
+
+impl std::fmt::Display for McpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            McpTransport::Stdio => "stdio",
+            McpTransport::Http => "http",
+            McpTransport::Websocket => "websocket",
+            McpTransport::Grpc => "grpc",
+        })
+    }
+}
+
+impl std::fmt::Display for McpStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            McpStatus::Connected => "connected",
+            McpStatus::Disconnected => "disconnected",
+            McpStatus::Error => "error",
+        })
+    }
+}
+
+impl std::fmt::Display for AuditActor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            AuditActor::User => "user",
+            AuditActor::Agent => "agent",
+            AuditActor::Tool => "tool",
+        })
+    }
+}
+
+impl std::fmt::Display for AuditAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            AuditAction::Chat => "chat",
+            AuditAction::ToolCall => "tool_call",
+            AuditAction::ConfigChange => "config_change",
+            AuditAction::Approval => "approval",
+        })
+    }
+}
+
+impl std::fmt::Display for AuditResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            AuditResult::Ok => "ok",
+            AuditResult::Denied => "denied",
+            AuditResult::Error => "error",
+        })
+    }
+}
+
+impl std::fmt::Display for SkillSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SkillSource::Local => "local",
+            SkillSource::Catalog => "catalog",
+            SkillSource::Imported => "imported",
+        })
+    }
+}
+
 /// Snapshot entry describing a single tool in the registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInfo {
     pub name: String,
     pub description: String,
     pub category: String,
-    /// One of `"allow"`, `"prompt"`, `"deny"`.
-    pub permission: String,
+    pub permission: ToolPermission,
     pub schema: serde_json::Value,
     pub enabled: bool,
 }
 
 /// A single message in a chat session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: Uuid,
-    /// One of `"user"`, `"assistant"`, `"tool"`, `"system"`.
-    pub role: String,
+    pub role: ChatRole,
     pub content: String,
+    #[serde(default)]
     pub tool_calls: Vec<ToolCallInfo>,
     pub timestamp: DateTime<Utc>,
 }
@@ -457,8 +625,7 @@ pub struct SkillInfo {
     pub description: String,
     pub version: String,
     pub installed_at: DateTime<Utc>,
-    /// One of `"local"`, `"catalog"`, `"imported"`.
-    pub source: String,
+    pub source: SkillSource,
 }
 
 /// A skill returned from catalog search.
@@ -474,10 +641,8 @@ pub struct CatalogSkillInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerInfo {
     pub name: String,
-    /// One of `"stdio"`, `"http"`, `"websocket"`, `"grpc"`.
-    pub transport: String,
-    /// One of `"connected"`, `"disconnected"`, `"error"`.
-    pub status: String,
+    pub transport: McpTransport,
+    pub status: McpStatus,
     pub tools_count: u32,
     pub endpoint: String,
 }
@@ -487,14 +652,11 @@ pub struct McpServerInfo {
 pub struct AuditEntry {
     pub id: Uuid,
     pub timestamp: DateTime<Utc>,
-    /// One of `"user"`, `"agent"`, `"tool"`.
-    pub actor: String,
-    /// One of `"chat"`, `"tool_call"`, `"config_change"`, `"approval"`.
-    pub action: String,
+    pub actor: AuditActor,
+    pub action: AuditAction,
     /// Target of the action (tool name, model id, etc.).
     pub target: String,
-    /// One of `"ok"`, `"denied"`, `"error"`.
-    pub result: String,
+    pub result: AuditResult,
     pub detail: serde_json::Value,
     pub session_id: Option<Uuid>,
 }
@@ -641,17 +803,27 @@ mod tests {
         let a = AuditEntry {
             id: Uuid::new_v4(),
             timestamp: Utc::now(),
-            actor: "user".into(),
-            action: "tool_call".into(),
+            actor: AuditActor::User,
+            action: AuditAction::ToolCall,
             target: "bash".into(),
-            result: "ok".into(),
+            result: AuditResult::Ok,
             detail: json!({"exit_code": 0}),
             session_id: Some(Uuid::new_v4()),
         };
         let s = serde_json::to_string(&a).unwrap();
         let v: AuditEntry = serde_json::from_str(&s).unwrap();
-        assert_eq!(v.actor, "user");
-        assert_eq!(v.action, "tool_call");
-        assert_eq!(v.result, "ok");
+        assert_eq!(v.actor, AuditActor::User);
+        assert_eq!(v.action, AuditAction::ToolCall);
+        assert_eq!(v.result, AuditResult::Ok);
+    }
+
+    #[test]
+    fn chat_role_serializes_lowercase() {
+        // Wire format must stay lowercase so the runtime can keep
+        // emitting plain strings without conversion.
+        let s = serde_json::to_string(&ChatRole::Assistant).unwrap();
+        assert_eq!(s, "\"assistant\"");
+        let s = serde_json::to_string(&AuditAction::ConfigChange).unwrap();
+        assert_eq!(s, "\"config_change\"");
     }
 }
