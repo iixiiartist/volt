@@ -449,6 +449,7 @@ async fn chat_emits_streaming_chunks() {
     let mut rx = handle.subscribe();
     let mut chunks = 0;
     let mut got_complete = false;
+    let mut final_text = String::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline && !got_complete {
         match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
@@ -456,7 +457,8 @@ async fn chat_emits_streaming_chunks() {
                 chunks += 1;
                 eprintln!("chunk {}: '{}'", chunks, content);
             }
-            Ok(Ok(UiEvent::ChatComplete { .. })) => {
+            Ok(Ok(UiEvent::ChatComplete { final_text: f, .. })) => {
+                final_text = f;
                 got_complete = true;
                 break;
             }
@@ -469,9 +471,11 @@ async fn chat_emits_streaming_chunks() {
         }
     }
     assert!(got_complete, "chat did not complete in time");
-    eprintln!("got {} streaming chunks", chunks);
+    eprintln!("got {} streaming chunks, final text: {:?}", chunks, final_text);
     // We expect at least 1 chunk (could be 1 for fast non-streaming models)
     assert!(chunks >= 1, "expected at least 1 streaming chunk, got {}", chunks);
+    // Final text must be non-empty (the user sees THIS in the chat bubble)
+    assert!(!final_text.is_empty(), "final_text was empty - assistant message would not render in UI");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

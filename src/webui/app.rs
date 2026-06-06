@@ -48,34 +48,53 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
             state.chat_streaming.set(true);
         }
         UiEvent::ChatChunk { content } => {
-            // Append (or create) the in-progress assistant message
-            let mut msgs = state.chat_messages.write();
+            // Append (or create) the in-progress assistant message.
+            // We always replace the whole Vec so Dioxus's signal
+            // sees a fresh reference and re-renders (mutating in
+            // place via ReadGuard doesn't always trigger updates).
+            let mut msgs = state.chat_messages.read().clone();
             if let Some(last) = msgs.last_mut() {
                 if last.role == "assistant" && last.id.is_nil() {
                     last.content.push_str(&content);
-                    return;
+                } else {
+                    msgs.push(super::commands::ChatMessage {
+                        id: uuid::Uuid::nil(),
+                        role: "assistant".into(),
+                        content,
+                        tool_calls: Vec::new(),
+                        timestamp: chrono::Utc::now(),
+                    });
                 }
+            } else {
+                msgs.push(super::commands::ChatMessage {
+                    id: uuid::Uuid::nil(),
+                    role: "assistant".into(),
+                    content,
+                    tool_calls: Vec::new(),
+                    timestamp: chrono::Utc::now(),
+                });
             }
-            msgs.push(super::commands::ChatMessage {
-                id: uuid::Uuid::nil(),
-                role: "assistant".into(),
-                content,
-                tool_calls: Vec::new(),
-                timestamp: chrono::Utc::now(),
-            });
+            state.chat_messages.set(msgs);
         }
         UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
             state.chat_streaming.set(false);
-            // Replace the in-progress assistant message with the final
-            // text (which may include more content than streamed).
-            let mut msgs = state.chat_messages.write();
+            let mut msgs = state.chat_messages.read().clone();
             if let Some(last) = msgs.last_mut() {
                 if last.role == "assistant" && last.id.is_nil() {
                     last.content = final_text.clone();
                     last.id = uuid::Uuid::new_v4();
+                } else {
+                    // No streaming bubble — push a fresh one
+                    msgs.push(super::commands::ChatMessage {
+                        id: uuid::Uuid::new_v4(),
+                        role: "assistant".into(),
+                        content: final_text.clone(),
+                        tool_calls: Vec::new(),
+                        timestamp: chrono::Utc::now(),
+                    });
                 }
             }
-            drop(msgs);
+            state.chat_messages.set(msgs);
             state.toast(
                 ToastLevel::Success,
                 format!("Done ({} tokens, {}ms)", tokens_used, duration_ms),
