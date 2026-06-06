@@ -47,6 +47,41 @@ volt.exe agent-run --input "Analyze this codebase" --allow
 
 > **No Docker?** Set `DATABASE_URL` to any value (PostgreSQL unreachable is caught gracefully — runs without persistence).
 
+### Option A+: Install with desktop shortcut (Windows)
+
+```powershell
+# 1. Download volt-windows.zip from the latest release
+# 2. Right-click the zip → Extract All, or:
+Expand-Archive .\volt-windows.zip -DestinationPath C:\volt-install
+
+# 3. Run the installer (creates Start Menu + Desktop shortcuts, registers in Add/Remove Programs):
+powershell -ExecutionPolicy Bypass -File C:\volt-install\install.ps1
+
+# 4. Launch from Start Menu → Volt → Volt WebUI
+#    Or from the Desktop shortcut. Or from anywhere:
+"%LOCALAPPDATA%\Volt\webui.exe"
+
+# Uninstall: Start Menu → Volt → Uninstall Volt WebUI
+# Or: settings → Apps → Installed apps → Volt WebUI → Uninstall
+```
+
+### Option A++: Install on Linux/macOS
+
+```bash
+# 1. Download volt-linux-x86_64.tar.gz (or macos) from the latest release
+tar xzf volt-linux-x86_64.tar.gz
+cd volt-linux-x86_64
+
+# 2. Run the installer (creates .desktop file, adds to PATH):
+./install.sh
+
+# 3. Launch from your application launcher, or:
+~/.local/bin/webui
+
+# Uninstall:
+./install.sh --uninstall
+```
+
 ### Option B: Build from source
 
 **Linux:**

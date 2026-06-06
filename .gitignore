@@ -74,3 +74,9 @@ paper/
 
 # Misc
 /tmp
+installers/windows/
+installers/linux/
+installers/macos/
+installers/*.zip
+installers/*.tar.gz
+count_chart.html
