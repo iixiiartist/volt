@@ -150,6 +150,12 @@ impl Agent {
         self
     }
 
+    /// Re-bind the session_id on an already-built agent. Used by the
+    /// webui runtime which mints a fresh session per `Chat` turn.
+    pub fn set_session_id(&mut self, session_id: uuid::Uuid) {
+        self.session_id = Some(session_id);
+    }
+
     pub fn with_event_bus(mut self, bus: crate::events::EventBus) -> Self {
         self.event_bus = Some(bus);
         self

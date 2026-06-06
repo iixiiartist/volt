@@ -43,21 +43,50 @@ fn Bootstrap() -> Element {
 async fn handle_event(state: &mut VoltState, event: UiEvent) {
     match event {
         UiEvent::Pong => {}
-        UiEvent::ChatComplete {
-            final_text,
-            tokens_used,
-            duration_ms,
-        } => {
+        UiEvent::ChatStarted { session_id } => {
+            state.chat_session.set(Some(session_id));
+            state.chat_streaming.set(true);
+        }
+        UiEvent::ChatChunk { content } => {
+            // Append (or create) the in-progress assistant message
+            let mut msgs = state.chat_messages.write();
+            if let Some(last) = msgs.last_mut() {
+                if last.role == "assistant" && last.id.is_nil() {
+                    last.content.push_str(&content);
+                    return;
+                }
+            }
+            msgs.push(super::commands::ChatMessage {
+                id: uuid::Uuid::nil(),
+                role: "assistant".into(),
+                content,
+                tool_calls: Vec::new(),
+                timestamp: chrono::Utc::now(),
+            });
+        }
+        UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
+            state.chat_streaming.set(false);
+            // Replace the in-progress assistant message with the final
+            // text (which may include more content than streamed).
+            let mut msgs = state.chat_messages.write();
+            if let Some(last) = msgs.last_mut() {
+                if last.role == "assistant" && last.id.is_nil() {
+                    last.content = final_text.clone();
+                    last.id = uuid::Uuid::new_v4();
+                }
+            }
+            drop(msgs);
             state.toast(
                 ToastLevel::Success,
                 format!("Done ({} tokens, {}ms)", tokens_used, duration_ms),
             );
-            let _ = final_text;
         }
         UiEvent::ChatError { message } => {
+            state.chat_streaming.set(false);
             state.toast(ToastLevel::Error, format!("Chat error: {}", message));
         }
         UiEvent::ChatCancelled => {
+            state.chat_streaming.set(false);
             state.toast(ToastLevel::Warning, "Chat cancelled");
         }
         UiEvent::ApprovalRequest {
@@ -135,6 +164,22 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
         }
         UiEvent::AuditLog { entries } => {
             state.audit_entries.set(entries);
+        }
+        UiEvent::SessionCreated { id } => {
+            state.chat_session.set(Some(id));
+        }
+        UiEvent::SessionLoaded { id, messages } => {
+            state.chat_session.set(Some(id));
+            state.chat_messages.set(messages);
+        }
+        UiEvent::SessionDeleted { id }
+            if *state.chat_session.read() == Some(id) =>
+        {
+            state.chat_session.set(None);
+            state.chat_messages.set(Vec::new());
+        }
+        UiEvent::SessionsListed { sessions } => {
+            state.sessions_cache.set(sessions);
         }
         _ => {}
     }

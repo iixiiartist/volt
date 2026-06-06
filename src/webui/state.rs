@@ -104,6 +104,14 @@ pub struct VoltState {
     pub catalog_query: Signal<String>,
     pub mcp_servers: Signal<Vec<super::commands::McpServerInfo>>,
     pub audit_entries: Signal<Vec<super::commands::AuditEntry>>,
+
+    // Chat state.
+    pub chat_messages: Signal<Vec<super::commands::ChatMessage>>,
+    pub chat_streaming: Signal<bool>,
+    pub chat_session: Signal<Option<uuid::Uuid>>,
+
+    // Sessions list cache (used by SessionsPage).
+    pub sessions_cache: Signal<Vec<super::commands::SessionInfo>>,
 }
 
 #[derive(Clone, Debug)]
@@ -163,6 +171,10 @@ impl Default for VoltState {
             catalog_query: Signal::new(String::new()),
             mcp_servers: Signal::new(Vec::new()),
             audit_entries: Signal::new(Vec::new()),
+            chat_messages: Signal::new(Vec::new()),
+            chat_streaming: Signal::new(false),
+            chat_session: Signal::new(None),
+            sessions_cache: Signal::new(Vec::new()),
         }
     }
 }

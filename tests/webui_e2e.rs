@@ -556,6 +556,74 @@ async fn uninstall_skill_removes_from_postgres() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chat_message_persists_to_sqlite() {
+    let _g = env_or_skip("GROQ_API_KEY").unwrap();
+    let _p = env_or_skip("DATABASE_URL").unwrap();
+    let handle = Runtime::start().await.unwrap();
+
+    // Send a chat
+    handle
+        .send(UiCommand::Chat {
+            session_id: None,
+            input: "Say PERSIST".into(),
+        })
+        .await
+        .unwrap();
+    let started = wait_for(&handle, |e| matches!(e, UiEvent::ChatStarted { .. })).await;
+    let session_id = match started {
+        Some(UiEvent::ChatStarted { session_id }) => session_id,
+        other => panic!("expected ChatStarted, got {:?}", other),
+    };
+    eprintln!("chat started with session {}", session_id);
+    let complete =
+        wait_for(&handle, |e| matches!(e, UiEvent::ChatComplete { .. })).await;
+    assert!(matches!(complete, Some(UiEvent::ChatComplete { .. })));
+
+    // List sessions to see what's in the DB
+    handle.send(UiCommand::ListSessions).await.unwrap();
+    let listed = wait_for(&handle, |e| matches!(e, UiEvent::SessionsListed { .. })).await;
+    if let Some(UiEvent::SessionsListed { sessions }) = listed {
+        eprintln!("DB has {} sessions:", sessions.len());
+        for s in &sessions {
+            eprintln!(
+                "  - {} (id={}, msg_count={})",
+                s.name, s.id, s.message_count
+            );
+        }
+    }
+
+    // Now load the session back and confirm both user + assistant
+    // messages are stored in SQLite
+    handle
+        .send(UiCommand::LoadSession { id: session_id })
+        .await
+        .unwrap();
+    let loaded = wait_for(&handle, |e| matches!(e, UiEvent::SessionLoaded { .. })).await;
+    match loaded {
+        Some(UiEvent::SessionLoaded { id, messages }) => {
+            assert_eq!(id, session_id);
+            eprintln!("loaded {} messages for session {}", messages.len(), id);
+            for m in &messages {
+                eprintln!("  - [{}] (len={}) {}", m.role, m.content.len(), &m.content[..m.content.len().min(60)]);
+            }
+            assert!(messages.len() >= 2, "expected user + assistant, got {:?}", messages);
+            let user = messages.iter().find(|m| m.role == "user");
+            let asst = messages.iter().find(|m| m.role == "assistant");
+            assert!(user.is_some(), "no user message in loaded session");
+            assert!(asst.is_some(), "no assistant message in loaded session");
+            let asst_msg = asst.unwrap();
+            eprintln!("assistant content full: '{}'", asst_msg.content);
+            assert!(
+                asst_msg.content.to_uppercase().contains("PERSIST"),
+                "expected PERSIST in response, got: '{}'",
+                asst_msg.content
+            );
+        }
+        other => panic!("expected SessionLoaded, got {:?}", other),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn toggle_routine_persists() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();

@@ -2,7 +2,7 @@
 // we just want it to run on first mount of each page.
 #![allow(clippy::let_underscore_future)]
 
-use super::commands::{ToolInfo, UiCommand};
+use super::commands::{ToolInfo, UiCommand, UiEvent};
 use super::routes::Page;
 use super::state::{
     ToastLevel, VoltState, COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO,
@@ -171,18 +171,28 @@ pub fn DashboardPage() -> Element {
 pub fn ChatPage() -> Element {
     let mut state: VoltState = use_context();
     let mut input = use_signal(String::new);
-    let mut is_streaming = use_signal(|| false);
-    let session_id = use_signal(|| None::<uuid::Uuid>);
-
     rsx! {
         PageHeader { title: "Chat", subtitle: "Conversational interface with the Volt agent" }
         div { style: "display: flex; flex-direction: column; height: calc(100vh - 56px - 28px - 80px);",
             div { style: "flex: 1; overflow-y: auto; padding: 24px 32px;",
-                div { style: "max-width: 900px; margin: 0 auto;",
-                    if session_id.read().is_none() {
-                        EmptyState { icon: "\u{1F4AC}", title: "Start a conversation", description: "Type a message below to chat with the Volt agent." }
-                    } else {
-                        div { style: "color: {COLOR_TEXT_DIM}; text-align: center; padding: 40px;", "Messages will stream here in real time." }
+                div { style: "max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;",
+                    {
+                        let msgs = state.chat_messages.read();
+                        let messages = msgs.clone();
+                        if messages.is_empty() {
+                            rsx! { EmptyState { icon: "\u{1F4AC}", title: "Start a conversation", description: "Type a message below to chat with the Volt agent. The conversation is persisted to SQLite and replayed next time you load this session." } }
+                        } else {
+                            rsx! {
+                                for m in messages.iter() {
+                                    ChatBubble { role: m.role.clone(), content: m.content.clone() }
+                                }
+                            }
+                        }
+                    }
+                    if *state.chat_streaming.read() {
+                        div { style: "color: {COLOR_TEXT_DIM}; font-style: italic; font-size: 13px; padding: 0 8px;",
+                            "▌ streaming..."
+                        }
                     }
                 }
             }
@@ -190,42 +200,88 @@ pub fn ChatPage() -> Element {
                 div { style: "max-width: 900px; margin: 0 auto; display: flex; gap: 12px; align-items: flex-end;",
                     textarea {
                         style: "flex: 1; padding: 12px 16px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 8px; color: {COLOR_TEXT}; font-size: 14px; font-family: inherit; resize: none; min-height: 44px; max-height: 200px; outline: none;",
-                        placeholder: "Type your message...",
+                        placeholder: if *state.chat_streaming.read() { "Waiting for response..." } else { "Type your message..." },
                         value: "{input.read()}",
+                        disabled: "{state.chat_streaming.read()}",
                         oninput: move |e| input.set(e.value().to_string()),
+                        onkeydown: move |e| {
+                            if e.key() == Key::Enter && !e.modifiers().shift() {
+                                e.prevent_default();
+                                let text = input.read().trim().to_string();
+                                let streaming = *state.chat_streaming.read();
+                                if !text.is_empty() && !streaming {
+                                    let sid = *state.chat_session.read();
+                                    input.set(String::new());
+                                    state.chat_streaming.set(true);
+                                    let mut msgs = state.chat_messages.write();
+                                    msgs.push(super::commands::ChatMessage {
+                                        id: uuid::Uuid::new_v4(),
+                                        role: "user".into(),
+                                        content: text.clone(),
+                                        tool_calls: Vec::new(),
+                                        timestamp: chrono::Utc::now(),
+                                    });
+                                    drop(msgs);
+                                    state.fire(UiCommand::Chat { session_id: sid, input: text });
+                                }
+                            }
+                        },
                         rows: "1",
                     }
                     button {
-                        style: "padding: 8px 16px; background-color: {COLOR_ACCENT}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                        style: if *state.chat_streaming.read() {
+                            "padding: 8px 16px; background-color: {COLOR_DANGER}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;"
+                        } else {
+                            "padding: 8px 16px; background-color: {COLOR_ACCENT}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;"
+                        },
+                        disabled: "{state.chat_streaming.read()}",
                         onclick: move |_| {
                             let text = input.read().trim().to_string();
-                            if !text.is_empty() && !*is_streaming.read() {
-                                let sid = *session_id.read();
+                            let streaming = *state.chat_streaming.read();
+                            if !text.is_empty() && !streaming {
+                                let sid = *state.chat_session.read();
                                 input.set(String::new());
-                                is_streaming.set(true);
+                                state.chat_streaming.set(true);
+                                let mut msgs = state.chat_messages.write();
+                                msgs.push(super::commands::ChatMessage {
+                                    id: uuid::Uuid::new_v4(),
+                                    role: "user".into(),
+                                    content: text.clone(),
+                                    tool_calls: Vec::new(),
+                                    timestamp: chrono::Utc::now(),
+                                });
+                                drop(msgs);
                                 state.fire(UiCommand::Chat { session_id: sid, input: text });
                             }
                         },
-                        "Send"
-                    }
-                    if *is_streaming.read() {
-                        button {
-                            style: "padding: 8px 16px; background-color: transparent; color: {COLOR_DANGER}; border: 1px solid {COLOR_DANGER}; border-radius: 6px; font-size: 13px; cursor: pointer;",
-                            onclick: move |_| {
-                                is_streaming.set(false);
-                                state.fire(UiCommand::CancelChat);
-                            },
-                            "Cancel"
-                        }
+                        if *state.chat_streaming.read() { "Cancel" } else { "Send" }
                     }
                 }
                 div { style: "max-width: 900px; margin: 8px auto 0 auto; display: flex; gap: 16px; font-size: 11px; color: {COLOR_TEXT_MUTED};",
-                    span { "Enter to send" }
+                    span { "Enter to send, Shift+Enter for newline" }
                     span { "Model: " }
                     span { style: "font-family: {FONT_MONO};", "{state.model.read()}" }
                     div { style: "flex: 1;" }
                     span { "EU AI Act Art. 12 logged" }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn ChatBubble(role: String, content: String) -> Element {
+    let is_user = role == "user";
+    let bg = if is_user { COLOR_PANEL_HOVER } else { COLOR_PANEL };
+    let label = if is_user { "You" } else { "Volt" };
+    let label_color = if is_user { COLOR_ACCENT } else { COLOR_SUCCESS };
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: 4px;",
+            span { style: "color: {label_color}; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;",
+                "{label}"
+            }
+            div { style: "background-color: {bg}; border: 1px solid {COLOR_BORDER}; border-radius: 8px; padding: 12px 16px; color: {COLOR_TEXT}; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word;",
+                "{content}"
             }
         }
     }
@@ -289,6 +345,11 @@ pub fn SessionsPage() -> Element {
     let mut state: VoltState = use_context();
     let mut new_name = use_signal(String::new);
     let mut show_new = use_signal(|| false);
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListSessions);
+        });
+    }
     rsx! {
         PageHeader { title: "Sessions", subtitle: "Conversation history with load, fork, and delete" }
         div { style: "padding: 24px 32px;",
@@ -317,7 +378,71 @@ pub fn SessionsPage() -> Element {
                     }
                 }
             }
-            EmptyState { icon: "\u{1F4C1}", title: "No sessions yet", description: "Start a chat to create your first session, or click 'New Session' to create one." }
+            {
+                let _ = use_resource(move || async move {
+                    state.fire(UiCommand::ListSessions);
+                });
+            }
+            SessionsList {}
+        }
+    }
+}
+
+#[component]
+fn SessionsList() -> Element {
+    let mut state: VoltState = use_context();
+    {
+        // Drain runtime events into the sessions cache.
+        let _ = use_resource(move || async move {
+            let handle_opt = state.handle.read().clone();
+            if let Some(h) = handle_opt {
+                let mut rx = h.subscribe();
+                while let Ok(ev) = rx.recv().await {
+                    if let UiEvent::SessionsListed { sessions: s } = ev {
+                        state.sessions_cache.set(s);
+                    }
+                }
+            }
+        });
+    }
+    let cached = state.sessions_cache.read().clone();
+    if cached.is_empty() {
+        rsx! { EmptyState { icon: "\u{1F4C1}", title: "No sessions yet", description: "Start a chat to create your first session, or click 'New Session' to create one." } }
+    } else {
+        rsx! {
+            div { style: "display: flex; flex-direction: column; gap: 8px;",
+                for s in cached.iter() {
+                    Panel { title: s.name.clone(),
+                        div { style: "display: flex; gap: 16px; font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 8px; flex-wrap: wrap;",
+                            span { "ID: " }
+                            span { style: "font-family: {FONT_MONO}; color: {COLOR_TEXT};", "{&s.id.to_string()[..8]}" }
+                            span { "•" }
+                            span { "Created: {s.created_at}" }
+                            span { "•" }
+                            span { "Updated: {s.updated_at}" }
+                            span { "•" }
+                            span { "{s.message_count} messages" }
+                        }
+                        div { style: "display: flex; gap: 8px;",
+                            PrimaryButton { label: "Load".to_string(), onclick: {
+                                let id = s.id;
+                                move |_| {
+                                    state.fire(UiCommand::LoadSession { id });
+                                    state.navigate(super::routes::Page::Chat);
+                                }
+                            }}
+                            SecondaryButton { label: "Fork".to_string(), onclick: {
+                                let id = s.id;
+                                move |_| state.fire(UiCommand::ForkSession { id })
+                            }}
+                            DangerButton { label: "Delete".to_string(), onclick: {
+                                let id = s.id;
+                                move |_| state.fire(UiCommand::DeleteSession { id })
+                            }}
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -325,6 +450,12 @@ pub fn SessionsPage() -> Element {
 #[component]
 pub fn SettingsPage() -> Element {
     let mut state: VoltState = use_context();
+    {
+        // Auto-load the current runtime config on mount
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::GetConfig);
+        });
+    }
     let initial_model = state.model.read().clone();
     let initial_provider = state.provider.read().clone();
     let mut model_input = use_signal(move || initial_model);
@@ -355,8 +486,16 @@ pub fn SettingsPage() -> Element {
                     }
                     div { style: "display: flex; gap: 8px;",
                         PrimaryButton { label: "Save".to_string(), onclick: move |_| {
-                            state.model.set(model_input.read().clone());
-                            state.provider.set(provider_input.read().clone());
+                            let m = model_input.read().clone();
+                            let p = provider_input.read().clone();
+                            state.model.set(m.clone());
+                            state.provider.set(p.clone());
+                            // Persist to the runtime via UpdateConfig
+                            let patch = serde_json::json!({
+                                "default_model": m,
+                                "default_provider": p,
+                            });
+                            state.fire(UiCommand::UpdateConfig { patch });
                             state.toast(ToastLevel::Success, "Settings saved");
                         }}
                         SecondaryButton { label: "Run Doctor".to_string(), onclick: move |_| state.fire(UiCommand::RunDoctor) }

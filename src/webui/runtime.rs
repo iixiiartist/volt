@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
 use uuid::Uuid;
 
 // =============================================================================
@@ -161,7 +161,10 @@ fn parse_env_bool(key: &str, default: bool) -> bool {
 /// inside an `Arc` by the command-loop task; once the task exits, the
 /// runtime is dropped.
 pub struct Runtime {
-    agent: Arc<Agent>,
+    /// The agent is wrapped in async `Mutex` (not `Arc`) so per-turn
+    /// mutations like `set_session_id` are possible from a `&self`
+    /// command-loop. The mutex is held only briefly.
+    agent: AsyncMutex<Agent>,
     sqlite_pool: Option<SqlitePool>,
     /// PostgreSQL connection pool. Populated from `DATABASE_URL` (or the
     /// `database_url` config field) at startup. Used for jobs, routines,
@@ -384,7 +387,7 @@ impl Runtime {
 
         // 12) Construct the runtime
         let runtime = Runtime {
-            agent: Arc::new(agent),
+            agent: AsyncMutex::new(agent),
             sqlite_pool,
             pg_pool,
             config: Arc::new(RwLock::new(config)),
@@ -592,13 +595,16 @@ impl Runtime {
         if let Some(ref pool) = self.sqlite_pool {
             // Bind the session to the agent for this turn. The agent
             // already has a session_id from start(); we re-bind by
-            // writing into its state.
+            // writing into its state AND updating self.session_id so
+            // save_session_messages_delta writes to the right row.
+            let mut agent = self.agent.lock().await;
+            agent.set_session_id(session_id);
             {
-                let mut state = self.agent.state().lock().await;
+                let mut state = agent.state().lock().await;
                 state.session_id = session_id;
             }
             if let Ok(msgs) = session::load_messages(pool, session_id).await {
-                let mut state = self.agent.state().lock().await;
+                let mut state = agent.state().lock().await;
                 for m in msgs {
                     let already = state.messages.iter().any(|existing| {
                         existing.id == m.id
@@ -609,6 +615,7 @@ impl Runtime {
                     }
                 }
             }
+            drop(agent);
         }
         if let Ok(mut g) = self.active_session.lock() {
             *g = Some(session_id);
@@ -653,13 +660,16 @@ impl Runtime {
 
         // Run the agent. The on_token callback (set in start()) already
         // streams `ChatChunk` events into the internal channel.
-        let result = self.agent.run(&input).await;
+        let result = {
+            let agent = self.agent.lock().await;
+            agent.run(&input).await
+        };
 
         // Drain task is no longer needed.
         tool_event_handle.abort();
 
         let duration_ms = started.elapsed().as_millis() as u64;
-        let state_snapshot = self.agent.state().lock().await.clone();
+        let state_snapshot = self.agent.lock().await.state().lock().await.clone();
         let tokens_used =
             (state_snapshot.total_prompt_tokens + state_snapshot.total_completion_tokens) as u32;
 
