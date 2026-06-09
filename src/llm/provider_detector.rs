@@ -107,14 +107,28 @@ impl ProviderInventory {
         // matches the override's `provider` field. (Override parsing
         // happens elsewhere; we just match by provider slug here.)
         let m = model.to_lowercase();
-        // Direct slug match — `provider:model` shorthand.
+        // 1. Direct slug match — `provider:model` shorthand. This
+        //    handles `groq:llama-3.1-8b-instant`, `nvidia/foo`, and
+        //    importantly Ollama-style tags like `claudette:7b` which
+        //    would otherwise match the `claude` Anthropic hint below.
         if let Some((prefix, _)) = m.split_once(':').or_else(|| m.split_once('/')) {
             if let Some(p) = self.providers.iter().find(|p| p.slug == prefix && p.is_active) {
                 return Some(p);
             }
         }
-        // Native model-name hints (Claude/GPT) only match if the matching
-        // provider is actually active. We never silently substitute.
+        // 2. Ollama-style colon tag with no slug prefix. Routes to a
+        //    local Ollama server first, then Ollama Cloud.
+        if m.contains(':') {
+            if let Some(p) = self
+                .active()
+                .find(|p| p.slug == "ollama_local" || p.slug == "ollama")
+            {
+                return Some(p);
+            }
+        }
+        // 3. Native model-name hints (Claude/GPT) only match if the
+        //    matching provider is actually active. We never silently
+        //    substitute.
         if m.contains("claude") {
             return self.active().find(|p| p.slug == "anthropic");
         }
@@ -136,12 +150,8 @@ impl ProviderInventory {
                 .active()
                 .find(|p| p.slug == "nvidia" || p.slug == "moonshot");
         }
-        if m.contains(':') {
-            // Ollama-style tag.
-            return self.active().find(|p| p.slug == "ollama");
-        }
-        // Default: first active provider. Caller is expected to surface
-        // a clear error if this returns None.
+        // 4. Default: first active provider. Caller is expected to
+        //    surface a clear error if this returns None.
         self.active().next()
     }
 }
@@ -195,7 +205,43 @@ pub fn is_placeholder_key(v: &str) -> bool {
 }
 
 /// Probe the environment + local hosts and build the full inventory.
+///
+/// Cached with `OnceLock` because `detect()` is called on every
+/// `resolve_provider` call. The cache is invalidated by
+/// `invalidate_cache()` whenever an API key is added or removed
+/// (`save_api_key` / `unset_api_key`).
 pub fn detect() -> ProviderInventory {
+    use std::sync::RwLock;
+    static CACHE: std::sync::OnceLock<RwLock<Option<ProviderInventory>>> =
+        std::sync::OnceLock::new();
+    let lock = CACHE.get_or_init(|| RwLock::new(None));
+    if let Ok(g) = lock.read() {
+        if let Some(inv) = g.as_ref() {
+            return inv.clone();
+        }
+    }
+    let inv = detect_uncached();
+    if let Ok(mut g) = lock.write() {
+        *g = Some(inv.clone());
+    }
+    inv
+}
+
+/// Drop the cached inventory. Call this after `save_api_key` /
+/// `unset_api_key` so the next `detect()` re-reads env vars.
+pub fn invalidate_cache() {
+    use std::sync::RwLock;
+    static CACHE: std::sync::OnceLock<RwLock<Option<ProviderInventory>>> =
+        std::sync::OnceLock::new();
+    let lock = CACHE.get_or_init(|| RwLock::new(None));
+    if let Ok(mut g) = lock.write() {
+        *g = None;
+    }
+}
+
+/// Build the inventory from scratch. Used by `detect()` (cached) and
+/// by tests that mutate env vars.
+pub fn detect_uncached() -> ProviderInventory {
     let mut providers = Vec::new();
 
     // ── 1. LLM_BASE_URL override ──────────────────────────────
@@ -352,11 +398,10 @@ pub fn detect() -> ProviderInventory {
         } else {
             (false, ProviderStatus::InactiveLocalNotConfigured)
         };
-        let base_url = match *slug {
-            "ollama_local" => format!("http://{}:{}/v1", host, port),
-            // llama.cpp and LiteRT-LM are OpenAI-compatible; default to /v1.
-            _ => format!("http://{}:{}/v1", host, port),
-        };
+        // All three local servers are OpenAI-compatible; default to /v1.
+        // The detector doesn't care about the upstream path shape — the
+        // provider implementation handles any per-server quirks.
+        let base_url = format!("http://{}:{}/v1", host, port);
         providers.push(DetectedProvider {
             slug: (*slug).into(),
             display_name: name,
@@ -445,13 +490,16 @@ mod tests {
         ] {
             std::env::remove_var(k);
         }
+        // Tests must also invalidate the detector cache so the next
+        // call sees the freshly-cleared env.
+        super::invalidate_cache();
     }
 
     #[test]
     fn no_keys_no_override_yields_only_inactive_cloud_providers() {
         let _g = EnvGuard::new();
         clear_llm_env();
-        let inv = detect();
+        let inv = detect_uncached();
         // The 6 cloud providers are always present (slugs stable). They
         // must all be inactive in this configuration.
         for slug in ["groq", "nvidia", "openai", "anthropic", "ollama", "moonshot"] {
@@ -476,7 +524,7 @@ mod tests {
         let _g = EnvGuard::new();
         clear_llm_env();
         std::env::set_var("GROQ_API_KEY", "gsk_real-looking-key-1234");
-        let inv = detect();
+        let inv = detect_uncached();
         let active: Vec<&str> = inv.active_slugs();
         assert!(active.contains(&"groq"), "active: {:?}", active);
         assert_eq!(
@@ -494,7 +542,7 @@ mod tests {
         let _g = EnvGuard::new();
         clear_llm_env();
         std::env::set_var("GROQ_API_KEY", "your_groq_api_key_here");
-        let inv = detect();
+        let inv = detect_uncached();
         let groq = inv.providers.iter().find(|p| p.slug == "groq").unwrap();
         assert!(!groq.is_active);
         assert_eq!(groq.status, ProviderStatus::InactivePlaceholderKey);
@@ -506,7 +554,7 @@ mod tests {
         clear_llm_env();
         std::env::set_var("LLM_BASE_URL", "http://localhost:1234/v1");
         std::env::set_var("LLM_API_KEY", "real-key");
-        let inv = detect();
+        let inv = detect_uncached();
         let o = inv
             .providers
             .iter()
@@ -533,7 +581,7 @@ mod tests {
         let _g = EnvGuard::new();
         clear_llm_env();
         std::env::set_var("OPENAI_API_KEY", "sk-test");
-        let inv = detect();
+        let inv = detect_uncached();
         // Native GPT prefix matches the active OpenAI provider.
         let p = inv.route("gpt-4o-mini").unwrap();
         assert_eq!(p.slug, "openai");
@@ -543,7 +591,7 @@ mod tests {
     fn route_fails_cleanly_for_unconfigured_model() {
         let _g = EnvGuard::new();
         clear_llm_env();
-        let inv = detect();
+        let inv = detect_uncached();
         // No active providers at all -> no route.
         assert!(inv.route("claude-sonnet-4-5").is_none());
     }
@@ -553,7 +601,7 @@ mod tests {
         let _g = EnvGuard::new();
         clear_llm_env();
         std::env::set_var("NVIDIA_API_KEY", "nvapi-test");
-        let inv = detect();
+        let inv = detect_uncached();
         // DeepSeek (a NIM vendor) routes to NIM when active.
         let p = inv.route("deepseek-ai/deepseek-v3.2").unwrap();
         assert!(p.slug == "nvidia" || p.slug == "moonshot");

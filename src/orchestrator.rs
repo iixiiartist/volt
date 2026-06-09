@@ -935,7 +935,7 @@ pub fn build_provider(model: &str, agent_name: &str) -> (Box<dyn LLMProvider>, S
 pub fn try_build_provider(
     model: &str,
     agent_name: &str,
-) -> anyhow::Result<(Box<dyn LLMProvider>, String)> {
+) -> Result<(Box<dyn LLMProvider>, String), ResolveError> {
     let route = resolve_provider(model)?;
     let kind_str = match route.kind {
         ProviderKind::Anthropic => "anthropic",

@@ -23,7 +23,8 @@ pub async fn run(suite: PathBuf, model: Option<String>) -> anyhow::Result<()> {
         })?;
     let content = tokio::fs::read_to_string(&suite).await?;
     let suite_data: crate::eval::EvalSuite = serde_json::from_str(&content)?;
-    let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "eval-agent");
+    let (provider, provider_kind) = crate::orchestrator::try_build_provider(&model, "eval-agent")
+        .map_err(|e| anyhow::anyhow!("{}\n{}", e, e.hint()))?;
     let tools = crate::tools::register_all_tools().await;
     let config = AgentConfig {
         name: "eval-agent".into(),

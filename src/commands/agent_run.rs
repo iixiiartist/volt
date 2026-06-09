@@ -49,7 +49,8 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         };
     }
 
-    let (provider, provider_kind) = orchestrator::build_provider(&model, "volt-agent");
+    let (provider, provider_kind) = orchestrator::try_build_provider(&model, "volt-agent")
+        .map_err(|e| anyhow::anyhow!("{}\n{}", e, e.hint()))?;
     let cancel = CancelToken::new();
     let c = cancel.clone();
     tokio::spawn(async move {

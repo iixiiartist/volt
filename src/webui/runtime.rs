@@ -264,9 +264,13 @@ impl Runtime {
         let tools =
             crate::tools::setup_tools(Some(&embedder), config.database_url.as_deref()).await;
 
-        // 6) Resolve an LLM provider. `build_provider` falls back to a
-        //    generic LLM_API_KEY if the model is unknown, so this is
-        //    safe even with no env vars.
+        // 6) Resolve an LLM provider. We use `build_provider` (not
+        //    `try_build_provider`) here on purpose: the WebUI must
+        //    boot even with no API key so the user can enter one via
+        //    the setup wizard. `build_provider` returns a no-key
+        //    Groq provider on error; the first chat attempt will 401
+        //    and the wizard will surface. `SubmitApiKey` rebuilds
+        //    the provider once a key is entered.
         let model = config.default_model.clone();
         let (provider, _provider_kind) = crate::orchestrator::build_provider(&model, "volt-webui");
 
@@ -1749,6 +1753,20 @@ impl Runtime {
             provider_slug,
             model
         );
+
+        // 0) Reject placeholder values. The CLI does this in
+        //    `volt config set`; the WebUI must mirror that behavior.
+        if crate::llm::provider_detector::is_placeholder_key(&api_key) {
+            self.emit(UiEvent::Error {
+                source: "setup".into(),
+                message: format!(
+                    "API key for `{}` looks like a placeholder (e.g. `your_*_here`). \
+                     Paste a real key from the provider's dashboard.",
+                    provider_slug
+                ),
+            });
+            return;
+        }
 
         // 1) Persist to volt_home()/.env and set the process env.
         if let Err(e) = crate::config::save_api_key(&provider_slug, &api_key) {

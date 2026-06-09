@@ -773,8 +773,15 @@ mod tests {
         std::env::set_var("OLLAMA_API_KEY", "test_cloud_key");
         assert_eq!(provider_env_var("ollama").as_deref(), Some("OLLAMA_API_KEY"));
         std::env::remove_var("OLLAMA_API_KEY");
-        // Unknown slug falls back to LLM_API_KEY.
-        assert_eq!(provider_env_var("custom").as_deref(), Some("LLM_API_KEY"));
+        // Local servers and the OpenAI override are mapped to their
+        // host / base-URL env vars (not LLM_API_KEY).
+        assert_eq!(provider_env_var("ollama_local").as_deref(), Some("OLLAMA_HOST"));
+        assert_eq!(provider_env_var("llamacpp").as_deref(), Some("LLAMA_CPP_HOST"));
+        assert_eq!(provider_env_var("litertlm").as_deref(), Some("LITERTLM_HOST"));
+        assert_eq!(provider_env_var("oai_override").as_deref(), Some("LLM_BASE_URL"));
+        // Truly unknown slug returns None — caller should ask the user
+        // to pick a known provider.
+        assert_eq!(provider_env_var("custom"), None);
     }
 
     #[test]
@@ -880,21 +887,29 @@ pub fn has_any_llm_key() -> bool {
 }
 
 /// Map a provider slug to the env var the runtime reads for its API key.
-/// Returns `None` for local Ollama runs that have no `OLLAMA_API_KEY`
-/// set. When `OLLAMA_API_KEY` is present, the cloud tier is used and a
-/// key is required.
+/// Returns `None` for providers that don't take an API key (local servers
+/// configured by host instead of key).
 pub fn provider_env_var(slug: &str) -> Option<String> {
     match slug {
         "groq" => Some("GROQ_API_KEY".to_string()),
         "openai" => Some("OPENAI_API_KEY".to_string()),
         "anthropic" => Some("ANTHROPIC_API_KEY".to_string()),
-        "nvidia" => Some("NVIDIA_API_KEY".to_string()),
-        "nim" => Some("NVIDIA_API_KEY".to_string()),
+        "nvidia" | "nim" => Some("NVIDIA_API_KEY".to_string()),
+        "moonshot" => Some("MOONSHOT_API_KEY".to_string()),
         "ollama" => std::env::var("OLLAMA_API_KEY")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .map(|_| "OLLAMA_API_KEY".to_string()),
-        _ => Some("LLM_API_KEY".to_string()),
+        // Local servers: configured by host, not key. We map to a known
+        // env var so the WebUI / CLI can show the user what to set, but
+        // it's a host, not a key.
+        "ollama_local" => Some("OLLAMA_HOST".to_string()),
+        "llamacpp" => Some("LLAMA_CPP_HOST".to_string()),
+        "litertlm" => Some("LITERTLM_HOST".to_string()),
+        // Custom OpenAI-compatible endpoint: the override URL goes in
+        // LLM_BASE_URL; the key (if any) goes in LLM_API_KEY.
+        "oai_override" => Some("LLM_BASE_URL".to_string()),
+        _ => None,
     }
 }
 
@@ -913,11 +928,22 @@ pub fn default_model_for_provider(slug: &str) -> &'static str {
 /// Persist an API key to `volt_home()/.env`, set it in the process
 /// environment, and return the resolved env-var name. Idempotent: a
 /// re-write replaces the previous value.
+///
+/// Rejects keys with control characters (newlines, tabs) — a key
+/// pasted from a browser can include an accidental newline that would
+/// otherwise silently break the .env parser.
 pub fn save_api_key(provider_slug: &str, api_key: &str) -> anyhow::Result<String> {
     let env_var = provider_env_var(provider_slug)
         .ok_or_else(|| anyhow::anyhow!("provider '{}' has no key", provider_slug))?;
-    if api_key.trim().is_empty() {
+    let trimmed = api_key.trim();
+    if trimmed.is_empty() {
         anyhow::bail!("API key is empty");
+    }
+    if api_key.chars().any(|c| c.is_control()) {
+        anyhow::bail!(
+            "API key contains a control character (newline, tab, etc.). \
+             Paste a single-line value from the provider's dashboard."
+        );
     }
     let home = volt_home();
     std::fs::create_dir_all(&home)?;
@@ -943,6 +969,9 @@ pub fn save_api_key(provider_slug: &str, api_key: &str) -> anyhow::Result<String
 
     // Make it visible to the rest of this process.
     std::env::set_var(&env_var, api_key.trim());
+    // Invalidate the provider-detector cache so the next `detect()`
+    // sees the new key.
+    crate::llm::provider_detector::invalidate_cache();
     Ok(env_var)
 }
 

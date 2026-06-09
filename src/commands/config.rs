@@ -41,17 +41,6 @@ pub enum ConfigSubcommand {
     Wizard,
 }
 
-impl ConfigSubcommand {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "list" | "ls" => Some(Self::List),
-            "doctor" => Some(Self::Doctor),
-            "wizard" | "setup" => Some(Self::Wizard),
-            _ => None,
-        }
-    }
-}
-
 async fn list() -> anyhow::Result<()> {
     let inv = provider_detector::detect();
     println!("Provider status:");
@@ -137,17 +126,33 @@ async fn set(provider: &str, key: &str) -> anyhow::Result<()> {
                 provider
             )
         })?;
-    if p.env_var.is_empty() {
-        anyhow::bail!("provider `{}` has no API key (it's a local server)", provider);
-    }
-    if crate::llm::provider_detector::is_placeholder_key(key) {
+    // Local servers and the OpenAI override don't take an API key; they
+    // take a host URL (or a base URL for the override). `save_api_key`
+    // will route to the right env var thanks to the updated
+    // `provider_env_var` mapping.
+    if !matches!(p.slug.as_str(), "groq" | "nvidia" | "openai" | "anthropic" | "ollama" | "moonshot")
+    {
+        // For local servers / override, the value is a URL, not a key.
+        if key.contains("://") || key.starts_with("http") {
+            // OK, treat as URL.
+        } else {
+            anyhow::bail!(
+                "provider `{}` is configured by host URL, not API key. \
+                 Pass a full URL like `http://192.168.1.50:11434`.",
+                provider
+            );
+        }
+    } else if crate::llm::provider_detector::is_placeholder_key(key) {
         anyhow::bail!(
             "the value you provided looks like a placeholder (e.g. `your_*_here`). \
              Paste a real API key from the provider's dashboard."
         );
     }
     let env_var = save_api_key(&p.slug, key)?;
-    println!("saved: {} (env var `{}` set in process + .env)", p.slug, env_var);
+    println!(
+        "saved: {} (env var `{}` set in process + .env)",
+        p.slug, env_var
+    );
     println!("use it: volt agent run --input \"...\"");
     Ok(())
 }
@@ -186,6 +191,7 @@ async fn unset(provider: &str) -> anyhow::Result<()> {
     }
     std::fs::write(&env_path, lines.join("\n") + "\n")?;
     std::env::remove_var(&env_var);
+    crate::llm::provider_detector::invalidate_cache();
     println!("removed: {} (env var `{}` cleared)", p.slug, env_var);
     Ok(())
 }

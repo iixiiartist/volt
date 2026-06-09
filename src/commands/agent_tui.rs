@@ -24,7 +24,8 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         worktree,
     } = options;
 
-    let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "volt-agent");
+    let (provider, provider_kind) = crate::orchestrator::try_build_provider(&model, "volt-agent")
+        .map_err(|e| anyhow::anyhow!("{}\n{}", e, e.hint()))?;
     let embedder = EmbeddingClient::new_smart().await;
     let tools = crate::tools::setup_tools(Some(&embedder), None).await;
 
