@@ -765,34 +765,13 @@ impl Agent {
         };
 
         if let (Some(ref emb), Some(ref store)) = (&context_embedding, &self.context_store) {
-            // strict_mode: exclude Tool and Skill from RAG retrieval
-            let kinds: Vec<_> = if self.config.strict_mode {
-                self.config
-                    .enabled_context_kinds
-                    .iter()
-                    .filter(|k| {
-                        **k != crate::context::ContextKind::Tool
-                            && **k != crate::context::ContextKind::Skill
-                    })
-                    .collect()
-            } else {
-                self.config.enabled_context_kinds.iter().collect()
-            };
-            let per_kind_limit = 8_usize.div_ceil(kinds.len());
-            let mut all_retrieved: Vec<crate::context::ContextEntry> = Vec::new();
-            for kind in kinds {
-                let mut kind_results = store
-                    .search(emb, per_kind_limit, Some(*kind), 0.25, Some(&context_query))
-                    .await;
-                all_retrieved.append(&mut kind_results);
-            }
-            all_retrieved.sort_by(|a, b| {
-                b.composite_score()
-                    .partial_cmp(&a.composite_score())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            let retrieved: Vec<_> = all_retrieved.into_iter().take(8).collect();
-
+            // 3-Kind Core Context: a single unified query across the
+            // active kinds (default: Tool + Memory + Conversation),
+            // not a per-kind fan-out. This is one DB round-trip + one
+            // embedding, not 8.
+            let retrieved = store
+                .search(emb, 8, None, 0.25, Some(&context_query))
+                .await;
             if !retrieved.is_empty() {
                 let blocks: Vec<String> = retrieved
                     .iter()

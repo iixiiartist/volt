@@ -65,21 +65,20 @@ pub struct AgentConfig {
     pub blueprint_path: Option<String>,
 }
 
+/// Default context kinds for the 3-Kind Core Context Store.
+///
+/// Reframed for the streamlined architecture: per-turn retrieval now
+/// covers only Tool, Memory, and Conversation. System prompts,
+/// policies, permissions, and security are loaded once at session
+/// startup and refreshed only on mtime change. The full 12-kind
+/// enum is retained for backward compatibility with persisted data,
+/// but is no longer seeded or queried by default.
 pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {
     use crate::context::ContextKind;
     vec![
         ContextKind::Tool,
-        ContextKind::Skill,
         ContextKind::Memory,
         ContextKind::Conversation,
-        ContextKind::AgentRun,
-        ContextKind::Artifact,
-        ContextKind::SystemPrompt,
-        ContextKind::FewShot,
-        ContextKind::Policy,
-        ContextKind::Permission,
-        ContextKind::Security,
-        ContextKind::MCPConfig,
     ]
 }
 
