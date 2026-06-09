@@ -1,5 +1,4 @@
 use super::{Agent, MAX_TOOL_OUTPUT_CHARS};
-use crate::agent::cot;
 use crate::agent::prompt::build_system_prompt;
 use crate::agent::prompt_builder;
 use crate::models::{
@@ -16,9 +15,6 @@ impl Agent {
             registry.run_pre_run().await;
         }
         self.setup_session_and_prompt(input).await;
-        if self.config.use_cot {
-            self.run_planning_cot(input).await;
-        }
         self.push_user_message(input).await;
 
         let result = self.run_iteration_loop(input).await;
@@ -28,6 +24,33 @@ impl Agent {
             registry.run_post_run().await;
         }
         result
+    }
+
+    /// Run the agent exactly once: one LLM call, no iteration loop.
+    /// Returns the first non-empty text content. Use this for simple
+    /// single-shot questions (the 60% case) where the agent loop is
+    /// pure overhead. ~10x cheaper and faster than `run()`.
+    pub async fn run_once(&self, input: &str) -> anyhow::Result<String> {
+        if let Some(registry) = &self.hook_registry {
+            registry.run_pre_run().await;
+        }
+        self.setup_session_and_prompt(input).await;
+        self.push_user_message(input).await;
+        // Single LLM call — no iteration, no tool execution, no
+        // post-run hooks. For "what's 2+2?" style questions.
+        let messages = self.build_llm_messages(input).await;
+        let request = LLMRequest {
+            model: self.config.model.clone(),
+            messages,
+            temperature: self.config.temperature,
+            max_tokens: self.config.max_tokens,
+            stop: None,
+            tools: None,
+            stream: false,
+            ..Default::default()
+        };
+        let response = self.provider.complete(&request).await?;
+        Ok(response.content)
     }
 
     /// Phase 1: session load, system-prompt install, precision-mode check.
@@ -101,51 +124,6 @@ impl Agent {
                         created_at: chrono::Utc::now(),
                     },
                 );
-            }
-        }
-    }
-
-    /// Phase 1b: optional Chain-of-Thought planning call. Asks the model to
-    /// emit a numbered plan and stores it in the memory tool for visibility.
-    /// Best-effort — any error is silently swallowed (planning is advisory).
-    async fn run_planning_cot(&self, input: &str) {
-        let tool_names: Vec<String> = self
-            .tools
-            .get_definitions()
-            .await
-            .iter()
-            .map(|d| d.name.clone())
-            .collect();
-        let plan_prompt = cot::planning_prompt(input, &tool_names);
-        let planning_messages = vec![LLMMessage {
-            role: "user".to_string(),
-            content: Arc::new(plan_prompt),
-            tool_calls: None,
-            tool_call_id: None,
-        }];
-        let plan_request = LLMRequest {
-            model: self.config.model.clone(),
-            messages: planning_messages,
-            temperature: Some(0.2),
-            max_tokens: Some(512),
-            stop: None,
-            tools: None,
-            stream: false,
-            ..Default::default()
-        };
-        if let Ok(plan_response) = self.provider.complete(&plan_request).await {
-            let plan_text = plan_response.content.as_str();
-            let plan_steps = cot::parse_plan(plan_text);
-            if !plan_steps.is_empty() {
-                let plan_summary = plan_steps
-                    .iter()
-                    .map(|(n, desc, _tool)| format!("{}. {}", n, desc))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                tracing::info!("[CoT] plan generated:\n{}", plan_summary);
-                let state = self.state.lock().await;
-                crate::tools::memory_tool::memory_append("plan", &plan_summary).await;
-                drop(state);
             }
         }
     }
