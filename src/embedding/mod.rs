@@ -27,9 +27,25 @@ pub struct EmbeddingClient {
 }
 
 impl EmbeddingClient {
+    /// Construct a client with one explicit provider. The previous version
+    /// of this constructor silently defaulted to NVIDIA NIM, which masked
+    /// configuration errors and could even bill the user for a key they
+    /// hadn't configured. New code should use `new_smart` (which respects
+    /// `EMBEDDING_PROVIDER` and falls back to auto-detect) or `with_provider`
+    /// (which requires an explicit slug). This constructor is kept for
+    /// backward compatibility but emits a startup warning when the
+    /// default NIM path is taken without a key in scope.
     pub fn new(api_key: Option<String>, model: impl Into<String>) -> Self {
+        let key = api_key.filter(|k| !k.is_empty());
+        if key.is_none() {
+            tracing::warn!(
+                "[embedding] `EmbeddingClient::new` called with no API key; falling back to NIM \
+                 without a key will produce 401s at first call. Use `new_smart` or set \
+                 EMBEDDING_PROVIDER + EMBEDDING_API_KEY to avoid this."
+            );
+        }
         Self::with_provider(
-            api_key,
+            key,
             model,
             EmbeddingProvider::Nvidia,
             "https://integrate.api.nvidia.com/v1/embeddings",
@@ -71,6 +87,26 @@ impl EmbeddingClient {
             }
             _ => providers::auto_detect_providers(&http).await,
         };
+
+        // Log the detected inventory at startup so the user can see
+        // which providers are active (audit issue 5: previously silent).
+        if !providers.is_empty() {
+            let names: Vec<String> = providers
+                .iter()
+                .map(|p| format!("{:?}", p.provider))
+                .collect();
+            tracing::info!(
+                "[embedding] auto-detected providers: {}",
+                names.join(", ")
+            );
+        } else {
+            tracing::warn!(
+                "[embedding] no embedding providers detected. Local ONNX model + remote keys \
+                 were both unavailable. Tool/memory/skill retrieval will use SHA-256 fallback \
+                 embeddings (low-quality). Set EMBEDDING_PROVIDER, EMBEDDING_API_KEY, or \
+                 install the local ONNX model to enable semantic retrieval."
+            );
+        }
 
         // Load local ONNX embedder (ort with EP fallback chain:
         // OpenVINO → DirectML → CUDA → CPU). Falls through to remote or
