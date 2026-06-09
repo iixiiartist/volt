@@ -243,6 +243,47 @@ enum Commands {
     },
     JobsMonitor,
     RoutinesEngine,
+    /// Manage LLM provider API keys, base URLs, and on-disk config.
+    /// Replaces the previous requirement to hand-edit `.env`.
+    ///
+    ///   volt config list                    # show all providers and their status
+    ///   volt config set <slug> <key>        # write a key to .env + process env
+    ///   volt config get <slug>              # show one provider's masked key + base URL
+    ///   volt config unset <slug>            # remove a key from .env
+    ///   volt config doctor                  # provider-focused diagnostics
+    ///   volt config wizard                  # interactive setup
+    Config {
+        #[command(subcommand)]
+        subcommand: ConfigCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCmd {
+    /// List all known providers and their active/inactive status.
+    List,
+    /// Show one provider's masked key and base URL.
+    Get {
+        /// Provider slug, e.g. `groq`, `nvidia`, `openai`, `anthropic`,
+        /// `ollama`, `moonshot`, `ollama_local`, `llamacpp`, `litertlm`.
+        provider: String,
+    },
+    /// Set an API key. Writes to `volt_home()/.env` and the process env.
+    Set {
+        provider: String,
+        key: String,
+    },
+    /// Remove an API key from `volt_home()/.env`.
+    Unset {
+        provider: String,
+    },
+    /// Provider-focused diagnostics. Surfaces the active set, lists
+    /// missing keys with the env var name, and explains how to enable
+    /// each provider.
+    Doctor,
+    /// Interactive first-time setup. Walks the user through choosing a
+    /// provider and pasting their key.
+    Wizard,
 }
 
 #[derive(Subcommand, Debug)]
@@ -743,6 +784,18 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Init { force, only } => {
             commands::init::run(force, only.as_deref()).await?;
+        }
+        Commands::Config { subcommand } => {
+            use commands::config::ConfigSubcommand;
+            let sub = match subcommand {
+                ConfigCmd::List => ConfigSubcommand::List,
+                ConfigCmd::Get { provider } => ConfigSubcommand::Get { provider },
+                ConfigCmd::Set { provider, key } => ConfigSubcommand::Set { provider, key },
+                ConfigCmd::Unset { provider } => ConfigSubcommand::Unset { provider },
+                ConfigCmd::Doctor => ConfigSubcommand::Doctor,
+                ConfigCmd::Wizard => ConfigSubcommand::Wizard,
+            };
+            commands::config::run(sub).await?;
         }
         Commands::Worktree { subcommand } => {
             handle_worktree_subcommand(subcommand).await?;

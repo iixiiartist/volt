@@ -687,6 +687,22 @@ pub fn SettingsPage() -> Element {
                 }
             }
             div { style: "margin-top: 16px;",
+                Panel { title: "API Keys",
+                    p { style: "margin: 0 0 12px 0; color: {COLOR_TEXT_DIM}; font-size: 12px;",
+                        "Paste keys directly here. They are written to your .env and the runtime picks them up on the next request. \
+                         Placeholder values (like 'your_*_here') are rejected."
+                    }
+                    div { style: "display: flex; flex-direction: column; gap: 8px;",
+                        ApiKeyRow { slug: "groq".to_string(), display_name: "Groq".to_string() }
+                        ApiKeyRow { slug: "nvidia".to_string(), display_name: "NVIDIA NIM".to_string() }
+                        ApiKeyRow { slug: "openai".to_string(), display_name: "OpenAI".to_string() }
+                        ApiKeyRow { slug: "anthropic".to_string(), display_name: "Anthropic".to_string() }
+                        ApiKeyRow { slug: "ollama".to_string(), display_name: "Ollama Cloud".to_string() }
+                        ApiKeyRow { slug: "moonshot".to_string(), display_name: "Moonshot / Kimi".to_string() }
+                    }
+                }
+            }
+            div { style: "margin-top: 16px;",
                 Panel { title: "Environment",
                     p { style: "margin: 0 0 8px 0; color: {COLOR_TEXT_DIM}; font-size: 12px;", "API keys are loaded from .env or system environment. Use 'volt doctor' to check status." }
                     p { style: "margin: 0 0 12px 0; color: {COLOR_TEXT_MUTED}; font-size: 11px; font-family: {FONT_MONO};", "GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, NVIDIA_API_KEY, OLLAMA_API_KEY, HF_TOKEN, YOUCOM_API_KEY" }
@@ -1396,6 +1412,75 @@ pub fn WorkflowsPage() -> Element {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// A single row in the API Keys settings panel: provider name, current
+/// masked key, and a text input that calls `SubmitApiKey` on save. Used
+/// inside `SettingsPage`.
+#[component]
+fn ApiKeyRow(slug: String, display_name: String) -> Element {
+    let mut state: VoltState = use_context();
+    let mut input = use_signal(String::new);
+    let mut show_input = use_signal(|| false);
+    let doctor = state.doctor_report.read().clone();
+    let env_var = format!("{}_API_KEY", slug.to_uppercase());
+    let current = doctor
+        .as_ref()
+        .and_then(|r| r.api_keys.iter().find(|k| k.name == env_var).cloned());
+    let masked = current
+        .as_ref()
+        .map(|k| k.masked.clone())
+        .unwrap_or_default();
+    let is_set = !masked.is_empty() && masked != "***" && !masked.to_lowercase().contains("not set");
+    rsx! {
+        div { style: "display: grid; grid-template-columns: 160px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; background-color: {COLOR_PANEL_HOVER}; border-radius: 6px;",
+            div { style: "font-size: 13px; color: {COLOR_TEXT};",
+                "{display_name}"
+                div { style: "font-size: 10px; color: {COLOR_TEXT_MUTED}; font-family: monospace; margin-top: 2px;",
+                    "{env_var}"
+                }
+            }
+            div { style: "font-family: monospace; font-size: 12px; color: {COLOR_TEXT_DIM}; word-break: break-all;",
+                if is_set {
+                    "{masked}"
+                } else {
+                    span { style: "color: {COLOR_WARNING}; font-style: italic;", "not set — click Add to configure" }
+                }
+            }
+            div { style: "display: flex; gap: 6px; align-items: center;",
+                if *show_input.read() {
+                    input { style: "padding: 6px 10px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 4px; color: {COLOR_TEXT}; font-size: 12px; font-family: monospace; width: 220px;",
+                        placeholder: "paste key…",
+                        r#type: "password",
+                        value: "{input.read()}",
+                        oninput: move |e| input.set(e.value().to_string()),
+                    }
+                    PrimaryButton { label: "Save".to_string(), onclick: {
+                        let s = slug.clone();
+                        let v = input.read().trim().to_string();
+                        move |_| {
+                            if v.is_empty() { return; }
+                            state.fire(UiCommand::SubmitApiKey {
+                                provider: s.clone(),
+                                api_key: v.clone(),
+                                model: crate::config::default_model_for_provider(&s).to_string(),
+                            });
+                            state.toast(ToastLevel::Success, format!("{} saved", env_var));
+                            input.set(String::new());
+                            show_input.set(false);
+                            state.fire(UiCommand::RunDoctor);
+                        }
+                    }}
+                    SecondaryButton { label: "Cancel".to_string(), onclick: move |_| {
+                        input.set(String::new());
+                        show_input.set(false);
+                    }}
+                } else {
+                    SecondaryButton { label: { if is_set { "Replace".to_string() } else { "Add".to_string() } }, onclick: move |_| show_input.set(true) }
                 }
             }
         }
