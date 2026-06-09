@@ -11,7 +11,8 @@ const DISTRACTOR_COUNT: usize = 50;
 const TOP_K: usize = 8;
 
 fn build_provider() -> Box<dyn LLMProvider> {
-    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant");
+    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant")
+        .expect("bfcl_pipeline: configure an LLM provider (e.g. GROQ_API_KEY) to run this test");
     Box::new(OpenAIProvider::new(
         route.api_key,
         route.base_url,

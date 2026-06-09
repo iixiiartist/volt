@@ -1,8 +1,21 @@
 use crate::models::{AudioRequest, AudioResponse, LLMRequest, LLMResponse, TtsRequest};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub type TokenCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// The cloud LLM API family a provider speaks.
+///
+/// Most providers in Volt are OpenAI-compatible (Groq, NVIDIA NIM, Ollama
+/// Cloud, llama.cpp, LiteRT-LM, any `LLM_BASE_URL` override). Anthropic
+/// is the one exception: it uses its own `/v1/messages` schema with
+/// separate system-prompt and SSE-event semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderKind {
+    OpenAI,
+    Anthropic,
+}
 
 /// Default timeout for LLM HTTP requests. The agent loop in `agent/run.rs` is
 /// 300s per iteration, so requests must complete within that budget.

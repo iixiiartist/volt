@@ -614,9 +614,18 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 let settings = volt::config::Settings::from_env()?;
+                let resolved_model = commands::agent_run::AgentRunOptions::model_or_default(
+                    model_name.clone(),
+                );
+                if resolved_model.is_empty() {
+                    anyhow::bail!(
+                        "no model configured. Pass --model, set LLM_MODEL in .env, \
+                         or run `volt config` to choose a provider and model."
+                    );
+                }
                 commands::agent_run::run(commands::agent_run::AgentRunOptions {
                     input,
-                    model: model_name.unwrap_or_else(|| "gemma4:e4b".into()),
+                    model: resolved_model,
                     allow,
                     load_tools: None,
                     context_kinds: Vec::new(),

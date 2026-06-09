@@ -20,7 +20,8 @@ fn build_tools() -> Arc<ToolRegistry> {
 }
 
 fn build_provider() -> Box<dyn volt::llm::LLMProvider> {
-    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant");
+    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant")
+        .expect("program_bench: configure an LLM provider (e.g. GROQ_API_KEY) to run this test");
     Box::new(volt::llm::openai::OpenAIProvider::new(
         route.api_key,
         route.base_url,

@@ -6,7 +6,8 @@ use volt::orchestrator::{parse_agent_specs, Orchestrator};
 use volt::tools::ToolRegistry;
 
 fn _build_provider(model: &str) -> (Box<dyn volt::llm::LLMProvider>, String) {
-    let route = volt::orchestrator::resolve_provider(model);
+    let route = volt::orchestrator::resolve_provider(model)
+        .expect("workflow_bench: provider must be configured for this model");
     let kind_str = match route.kind {
         volt::orchestrator::ProviderKind::Anthropic => "anthropic",
         volt::orchestrator::ProviderKind::OpenAI => "openai",

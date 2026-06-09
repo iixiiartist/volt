@@ -215,9 +215,29 @@ pub struct AgentTuiOptions {
 }
 
 impl AgentTuiOptions {
+    /// Same resolution order as `AgentRunOptions::model_or_default`.
     pub fn model_or_default(model: Option<String>) -> String {
-        model.unwrap_or_else(|| {
-            std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
-        })
+        if let Some(m) = model {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        if let Ok(m) = std::env::var("LLM_MODEL") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        if let Ok(m) = std::env::var("LLM_DEFAULT_MODEL") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        let inv = crate::llm::detect_providers();
+        for p in inv.active() {
+            if let Some(default) = p.default_model {
+                return default.to_string();
+            }
+        }
+        String::new()
     }
 }

@@ -412,7 +412,13 @@ async fn main() -> anyhow::Result<()> {
 
     for model in &models {
         // Build provider
-        let route = volt::orchestrator::resolve_provider(model);
+        let route = match volt::orchestrator::resolve_provider(model) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("\n  [skip] {}: {}", model, e);
+                continue;
+            }
+        };
         if route.api_key.is_empty() {
             eprintln!("\n  [skip] {}: no API key available", model);
             continue;

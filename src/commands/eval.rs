@@ -3,9 +3,24 @@ use crate::models::*;
 use std::path::PathBuf;
 
 pub async fn run(suite: PathBuf, model: Option<String>) -> anyhow::Result<()> {
-    let model = model.unwrap_or_else(|| {
-        std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
-    });
+    let model = model
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("LLM_MODEL").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| std::env::var("LLM_DEFAULT_MODEL").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| {
+            let inv = crate::llm::detect_providers();
+            let defaults: Vec<String> = inv
+                .active()
+                .filter_map(|p| p.default_model.map(|m| m.to_string()))
+                .collect();
+            defaults.into_iter().next()
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no model configured. Pass --model, set LLM_MODEL in .env, \
+                 or run `volt config` to choose a provider."
+            )
+        })?;
     let content = tokio::fs::read_to_string(&suite).await?;
     let suite_data: crate::eval::EvalSuite = serde_json::from_str(&content)?;
     let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "eval-agent");
