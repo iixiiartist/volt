@@ -36,21 +36,20 @@ impl Agent {
         }
         self.setup_session_and_prompt(input).await;
         self.push_user_message(input).await;
-        // Single LLM call — no iteration, no tool execution, no
-        // post-run hooks. For "what's 2+2?" style questions.
-        let messages = self.build_llm_messages(input).await;
+        // Single LLM call — no iteration, no tool execution.
+        let messages = self.build_llm_messages().await;
         let request = LLMRequest {
             model: self.config.model.clone(),
             messages,
-            temperature: self.config.temperature,
-            max_tokens: self.config.max_tokens,
+            temperature: Some(self.config.temperature),
+            max_tokens: None,
             stop: None,
             tools: None,
             stream: false,
             ..Default::default()
         };
         let response = self.provider.complete(&request).await?;
-        Ok(response.content)
+        Ok(response.content.to_string())
     }
 
     /// Phase 1: session load, system-prompt install, precision-mode check.

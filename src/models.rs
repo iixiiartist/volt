@@ -35,7 +35,12 @@ pub struct AgentConfig {
     pub context_kind_quotas: std::collections::HashMap<crate::context::ContextKind, usize>,
     #[serde(default)]
     pub use_mtp: bool,
-    #[serde(default)]
+    /// Chain-of-Thought planning. Removed: the planning call produced
+    /// output that was never used to constrain the actual loop, and
+    /// cost an LLM call per `agent.run`. The field is kept for
+    /// backward compatibility (deserializing old TOML/JSON) but is
+    /// ignored at runtime.
+    #[serde(default, skip_serializing)]
     pub use_cot: bool,
     #[serde(default)]
     pub allow_write: bool,
