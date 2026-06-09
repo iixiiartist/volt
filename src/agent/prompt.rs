@@ -1,6 +1,8 @@
 use crate::context::ContextKind;
 use crate::models::AgentConfig;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// Cap on bytes of `AGENTS.md` inlined into the system prompt. Beyond
 /// this, only the first chunk is included and the rest is left to RAG
@@ -10,6 +12,69 @@ const AGENTS_MD_INLINE_CAP: usize = 4 * 1024;
 /// Same cap for `SOUL.md` / `MEMORY.md` / `USER.md` — these should
 /// stay small.
 const PERSONALITY_INLINE_CAP: usize = 2 * 1024;
+
+/// Cached entry for a workspace file. Invalidated when the file's
+/// mtime changes, so edits to SOUL.md / MEMORY.md / AGENTS.md /
+/// USER.md are picked up at the next session start without paying
+/// the disk-read cost on every turn.
+struct CachedSnippet {
+    mtime: SystemTime,
+    content: String,
+}
+
+struct WorkspaceFileCache {
+    soul: Mutex<Option<CachedSnippet>>,
+    memory: Mutex<Option<CachedSnippet>>,
+    user: Mutex<Option<CachedSnippet>>,
+    agents: Mutex<Option<CachedSnippet>>,
+}
+
+thread_local! {
+    static WORKSPACE_CACHE: WorkspaceFileCache = WorkspaceFileCache {
+        soul: Mutex::new(None),
+        memory: Mutex::new(None),
+        user: Mutex::new(None),
+        agents: Mutex::new(None),
+    };
+}
+
+/// Read `path` and return at most `max_bytes` of its content, cached
+/// on the file's mtime. If the file's mtime changes, the cache is
+/// invalidated and re-read. Returns `None` if the file is missing.
+fn read_capped_cached(
+    path: &Path,
+    max_bytes: usize,
+    slot: &Mutex<Option<CachedSnippet>>,
+) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?;
+    let content = std::fs::read_to_string(path).ok()?;
+
+    let mut guard = slot.lock().ok()?;
+    let needs_refresh = match guard.as_ref() {
+        Some(c) => c.mtime != mtime,
+        None => true,
+    };
+    if needs_refresh {
+        *guard = Some(CachedSnippet {
+            mtime,
+            content: content.clone(),
+        });
+    }
+    let s = guard.as_ref()?;
+    if s.content.len() <= max_bytes {
+        return Some(s.content.clone());
+    }
+    // Truncate at a char boundary to avoid splitting a UTF-8 codepoint.
+    let mut end = max_bytes;
+    while !s.content.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = String::with_capacity(end + 64);
+    out.push_str(&s.content[..end]);
+    out.push_str("\n\n[…truncated; full text available via RAG tool…]");
+    Some(out)
+}
 
 pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> String {
     // Precision mode: minimal prompt — function calling tasks need clean context
@@ -29,23 +94,30 @@ pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> St
     }
 
     if let Some(ws) = workspace {
-        for (label, path, cap) in &[
-            ("Personality", ws.join("SOUL.md"), PERSONALITY_INLINE_CAP),
-            ("Persistent Memory", ws.join("MEMORY.md"), PERSONALITY_INLINE_CAP),
-            ("User Profile", ws.join("USER.md"), PERSONALITY_INLINE_CAP),
-        ] {
-            if let Some(snippet) = read_capped(path, *cap) {
-                parts.push(format!("## {}\n{}", label, snippet));
+        // Workspace file reads are cached per-thread on the file's
+        // mtime. Edits to SOUL/MEMORY/USER/AGENTS invalidate the
+        // cache automatically; no per-turn disk I/O.
+        WORKSPACE_CACHE.with(|cache| {
+            for (label, path, cap, slot) in &[
+                ("Personality", ws.join("SOUL.md"), PERSONALITY_INLINE_CAP, &cache.soul),
+                ("Persistent Memory", ws.join("MEMORY.md"), PERSONALITY_INLINE_CAP, &cache.memory),
+                ("User Profile", ws.join("USER.md"), PERSONALITY_INLINE_CAP, &cache.user),
+            ] {
+                if let Some(snippet) = read_capped_cached(path, *cap, slot) {
+                    parts.push(format!("## {}\n{}", label, snippet));
+                }
             }
-        }
 
-        // AGENTS.md is the project-level instruction file. Truncate it
-        // to keep prompt size bounded; longer conventions should live
-        // in the RAG context store, not the system prompt.
-        let agents_path = ws.join("AGENTS.md");
-        if let Some(snippet) = read_capped(&agents_path, AGENTS_MD_INLINE_CAP) {
-            parts.push(format!("## Project Instructions (AGENTS.md)\n{}", snippet));
-        }
+            // AGENTS.md is the project-level instruction file. Truncate
+            // it to keep prompt size bounded; longer conventions should
+            // live in the RAG context store, not the system prompt.
+            let agents_path = ws.join("AGENTS.md");
+            if let Some(snippet) =
+                read_capped_cached(&agents_path, AGENTS_MD_INLINE_CAP, &cache.agents)
+            {
+                parts.push(format!("## Project Instructions (AGENTS.md)\n{}", snippet));
+            }
+        });
     }
 
     parts.push(
@@ -80,43 +152,31 @@ DO NOT repeat, echo, or restate any retrieved context or memory you see in the p
     parts.join("\n\n")
 }
 
-/// Read a file at `path` and return at most `max_bytes` of its content.
-/// If truncated, appends a marker so the model knows more exists.
-fn read_capped(path: &Path, max_bytes: usize) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    if content.len() <= max_bytes {
-        return Some(content);
-    }
-    // Truncate at a char boundary to avoid splitting a UTF-8 codepoint.
-    let mut end = max_bytes;
-    while !content.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut out = String::with_capacity(end + 64);
-    out.push_str(&content[..end]);
-    out.push_str("\n\n[…truncated; full text available via RAG tool…]");
-    Some(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn fresh_slot() -> std::sync::Mutex<Option<CachedSnippet>> {
+        std::sync::Mutex::new(None)
+    }
+
     #[test]
-    fn read_capped_returns_full_when_small() {
+    fn read_capped_cached_returns_full_when_small() {
         let tmp = std::env::temp_dir().join("volt_prompt_small.md");
         std::fs::write(&tmp, "small content").unwrap();
-        let result = read_capped(&tmp, 100).unwrap();
+        let slot = fresh_slot();
+        let result = read_capped_cached(&tmp, 100, &slot).unwrap();
         assert_eq!(result, "small content");
         std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
-    fn read_capped_truncates_with_marker() {
+    fn read_capped_cached_truncates_with_marker() {
         let tmp = std::env::temp_dir().join("volt_prompt_large.md");
         let body = "a".repeat(10_000);
         std::fs::write(&tmp, &body).unwrap();
-        let result = read_capped(&tmp, 100).unwrap();
+        let slot = fresh_slot();
+        let result = read_capped_cached(&tmp, 100, &slot).unwrap();
         // Truncation is at a char boundary
         assert!(result.starts_with(&"a".repeat(100)));
         // Marker tells the model there's more
@@ -126,22 +186,41 @@ mod tests {
     }
 
     #[test]
-    fn read_capped_handles_unicode_boundary() {
+    fn read_capped_cached_handles_unicode_boundary() {
         // 4-byte emoji at position 99 should not get cut in half
         let tmp = std::env::temp_dir().join("volt_prompt_unicode.md");
         let mut body = "x".repeat(98);
         body.push_str("🦀");
         body.push_str(&"y".repeat(50));
         std::fs::write(&tmp, &body).unwrap();
-        let result = read_capped(&tmp, 100).unwrap();
+        let slot = fresh_slot();
+        let result = read_capped_cached(&tmp, 100, &slot).unwrap();
         // Should NOT panic and should NOT include a half-emoji
         assert!(result.is_char_boundary(result.len().saturating_sub(20)));
         std::fs::remove_file(&tmp).ok();
     }
 
     #[test]
-    fn read_capped_missing_file_returns_none() {
-        let result = read_capped(Path::new("/nonexistent/path/that/does/not/exist"), 100);
+    fn read_capped_cached_missing_file_returns_none() {
+        let slot = fresh_slot();
+        let result =
+            read_capped_cached(Path::new("/nonexistent/path/that/does/not/exist"), 100, &slot);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_capped_cached_picks_up_file_edits() {
+        let tmp = std::env::temp_dir().join("volt_prompt_edit.md");
+        std::fs::write(&tmp, "first content").unwrap();
+        let slot = fresh_slot();
+        let r1 = read_capped_cached(&tmp, 1000, &slot).unwrap();
+        assert_eq!(r1, "first content");
+        // Sleep briefly so mtime can change (some filesystems are
+        // low-resolution; mtime equality is the cache key).
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&tmp, "second content").unwrap();
+        let r2 = read_capped_cached(&tmp, 1000, &slot).unwrap();
+        assert_eq!(r2, "second content", "cache should have invalidated on mtime change");
+        std::fs::remove_file(&tmp).ok();
     }
 }
