@@ -1,5 +1,5 @@
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::TokenCallback;
+use crate::llm::provider::{TokenCallback, LLM_HTTP_TIMEOUT, LLM_POLL_INTERVAL, LLM_POLL_MAX_ITERATIONS, LLM_POLL_TIMEOUT};
 use crate::llm::LLMProvider;
 use crate::models::{
     AudioRequest, AudioResponse, LLMRequest, LLMResponse, ToolCall, TtsRequest, Usage,
@@ -90,40 +90,6 @@ impl OllamaProvider {
 
         body
     }
-
-    async fn poll_async_result(
-        &self,
-        base_url: &str,
-        request_id: &str,
-    ) -> anyhow::Result<LLMResponse> {
-        let poll_url = format!("{}/chat/{}", base_url.trim_end_matches('/'), request_id);
-        for _ in 0..120 {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let mut req = self.http.get(&poll_url);
-            if !self.api_key.is_empty() {
-                req = req.header("Authorization", format!("Bearer {}", self.api_key));
-            }
-            match req.timeout(std::time::Duration::from_secs(30)).send().await {
-                Ok(resp) => {
-                    if !resp.status().is_success() {
-                        continue;
-                    }
-                    if let Ok(val) = resp.json::<serde_json::Value>().await {
-                        match val["status"].as_str().unwrap_or("unknown") {
-                            "completed" | "succeeded" => return parse_ollama_response(val),
-                            "failed" | "error" => {
-                                let err = val["error"].as_str().unwrap_or("unknown");
-                                anyhow::bail!("ollama async inference failed: {}", err);
-                            }
-                            _ => continue,
-                        }
-                    }
-                }
-                Err(_) => continue,
-            }
-        }
-        anyhow::bail!("ollama async inference timed out");
-    }
 }
 
 fn parse_ollama_response(val: serde_json::Value) -> anyhow::Result<LLMResponse> {
@@ -190,7 +156,7 @@ impl LLMProvider for OllamaProvider {
         }
 
         let resp_val = req
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(LLM_HTTP_TIMEOUT)
             .send()
             .await?;
 
@@ -207,7 +173,21 @@ impl LLMProvider for OllamaProvider {
             if request_id.is_empty() {
                 anyhow::bail!("ollama async returned 202 but no request_id");
             }
-            return self.poll_async_result(&url, &request_id).await;
+            return crate::llm::poll_async::poll_async_inference(
+                &self.http,
+                &format!("{}/chat/{}", url.trim_end_matches('/'), request_id),
+                LLM_POLL_MAX_ITERATIONS,
+                LLM_POLL_INTERVAL,
+                LLM_POLL_TIMEOUT,
+                |req| {
+                    if self.api_key.is_empty() {
+                        req
+                    } else {
+                        req.header("Authorization", format!("Bearer {}", self.api_key))
+                    }
+                },
+                parse_ollama_response,
+            ).await;
         }
 
         if !status.is_success() {
@@ -235,7 +215,7 @@ impl LLMProvider for OllamaProvider {
         }
 
         let response = req
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(LLM_HTTP_TIMEOUT)
             .send()
             .await?;
 

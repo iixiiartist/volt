@@ -11,6 +11,48 @@ use std::sync::Arc;
 pub type ToolFn =
     Arc<dyn Fn(Value) -> futures::future::BoxFuture<'static, ToolResult> + Send + Sync>;
 
+/// Register a tool with `PermissionLevel::Allow` (the default).
+///
+/// Wraps the `Arc::new(|args| Box::pin(async move { ... }))` boilerplate so group
+/// modules can write `register_tool!(registry, "name", "desc", schema, "cat", |args| ...).await`
+/// instead of the same eight lines over and over.
+#[macro_export]
+macro_rules! register_tool {
+    ($registry:expr, $name:expr, $desc:expr, $schema:expr, $category:expr, $body:expr) => {
+        $registry
+            .register(
+                $name,
+                $desc,
+                $schema,
+                $category,
+                std::sync::Arc::new(|args| {
+                    ::std::boxed::Box::pin(async move { $body(args).await })
+                }),
+            )
+            .await;
+    };
+}
+
+/// Register a tool with explicit permission and trust levels.
+#[macro_export]
+macro_rules! register_tool_with_permission {
+    ($registry:expr, $name:expr, $desc:expr, $schema:expr, $category:expr, $body:expr, $perm:expr, $trust:expr) => {
+        $registry
+            .register_with_permission(
+                $name,
+                $desc,
+                $schema,
+                $category,
+                std::sync::Arc::new(|args| {
+                    ::std::boxed::Box::pin(async move { $body(args).await })
+                }),
+                $perm,
+                $trust,
+            )
+            .await;
+    };
+}
+
 pub struct ToolRegistry {
     tools: DashMap<String, RegisteredTool>,
     graph: crate::graph_rag::ToolGraph,
@@ -201,12 +243,32 @@ impl ToolRegistry {
         // providers are configured, this falls through to deterministic placeholder
         // embeddings (SHA-256 hash → 1024d, instant). BM25 serves as the primary
         // retrieval signal; dense scoring provides fallback.
-        for (name, text) in &items {
-            let emb = embedder
-                .embed_description(text)
-                .await
-                .unwrap_or_else(|_| crate::embedding::deterministic_placeholder_embedding(text));
-            if let Some(mut tool) = self.tools.get_mut(name) {
+        //
+        // Concurrency: we run up to 4 embeddings in flight. For the local ONNX
+        // embedder the internal `Mutex<Session>` serializes all inference, so
+        // this gives no CPU speedup — but it does help HTTP-based embedders
+        // (HuggingFace, OpenAI, etc.) where network I/O overlaps.
+        const EMBED_CONCURRENCY: usize = 4;
+        let sem = Arc::new(tokio::sync::Semaphore::new(EMBED_CONCURRENCY));
+        let compute_futures: Vec<_> = items
+            .iter()
+            .map(|(name, text)| {
+                let sem = sem.clone();
+                let name = name.clone();
+                let text = text.clone();
+                async move {
+                    let _permit = sem.acquire().await.ok();
+                    let emb = embedder
+                        .embed_description(&text)
+                        .await
+                        .unwrap_or_else(|_| crate::embedding::deterministic_placeholder_embedding(&text));
+                    (name, emb)
+                }
+            })
+            .collect();
+        let computed = futures::future::join_all(compute_futures).await;
+        for (name, emb) in computed {
+            if let Some(mut tool) = self.tools.get_mut(&name) {
                 tool.embedding = Some(emb);
             }
         }

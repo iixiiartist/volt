@@ -1,6 +1,7 @@
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::TokenCallback;
+use crate::llm::provider::{TokenCallback, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, LLM_HTTP_TIMEOUT, LLM_POLL_INTERVAL, LLM_POLL_MAX_ITERATIONS, LLM_POLL_TIMEOUT};
 use crate::llm::LLMProvider;
+use crate::llm::poll_async;
 use crate::models::{
     AudioRequest, AudioResponse, ExecutedTool, LLMRequest, LLMResponse, ModelUsage,
     PromptTokensDetails, ToolCall, TtsRequest, Usage,
@@ -27,17 +28,13 @@ impl OpenAIProvider {
         }
     }
 
-    pub fn new_with_client(
-        http: reqwest::Client,
-        api_key: String,
-        base_url: String,
-        name: String,
-    ) -> Self {
-        Self {
-            http,
-            api_key,
-            base_url,
-            name,
+    /// Apply the standard `Authorization: Bearer <key>` header when an API key
+    /// is configured. Returns the request builder unchanged otherwise.
+    fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.is_empty() {
+            req
+        } else {
+            req.header("Authorization", format!("Bearer {}", self.api_key))
         }
     }
 }
@@ -162,8 +159,8 @@ fn build_request_body(request: &LLMRequest) -> serde_json::Value {
     let mut body = json!({
         "model": request.model,
         "messages": messages,
-        "temperature": request.temperature.unwrap_or(0.7),
-        "max_tokens": request.max_tokens.unwrap_or(4096),
+        "temperature": request.temperature.unwrap_or(DEFAULT_TEMPERATURE),
+        "max_tokens": request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
         "stream": false
     });
 
@@ -221,6 +218,8 @@ fn parse_usage(val: &serde_json::Value) -> Usage {
         prompt_tokens_details: val["prompt_tokens_details"].as_object().map(|d| {
             PromptTokensDetails {
                 cached_tokens: d.get("cached_tokens").and_then(|v| v.as_u64()),
+                cache_creation_tokens: d.get("cache_creation_tokens").and_then(|v| v.as_u64()),
+                cache_read_tokens: d.get("cache_read_tokens").and_then(|v| v.as_u64()),
             }
         }),
     }
@@ -273,58 +272,7 @@ fn make_audio_part(data: Vec<u8>, filename: &str) -> reqwest::multipart::Part {
         })
 }
 
-impl OpenAIProvider {
-    /// Poll an async inference result until completion (NVIDIA NIM 202 polling pattern).
-    async fn poll_async_result(
-        &self,
-        base_url: &str,
-        request_id: &str,
-    ) -> anyhow::Result<LLMResponse> {
-        let poll_url = format!("{}/{}", base_url.trim_end_matches('/'), request_id);
-        let max_polls = 120; // 120 * 2s = 240s max wait
-
-        for _ in 0..max_polls {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-            let mut req = self.http.get(&poll_url);
-            if !self.api_key.is_empty() {
-                req = req.header("Authorization", format!("Bearer {}", self.api_key));
-            }
-
-            let resp_val = req
-                .timeout(std::time::Duration::from_secs(30))
-                .send()
-                .await?;
-
-            let status = resp_val.status();
-            if !status.is_success() {
-                let err_body = resp_val.text().await.unwrap_or_default();
-                let trunc = &err_body[..500.min(err_body.len())];
-                anyhow::bail!("async poll HTTP {}: {}", status.as_u16(), trunc);
-            }
-
-            let resp: serde_json::Value = resp_val.json().await?;
-
-            // Check completion status
-            let state = resp["status"].as_str().unwrap_or("unknown");
-            match state {
-                "completed" | "succeeded" => {
-                    return parse_openai_response(resp);
-                }
-                "failed" | "error" => {
-                    let err = resp["error"].as_str().unwrap_or("unknown error");
-                    anyhow::bail!("async inference failed: {}", err);
-                }
-                _ => {
-                    // Still processing, continue polling
-                    continue;
-                }
-            }
-        }
-
-        anyhow::bail!("async inference timed out after {} polls", max_polls);
-    }
-}
+impl OpenAIProvider {}
 
 #[async_trait]
 impl LLMProvider for OpenAIProvider {
@@ -340,15 +288,10 @@ impl LLMProvider for OpenAIProvider {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = build_request_body(request);
 
-        let mut req = self.http.post(&url);
-
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-
+        let req = self.apply_auth(self.http.post(&url));
         let resp_val = req
             .json(&body)
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(LLM_HTTP_TIMEOUT)
             .send()
             .await?;
 
@@ -365,7 +308,15 @@ impl LLMProvider for OpenAIProvider {
             if request_id.is_empty() {
                 anyhow::bail!("async inference returned 202 but no request_id in response");
             }
-            return self.poll_async_result(&url, &request_id).await;
+            return poll_async::poll_async_inference(
+                &self.http,
+                &format!("{}/{}", url.trim_end_matches('/'), request_id),
+                LLM_POLL_MAX_ITERATIONS,
+                LLM_POLL_INTERVAL,
+                LLM_POLL_TIMEOUT,
+                |req| self.apply_auth(req),
+                parse_openai_response,
+            ).await;
         }
 
         if !status.is_success() {
@@ -387,15 +338,11 @@ impl LLMProvider for OpenAIProvider {
         let mut body = build_request_body(request);
         body["stream"] = json!(true);
 
-        let mut req = self.http.post(&url);
-
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
+        let req = self.apply_auth(self.http.post(&url));
 
         let response = req
             .json(&body)
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(LLM_HTTP_TIMEOUT)
             .send()
             .await?;
 
@@ -540,13 +487,10 @@ impl LLMProvider for OpenAIProvider {
             form = form.text("temperature", temp.to_string());
         }
 
-        let mut req = self.http.post(&url).multipart(form);
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
+        let req = self.apply_auth(self.http.post(&url).multipart(form));
 
         let resp_val = req
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(LLM_HTTP_TIMEOUT)
             .send()
             .await?;
 
@@ -580,13 +524,10 @@ impl LLMProvider for OpenAIProvider {
             )
             .text("model", audio.model.clone());
 
-        let mut req = self.http.post(&url).multipart(form);
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
+        let req = self.apply_auth(self.http.post(&url).multipart(form));
 
         let resp_val = req
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(LLM_HTTP_TIMEOUT)
             .send()
             .await?;
 
@@ -620,11 +561,7 @@ impl LLMProvider for OpenAIProvider {
             "response_format": tts.response_format.as_deref().unwrap_or("wav"),
         });
 
-        let mut req = self.http.post(&url);
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-
+        let req = self.apply_auth(self.http.post(&url));
         let resp_val = req
             .json(&body)
             .timeout(std::time::Duration::from_secs(120))
@@ -714,6 +651,8 @@ fn parse_openai_response(resp: serde_json::Value) -> anyhow::Result<LLMResponse>
             .and_then(|v| v.as_object())
             .map(|d| PromptTokensDetails {
                 cached_tokens: d.get("cached_tokens").and_then(|v| v.as_u64()),
+                cache_creation_tokens: d.get("cache_creation_tokens").and_then(|v| v.as_u64()),
+                cache_read_tokens: d.get("cache_read_tokens").and_then(|v| v.as_u64()),
             }),
     });
 

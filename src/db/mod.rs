@@ -13,6 +13,11 @@ pub use skills::*;
 pub use tools::*;
 
 use anyhow::Context;
+
+const SERIALIZATION_RETRY_MAX_ATTEMPTS: u32 = 3;
+const SERIALIZATION_RETRY_BASE_DELAY_MS: u64 = 50;
+const SERIALIZATION_RETRY_JITTER_MS: u64 = 20;
+const SQLSTATE_SERIALIZATION_FAILURE: &str = "40001";
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,7 +45,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
 {
-    let max_attempts = 3;
+    let max_attempts = SERIALIZATION_RETRY_MAX_ATTEMPTS;
     for attempt in 0..max_attempts {
         match f().await {
             Ok(val) => return Ok(val),
@@ -48,10 +53,11 @@ where
                 let should_retry = e
                     .as_database_error()
                     .and_then(|pg_err| pg_err.code())
-                    .map(|code| code.as_ref() == "40001")
+                    .map(|code| code.as_ref() == SQLSTATE_SERIALIZATION_FAILURE)
                     .unwrap_or(false);
                 if should_retry && attempt + 1 < max_attempts {
-                    let delay_ms = 50 * (attempt as u64 + 1) + (rand::random::<u64>() % 20);
+                    let delay_ms = SERIALIZATION_RETRY_BASE_DELAY_MS * (attempt as u64 + 1)
+                        + (rand::random::<u64>() % SERIALIZATION_RETRY_JITTER_MS);
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     continue;
                 }

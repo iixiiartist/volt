@@ -3,6 +3,10 @@ use crate::tools::web_tool::validate_url;
 use scraper::{Html, Selector};
 use std::time::Instant;
 
+/// Minimum paragraph length (chars) to be included in `web_scrape_all` output.
+/// Below this, we treat the chunk as a navigation/UI element and skip it.
+const MIN_PARAGRAPH_CHARS: usize = 20;
+
 pub async fn web_scrape(url: &str, selector: &str) -> ToolResult {
     let started = Instant::now();
 
@@ -78,8 +82,8 @@ pub async fn web_scrape(url: &str, selector: &str) -> ToolResult {
 
             if results.is_empty() {
                 return ToolResult {
-                    success: true,
-                    output: "".to_string(),
+                    success: false,
+                    output: String::new(),
                     error: Some(format!("no elements matched selector '{}'", selector)),
                     duration_ms: started.elapsed().as_millis(),
                 };
@@ -196,7 +200,7 @@ pub async fn web_scrape_all(url: &str) -> ToolResult {
                 for el in document.select(&sel) {
                     let text = el.text().collect::<Vec<_>>().concat();
                     let trimmed = text.trim();
-                    if !trimmed.is_empty() && trimmed.len() > 20 {
+                    if !trimmed.is_empty() && trimmed.len() > MIN_PARAGRAPH_CHARS {
                         output.push_str(&format!("{}\n\n", trimmed));
                     }
                 }

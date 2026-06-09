@@ -9,7 +9,7 @@ pub async fn run_heartbeat(settings: &crate::config::Settings) -> anyhow::Result
     let pool = match crate::db::connect(&settings.database_url).await {
         Ok(p) => Some(p),
         Err(e) => {
-            eprintln!("[daemon] warning: no DB connection: {}", e);
+            tracing::warn!("[daemon] no DB connection: {}", e);
             None
         }
     };
@@ -32,7 +32,7 @@ pub async fn run_jobs_monitor(settings: &crate::config::Settings) -> anyhow::Res
     let pool = match crate::db::connect(&settings.database_url).await {
         Ok(p) => Some(p),
         Err(e) => {
-            eprintln!("[daemon] warning: no DB connection: {}", e);
+            tracing::warn!("[daemon] no DB connection: {}", e);
             None
         }
     };
@@ -52,7 +52,7 @@ pub async fn run_routines_engine(settings: &crate::config::Settings) -> anyhow::
     let pool = match crate::db::connect(&settings.database_url).await {
         Ok(p) => Some(p),
         Err(e) => {
-            eprintln!("[daemon] warning: no DB connection: {}", e);
+            tracing::warn!("[daemon] no DB connection: {}", e);
             None
         }
     };

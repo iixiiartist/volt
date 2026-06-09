@@ -1,4 +1,4 @@
-use crate::llm::provider::TokenCallback;
+use crate::llm::provider::{TokenCallback, AUDIO_HTTP_TIMEOUT};
 use crate::llm::LLMProvider;
 use crate::models::{AudioRequest, AudioResponse, LLMRequest, LLMResponse, TtsRequest};
 use async_trait::async_trait;
@@ -101,7 +101,7 @@ impl LLMProvider for RivaProvider {
         }
 
         let resp_val = req
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(AUDIO_HTTP_TIMEOUT)
             .send()
             .await?;
 
@@ -157,7 +157,7 @@ impl LLMProvider for RivaProvider {
         }
 
         let resp_val = req
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(AUDIO_HTTP_TIMEOUT)
             .send()
             .await?;
 

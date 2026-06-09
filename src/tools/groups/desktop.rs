@@ -2,8 +2,7 @@
 use crate::tools::registry::ToolRegistry;
 use std::sync::Arc;
 
-#[allow(unused_variables)]
-pub async fn register_desktop_tools(registry: &Arc<ToolRegistry>) {
+pub async fn register_desktop_tools(_registry: &Arc<ToolRegistry>) {
     #[cfg(feature = "tools-desktop")]
     {
         use crate::attenuation::TrustLevel;

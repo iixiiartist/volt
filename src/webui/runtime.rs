@@ -207,7 +207,7 @@ impl Runtime {
     /// builds the tool registry + embedder, instantiates the agent with
     /// streaming and approval callbacks wired in, and spawns the
     /// command-processing task. Returns a clonable handle for the UI.
-    pub async fn start() -> anyhow::Result<RuntimeHandle> {
+    pub async fn start() -> anyhow::Result<RuntimeStartResult> {
         // 1) Tracing  ~/.volt/logs/webui.log
         // `init_otel_for_tui` uses `try_init` under the hood and is
         // safe to call repeatedly; we still log file IO errors.
@@ -269,6 +269,56 @@ impl Runtime {
         //    safe even with no env vars.
         let model = config.default_model.clone();
         let (provider, _provider_kind) = crate::orchestrator::build_provider(&model, "volt-webui");
+
+        // 6b) Detect missing API key so the UI can show the setup wizard.
+        //     We still build a default provider so the runtime is fully
+        //     wired (it just won't successfully chat). The
+        //     `SubmitApiKey` command hot-swaps the provider once the
+        //     user enters a key — no app restart needed.
+        let setup_providers: Vec<crate::webui::commands::ProviderInfo> = if !crate::config::has_any_llm_key() {
+            tracing::warn!("[webui] no LLM API key found — setup wizard will be shown");
+            let ollama_label = if std::env::var("OLLAMA_HOST").is_ok() {
+                "Ollama — running locally on this machine"
+            } else {
+                "Ollama — local models (no key needed if running locally) or cloud (needs OLLAMA_API_KEY)"
+            };
+            let ollama_env = crate::config::provider_env_var("ollama").map(String::from);
+            vec![
+                crate::webui::commands::ProviderInfo {
+                    slug: "groq".into(),
+                    label: "Groq — fast cloud inference (free tier)".into(),
+                    env_var: crate::config::provider_env_var("groq").map(String::from),
+                    default_model: crate::config::default_model_for_provider("groq").into(),
+                },
+                crate::webui::commands::ProviderInfo {
+                    slug: "openai".into(),
+                    label: "OpenAI — GPT-4o, GPT-4o-mini".into(),
+                    env_var: crate::config::provider_env_var("openai").map(String::from),
+                    default_model: crate::config::default_model_for_provider("openai").into(),
+                },
+                crate::webui::commands::ProviderInfo {
+                    slug: "anthropic".into(),
+                    label: "Anthropic — Claude Sonnet 4.5".into(),
+                    env_var: crate::config::provider_env_var("anthropic").map(String::from),
+                    default_model: crate::config::default_model_for_provider("anthropic").into(),
+                },
+                crate::webui::commands::ProviderInfo {
+                    slug: "nvidia".into(),
+                    label: "NVIDIA NIM — hosted open models".into(),
+                    env_var: crate::config::provider_env_var("nvidia").map(String::from),
+                    default_model: crate::config::default_model_for_provider("nvidia").into(),
+                },
+                crate::webui::commands::ProviderInfo {
+                    slug: "ollama".into(),
+                    label: ollama_label.into(),
+                    env_var: ollama_env,
+                    default_model: crate::config::default_model_for_provider("ollama").into(),
+                },
+            ]
+        } else {
+            tracing::info!("[webui] LLM key present — no setup wizard needed");
+            Vec::new()
+        };
 
         // 7) Channels
         let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(CMD_CHANNEL_CAPACITY);
@@ -402,8 +452,16 @@ impl Runtime {
             Self::command_loop(runtime_for_task, cmd_rx).await;
         });
 
+        // The UI gets the provider list via `RuntimeStartResult`
+        // (set in `state.setup_providers` synchronously in
+        // `app::Bootstrap`). No late SetupNeeded broadcast needed —
+        // it would just cause a second toast.
+
         tracing::info!("[webui] runtime started");
-        Ok(RuntimeHandle::new(runtime, cmd_tx))
+        Ok(RuntimeStartResult {
+            handle: RuntimeHandle::new(runtime, cmd_tx),
+            setup_providers,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -524,6 +582,13 @@ impl Runtime {
                 self.handle_approval_response(request_id, allow, allow_session)
                     .await
             }
+            UiCommand::SubmitApiKey {
+                provider,
+                api_key,
+                model,
+            } => {
+                self.handle_submit_api_key(provider, api_key, model).await
+            }
         }
     }
 
@@ -584,6 +649,14 @@ impl Runtime {
                         state.messages.push(m);
                     }
                 }
+            } else {
+                // DB load failed — proceed with empty history but
+                // surface a warning so the user knows prior context
+                // is missing.
+                self.emit(UiEvent::Error {
+                    source: "load_session".into(),
+                    message: "Could not load prior chat history for this session.".into(),
+                });
             }
             drop(agent);
         }
@@ -625,8 +698,13 @@ impl Runtime {
             session_id: Some(session_id),
         });
 
-        // Reset cancellation flag for this turn.
+        // Reset cancellation flag for this turn. Both flags must
+        // be cleared: the AtomicBool and the CancelToken. The token
+        // is shared with the agent and `handle_cancel_chat`
+        // permanently flips it; without this reset every chat
+        // after the first cancel would be pre-cancelled.
         self.cancel.store(false, Ordering::SeqCst);
+        self.cancel_token.reset();
 
         // Run the agent. The on_token callback (set in start()) already
         // streams `ChatChunk` events into the internal channel.
@@ -645,11 +723,34 @@ impl Runtime {
 
         match result {
             Ok(final_text) => {
-                self.emit(UiEvent::ChatComplete {
-                    final_text,
+                let len = final_text.len();
+                tracing::warn!(
+                    "[webui] ChatComplete: final_text_len={} tokens={} duration_ms={}",
+                    len,
                     tokens_used,
-                    duration_ms,
-                });
+                    duration_ms
+                );
+                // If the model returned empty content but spent tokens
+                // (i.e. it errored silently or hit context limits),
+                // surface that as a user-visible error so the empty
+                // bubble is at least explained.
+                if len == 0 && tokens_used > 0 {
+                    let detail = if tokens_used > 50_000 {
+                        format!(
+                            "The model returned an empty response — the conversation history is too long ({} tokens). Start a new session to continue.",
+                            tokens_used
+                        )
+                    } else {
+                        "The model returned an empty response. Try a different model or shorter message.".to_string()
+                    };
+                    self.emit(UiEvent::ChatError { message: detail });
+                } else {
+                    self.emit(UiEvent::ChatComplete {
+                        final_text,
+                        tokens_used,
+                        duration_ms,
+                    });
+                }
                 self.log_audit(AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
@@ -721,10 +822,17 @@ impl Runtime {
                     "output": r.output,
                     "success": r.success,
                     "duration_ms": r.duration_ms,
+                    "error": r.error,
                 }),
                 r.error,
             ),
-            Err(e) => (json!({}), Some(e.to_string())),
+            Err(e) => (
+                json!({
+                    "success": false,
+                    "error": e.to_string(),
+                }),
+                Some(e.to_string()),
+            ),
         };
         self.emit(UiEvent::ToolCallEnd {
             id: Uuid::new_v4().to_string(),
@@ -1063,19 +1171,30 @@ impl Runtime {
             pattern: pattern.clone(),
             run_id: run_id.clone(),
         });
-        match crate::commands::workflow::run(pattern.clone(), agents, tasks, None, None, allow)
-            .await
-        {
-            Ok(()) => self.emit(UiEvent::WorkflowCompleted { pattern, run_id }),
-            Err(e) => {
-                self.emit(UiEvent::WorkflowFailed {
-                    pattern,
-                    run_id,
-                    error: e.to_string(),
-                });
-                self.emit_error("run_workflow", e);
+        // Run the workflow in a background task so this handler
+        // returns immediately. The command_loop stays free to
+        // process other commands (e.g. cancel, list jobs) while
+        // the workflow runs. The run_id is the join handle's
+        // return — we ignore it here; status comes through
+        // WorkflowCompleted/WorkflowFailed events emitted by the
+        // workflow itself.
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            match crate::commands::workflow::run(pattern.clone(), agents, tasks, None, None, allow)
+                .await
+            {
+                Ok(()) => {
+                    let _ = tx.send(UiEvent::WorkflowCompleted { pattern, run_id });
+                }
+                Err(e) => {
+                    let _ = tx.send(UiEvent::WorkflowFailed {
+                        pattern,
+                        run_id,
+                        error: e.to_string(),
+                    });
+                }
             }
-        }
+        });
     }
 
     async fn handle_list_jobs(&self) {
@@ -1615,6 +1734,54 @@ impl Runtime {
         }
     }
 
+    /// Persist a new API key, rebuild the LLM provider, and announce
+    /// `SetupReady` so the UI can close its wizard. Returns an error
+    /// event if persistence or provider construction fails — the UI
+    /// surfaces the error and keeps the wizard open.
+    async fn handle_submit_api_key(
+        &self,
+        provider_slug: String,
+        api_key: String,
+        model: String,
+    ) {
+        tracing::info!(
+            "[webui] submit_api_key: provider={} model={}",
+            provider_slug,
+            model
+        );
+
+        // 1) Persist to volt_home()/.env and set the process env.
+        if let Err(e) = crate::config::save_api_key(&provider_slug, &api_key) {
+            tracing::error!("[webui] save_api_key failed: {}", e);
+            self.emit(UiEvent::Error {
+                source: "setup".into(),
+                message: format!("Failed to save API key: {}", e),
+            });
+            return;
+        }
+
+        // 2) Build the new provider and swap it into the agent.
+        let (new_provider, _kind) =
+            crate::orchestrator::build_provider(&model, "volt-webui");
+        {
+            let mut agent = self.agent.lock().await;
+            agent.replace_provider(new_provider);
+        }
+
+        // 3) Update the UI's notion of the model so the header shows
+        //    the right thing.
+        {
+            if let Ok(mut cfg) = self.config.write() {
+                cfg.default_model = model.clone();
+            }
+        }
+
+        self.emit(UiEvent::SetupReady {
+            provider: provider_slug,
+            model,
+        });
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -1660,6 +1827,23 @@ impl Runtime {
             }
         }
     }
+}
+
+// =============================================================================
+// RuntimeStartResult
+// =============================================================================
+
+/// Returned by [`Runtime::start`]. Bundles the clonable handle with
+/// any setup state the UI should display immediately — currently the
+/// provider list for the first-run wizard. We return this directly
+/// instead of relying on the broadcast channel so the UI can render
+/// without a race against the `subscribe()` call.
+pub struct RuntimeStartResult {
+    pub handle: RuntimeHandle,
+    /// Empty when an LLM key is already configured; populated when
+    /// the runtime started without one and the user needs to be
+    /// prompted via the setup wizard.
+    pub setup_providers: Vec<crate::webui::commands::ProviderInfo>,
 }
 
 // =============================================================================
@@ -1820,14 +2004,23 @@ fn build_doctor_report() -> DoctorReport {
     }
 }
 
+/// Build a `WorktreeManager` rooted at the current directory. Returns `None` if
+/// the current directory is not inside a git repository, so callers can return a
+/// safe default without having to repeat the canonicalize dance.
+async fn worktree_manager_or_none() -> Option<crate::commands::worktree::WorktreeManager> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
+        .await
+        .ok()
+        .flatten()?;
+    Some(crate::commands::worktree::WorktreeManager::new(repo_root))
+}
+
 /// Worktree helpers — wrap `WorktreeManager` so handlers stay terse.
 async fn worktree_list() -> Vec<WorktreeInfo> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = match crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd).await {
-        Ok(Some(r)) => r,
-        _ => return Vec::new(),
+    let Some(mgr) = worktree_manager_or_none().await else {
+        return Vec::new();
     };
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
     match mgr.list().await {
         Ok(items) => items
             .into_iter()
@@ -1844,45 +2037,30 @@ async fn worktree_list() -> Vec<WorktreeInfo> {
 }
 
 async fn worktree_diff_summary(branch: &str) -> anyhow::Result<String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    mgr.diff_summary(branch)
+    let mgr = worktree_manager_or_none()
         .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+    mgr.diff_summary(branch).await.map_err(anyhow::Error::from)
 }
 
 async fn worktree_merge_back(branch: &str) -> anyhow::Result<String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    mgr.merge_back(branch)
+    let mgr = worktree_manager_or_none()
         .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+    mgr.merge_back(branch).await.map_err(anyhow::Error::from)
 }
 
 async fn worktree_remove(branch: &str) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    let infos = mgr
-        .list()
+    let mgr = worktree_manager_or_none()
         .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+    let infos = mgr.list().await.map_err(anyhow::Error::from)?;
     let path = infos
         .iter()
         .find(|w| w.branch == branch)
         .map(|w| w.path.clone())
         .ok_or_else(|| anyhow::anyhow!("worktree branch {} not found", branch))?;
-    mgr.remove(&path, true)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+    mgr.remove(&path, true).await.map_err(anyhow::Error::from)
 }
 
 /// Path to the user's MCP-server config JSON file (`~/.volt/mcp_servers.json`).

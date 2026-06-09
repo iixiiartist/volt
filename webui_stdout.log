@@ -1,0 +1,7 @@
+[2m2026-06-08T16:04:57.602730Z[0m [32m INFO[0m [2mvolt::webui::runtime[0m[2m:[0m [webui] postgres pool ready
+[2m2026-06-08T16:04:59.278933Z[0m [32m INFO[0m [2mvolt::local_embed[0m[2m:[0m ORT embedder loaded: model_quantized.onnx (C:\Users\iixii\.cache\huggingface\hub\models--Xenova--bge-large-en-v1.5\snapshots\dfeef6070b90658e1b391a6940efdb0925c1de6f) — EP chain: OpenVINO → DirectML → CUDA → CPU
+[2m2026-06-08T16:04:59.279936Z[0m [32m INFO[0m [2mvolt::local_embed[0m[2m:[0m ORT EP availability — DirectML: YES, OpenVINO: no, CUDA: no
+[2m2026-06-08T16:04:59.280644Z[0m [32m INFO[0m [2mvolt::embedding[0m[2m:[0m local ONNX embedder loaded (ort EP chain: OpenVINO → DirectML → CUDA → CPU)
+[2m2026-06-08T16:04:59.512862Z[0m [32m INFO[0m [2mvolt::tools::registry[0m[2m:[0m computing 43 tool embeddings
+[2m2026-06-08T16:05:20.620448Z[0m [32m INFO[0m [2mvolt::tools::registry[0m[2m:[0m caching 43 tool embeddings to disk
+[2m2026-06-08T16:05:20.635084Z[0m [32m INFO[0m [2mvolt::webui::runtime[0m[2m:[0m [webui] runtime started

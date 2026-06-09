@@ -2,12 +2,12 @@
 // we just want it to run on first mount of each page.
 #![allow(clippy::let_underscore_future)]
 
-use super::commands::{ToolInfo, UiCommand, AuditResult};
+use super::commands::{AuditResult, ChatRole, ToolInfo, UiCommand};
 use super::routes::Page;
 use super::state::{
     ToastLevel, VoltState, COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO,
     COLOR_PANEL, COLOR_PANEL_HOVER, COLOR_SUCCESS, COLOR_TEXT, COLOR_TEXT_DIM, COLOR_TEXT_MUTED,
-    FONT_MONO,
+    COLOR_WARNING, FONT_MONO,
 };
 use dioxus::prelude::*;
 
@@ -171,6 +171,50 @@ pub fn DashboardPage() -> Element {
 pub fn ChatPage() -> Element {
     let mut state: VoltState = use_context();
     let mut input = use_signal(String::new);
+    let streaming = *state.chat_streaming.read();
+    // If the runtime reports cancel/error and we've stashed the
+    // user's draft, restore it to the textarea and clear the
+    // stash. We do this in a `use_effect` so the effect runs after
+    // the streaming flag flips to false.
+    {
+        use dioxus::prelude::use_effect;
+        use_effect(move || {
+            let streaming_now = *state.chat_streaming.read();
+            if !streaming_now {
+                // Take the draft out atomically: read, clone, set
+                // None in a separate statement so the read guard
+                // is dropped before the set.
+                let draft = state.last_user_draft.read().clone();
+                if let Some(text) = draft {
+                    state.last_user_draft.set(None);
+                    input.set(text);
+                }
+            }
+        });
+    }
+    // Auto-scroll the message container to the bottom whenever a
+    // new message arrives or streaming flips. Uses `document::eval`
+    // because Dioxus doesn't expose element refs directly. This
+    // is a best-effort sticky scroll: it always yanks the user
+    // to the latest message, which is fine for the chat UX
+    // (long chats can add a "Jump to bottom" pill later).
+    {
+        use dioxus::document::eval;
+        use dioxus::prelude::use_effect;
+        use_effect(move || {
+            // Re-run when the message count or streaming flag changes.
+            let _ = state.chat_messages.read().len();
+            let _ = *state.chat_streaming.read();
+            eval(
+                r#"
+                (() => {
+                    const el = document.getElementById('volt-chat-messages-bottom');
+                    if (el) el.scrollIntoView({ behavior: 'auto', block: 'end' });
+                })()
+                "#,
+            );
+        });
+    }
     rsx! {
         PageHeader { title: "Chat", subtitle: "Conversational interface with the Volt agent" }
         div { style: "display: flex; flex-direction: column; height: calc(100vh - 56px - 28px - 80px);",
@@ -194,63 +238,51 @@ pub fn ChatPage() -> Element {
                             "▌ streaming..."
                         }
                     }
+                    // Sentinel element the auto-scroll `use_effect`
+                    // targets. Always rendered last so we can
+                    // `scrollIntoView` it to land at the bottom.
+                    div { id: "volt-chat-messages-bottom", style: "height: 1px;" }
                 }
             }
             div { style: "padding: 16px 32px; border-top: 1px solid {COLOR_BORDER}; background-color: {COLOR_PANEL};",
                 div { style: "max-width: 900px; margin: 0 auto; display: flex; gap: 12px; align-items: flex-end;",
                     textarea {
                         style: "flex: 1; padding: 12px 16px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 8px; color: {COLOR_TEXT}; font-size: 14px; font-family: inherit; resize: none; min-height: 44px; max-height: 200px; outline: none;",
-                        placeholder: if *state.chat_streaming.read() { "Waiting for response..." } else { "Type your message..." },
+                        placeholder: if streaming { "Waiting for response..." } else { "Type your message..." },
                         value: "{input.read()}",
-                        disabled: "{state.chat_streaming.read()}",
+                        disabled: streaming,
                         oninput: move |e| input.set(e.value().to_string()),
+                        onfocus: move |_| state.focus_in_text_input.set(true),
+                        onblur: move |_| state.focus_in_text_input.set(false),
                         onkeydown: move |e| {
                             if e.key() == Key::Enter && !e.modifiers().shift() {
                                 e.prevent_default();
                                 let text = input.read().trim().to_string();
-                                let streaming = *state.chat_streaming.read();
-                                if !text.is_empty() && !streaming {
-                                    let sid = *state.chat_session.read();
-                                    input.set(String::new());
-                                    state.chat_streaming.set(true);
-                                    state.chat_messages.write().push(super::commands::ChatMessage {
-                                        id: uuid::Uuid::new_v4(),
-                                        role: super::commands::ChatRole::User,
-                                        content: text.clone(),
-                                        tool_calls: Vec::new(),
-                                        timestamp: chrono::Utc::now(),
-                                    });
-                                    state.fire(UiCommand::Chat { session_id: sid, input: text });
+                                if !text.is_empty() {
+                                    send_chat_message(&mut state, input, text);
                                 }
                             }
                         },
                         rows: "1",
                     }
-                    button {
-                        style: if *state.chat_streaming.read() {
-                            "padding: 8px 16px; background-color: {COLOR_DANGER}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;"
-                        } else {
-                            "padding: 8px 16px; background-color: {COLOR_ACCENT}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;"
-                        },
-                        disabled: "{state.chat_streaming.read()}",
-                        onclick: move |_| {
-                            let text = input.read().trim().to_string();
-                            let streaming = *state.chat_streaming.read();
-                            if !text.is_empty() && !streaming {
-                                let sid = *state.chat_session.read();
-                                input.set(String::new());
-                                state.chat_streaming.set(true);
-                                state.chat_messages.write().push(super::commands::ChatMessage {
-                                    id: uuid::Uuid::new_v4(),
-                                    role: super::commands::ChatRole::User,
-                                    content: text.clone(),
-                                    tool_calls: Vec::new(),
-                                    timestamp: chrono::Utc::now(),
-                                });
-                                state.fire(UiCommand::Chat { session_id: sid, input: text });
-                            }
-                        },
-                        if *state.chat_streaming.read() { "Cancel" } else { "Send" }
+                    if streaming {
+                        button {
+                            style: "padding: 8px 16px; background-color: {COLOR_DANGER}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                            onclick: move |_| state.fire(UiCommand::CancelChat),
+                            "Cancel"
+                        }
+                    } else {
+                        button {
+                            style: "padding: 8px 16px; background-color: {COLOR_ACCENT}; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;",
+                            disabled: input.read().trim().is_empty(),
+                            onclick: move |_| {
+                                let text = input.read().trim().to_string();
+                                if !text.is_empty() {
+                                    send_chat_message(&mut state, input, text);
+                                }
+                            },
+                            "Send"
+                        }
                     }
                 }
                 div { style: "max-width: 900px; margin: 8px auto 0 auto; display: flex; gap: 16px; font-size: 11px; color: {COLOR_TEXT_MUTED};",
@@ -265,12 +297,51 @@ pub fn ChatPage() -> Element {
     }
 }
 
+/// Push a user message into the chat history and dispatch the
+/// `Chat` command. Centralised so the textarea-onkeydown path and
+/// the Send button share the exact same behaviour. We keep a copy
+/// of the typed text in `last_user_draft` so the cancel path can
+/// restore it instead of leaving the textarea empty.
+fn send_chat_message(state: &mut VoltState, mut input: Signal<String>, text: String) {
+    if *state.chat_streaming.read() {
+        return;
+    }
+    let sid = *state.chat_session.read();
+    // Stash the input in case the chat is cancelled or fails; the
+    // ChatCancelled/ChatError handlers in `app.rs` pop it back.
+    state.last_user_draft.set(Some(text.clone()));
+    input.set(String::new());
+    state.chat_streaming.set(true);
+    state.chat_messages.write().push(super::commands::ChatMessage {
+        id: uuid::Uuid::new_v4(),
+        role: super::commands::ChatRole::User,
+        content: text.clone(),
+        tool_calls: Vec::new(),
+        timestamp: chrono::Utc::now(),
+    });
+    state.fire(UiCommand::Chat { session_id: sid, input: text });
+}
+
+/// Pop the stashed user input back into the chat textarea, if any.
+/// Currently unused — `ChatPage`'s `use_effect` does the restoration
+/// because it owns the input `Signal<String>`. Kept as a hint for
+/// future handlers that need to restore directly.
+#[allow(dead_code)]
+fn restore_user_draft(state: &mut VoltState) {
+    if state.last_user_draft.read().is_some() {
+        // Drop the read guard before calling `set` to avoid the
+        // signal-cell borrow-checker conflict.
+        state.last_user_draft.set(None);
+    }
+}
+
 #[component]
-fn ChatBubble(role: String, content: String) -> Element {
-    let is_user = role == "user";
+fn ChatBubble(role: ChatRole, content: String) -> Element {
+    let is_user = role == ChatRole::User;
+    let is_tool = role == ChatRole::Tool;
     let bg = if is_user { COLOR_PANEL_HOVER } else { COLOR_PANEL };
-    let label = if is_user { "You" } else { "Volt" };
-    let label_color = if is_user { COLOR_ACCENT } else { COLOR_SUCCESS };
+    let label = if is_user { "You" } else if is_tool { "Tool" } else { "Volt" };
+    let label_color = if is_user { COLOR_ACCENT } else if is_tool { COLOR_INFO } else { COLOR_SUCCESS };
     rsx! {
         div { style: "display: flex; flex-direction: column; gap: 4px;",
             span { style: "color: {label_color}; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;",
@@ -288,6 +359,12 @@ pub fn ToolsPage() -> Element {
     let mut state: VoltState = use_context();
     let mut filter = use_signal(String::new);
     let selected = use_signal(|| None::<ToolInfo>);
+    {
+        // Auto-load on first mount.
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListTools);
+        });
+    }
     rsx! {
         PageHeader { title: "Tools", subtitle: "Live tool registry with schema browser and direct execution" }
         div { style: "padding: 24px 32px;",
@@ -296,16 +373,78 @@ pub fn ToolsPage() -> Element {
                     placeholder: "Filter tools...",
                     value: "{filter.read()}",
                     oninput: move |e| filter.set(e.value().to_string()),
+                    onfocus: move |_| state.focus_in_text_input.set(true),
+                    onblur: move |_| state.focus_in_text_input.set(false),
                 }
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListTools) }
             }
             div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 16px;",
-                Panel { title: "Registered Tools",
-                    div { style: "color: {COLOR_TEXT_DIM}; font-size: 13px; padding: 20px 0; text-align: center;",
-                        "Tools will populate here when the runtime loads. Click Refresh to fetch the registry."
+                ToolList { filter: filter, selected: selected }
+                ToolDetail { selected: selected }
+            }
+        }
+    }
+}
+
+#[component]
+fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>) -> Element {
+    let state: VoltState = use_context();
+    let tools = state.tools.read().clone();
+    let needle = filter.read().to_lowercase();
+    let visible: Vec<_> = tools
+        .iter()
+        .filter(|t| {
+            needle.is_empty()
+                || t.name.to_lowercase().contains(&needle)
+                || t.description.to_lowercase().contains(&needle)
+                || t.category.to_lowercase().contains(&needle)
+        })
+        .cloned()
+        .collect();
+    rsx! {
+        Panel { title: format!("Registered Tools ({})", tools.len()),
+            if tools.is_empty() {
+                div { style: "color: {COLOR_TEXT_DIM}; font-size: 13px; padding: 20px 0; text-align: center;",
+                    "No tools registered yet. Click Refresh to fetch the registry."
+                }
+            } else if visible.is_empty() {
+                div { style: "color: {COLOR_TEXT_DIM}; font-size: 13px; padding: 20px 0; text-align: center;",
+                    "No tools match this filter."
+                }
+            } else {
+                div { style: "display: flex; flex-direction: column; gap: 4px; max-height: 600px; overflow-y: auto;",
+                    for t in visible.iter() {
+                        ToolRow { tool: t.clone(), selected: selected }
                     }
                 }
-                ToolDetail { selected: selected }
+            }
+        }
+    }
+}
+
+#[component]
+fn ToolRow(tool: ToolInfo, selected: Signal<Option<ToolInfo>>) -> Element {
+    let is_selected = selected.read().as_ref().map(|s| s.name == tool.name).unwrap_or(false);
+    let bg = if is_selected { COLOR_PANEL_HOVER } else { COLOR_PANEL };
+    let perm_color = match tool.permission {
+        super::commands::ToolPermission::Allow => COLOR_SUCCESS,
+        super::commands::ToolPermission::Prompt => COLOR_WARNING,
+        super::commands::ToolPermission::Deny => COLOR_DANGER,
+    };
+    rsx! {
+        div {
+            style: "padding: 10px 12px; background-color: {bg}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;",
+            onclick: move |_| selected.set(Some(tool.clone())),
+            div { style: "display: flex; align-items: center; gap: 8px;",
+                span { style: "font-family: monospace; font-size: 13px; color: {COLOR_TEXT}; font-weight: 600; flex: 1; word-break: break-all;",
+                    "{tool.name}"
+                }
+                span { style: "font-size: 10px; padding: 2px 6px; border-radius: 3px; background-color: rgba(168,85,247,0.15); color: {perm_color}; text-transform: uppercase;",
+                    "{tool.permission}"
+                }
+            }
+            div { style: "font-size: 11px; color: {COLOR_TEXT_DIM}; line-height: 1.4;",
+                "{tool.description}"
             }
         }
     }
@@ -374,11 +513,6 @@ pub fn SessionsPage() -> Element {
                     }
                 }
             }
-            {
-                let _ = use_resource(move || async move {
-            state.fire(UiCommand::ListSessions);
-        });
-            }
             SessionsList {}
         }
     }
@@ -392,6 +526,7 @@ fn SessionsList() -> Element {
     // opening a second broadcast subscriber (which would race the
     // global one and waste memory).
     let mut state: VoltState = use_context();
+    let mut confirm_delete: Signal<Option<uuid::Uuid>> = use_signal(|| None);
     let cached = state.sessions_cache.read().clone();
     if cached.is_empty() {
         rsx! { EmptyState { icon: "\u{1F4C1}", title: "No sessions yet", description: "Start a chat to create your first session, or click 'New Session' to create one." } }
@@ -422,10 +557,20 @@ fn SessionsList() -> Element {
                                 let id = s.id;
                                 move |_| state.fire(UiCommand::ForkSession { id })
                             }}
-                            DangerButton { label: "Delete".to_string(), onclick: {
-                                let id = s.id;
-                                move |_| state.fire(UiCommand::DeleteSession { id })
-                            }}
+                            DangerButton {
+                                label: if *confirm_delete.read() == Some(s.id) { "Confirm?" } else { "Delete".to_string() },
+                                onclick: {
+                                    let id = s.id;
+                                    move |_| {
+                                        if *confirm_delete.read() == Some(id) {
+                                            state.fire(UiCommand::DeleteSession { id });
+                                            confirm_delete.set(None);
+                                        } else {
+                                            confirm_delete.set(Some(id));
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -438,15 +583,19 @@ fn SessionsList() -> Element {
 pub fn SettingsPage() -> Element {
     let mut state: VoltState = use_context();
     {
-        // Auto-load the current runtime config on mount
+        // Auto-load the current runtime config + model registry on mount
         let _ = use_resource(move || async move {
             state.fire(UiCommand::GetConfig);
+            state.fire(UiCommand::ListModels);
+            state.fire(UiCommand::RunDoctor);
         });
     }
     let initial_model = state.model.read().clone();
     let initial_provider = state.provider.read().clone();
     let mut model_input = use_signal(move || initial_model);
     let mut provider_input = use_signal(move || initial_provider);
+    let models = state.models.read().clone();
+    let doctor = state.doctor_report.read().clone();
     rsx! {
         PageHeader { title: "Settings", subtitle: "Configure LLM provider, model, and runtime options" }
         div { style: "padding: 24px 32px; max-width: 800px;",
@@ -483,6 +632,11 @@ pub fn SettingsPage() -> Element {
                                 "default_provider": p,
                             });
                             state.fire(UiCommand::UpdateConfig { patch });
+                            // Re-fetch config + models so the UI
+                            // reflects the new value rather than
+                            // looking like a no-op.
+                            state.fire(UiCommand::GetConfig);
+                            state.fire(UiCommand::ListModels);
                             state.toast(ToastLevel::Success, "Settings saved");
                         }}
                         SecondaryButton { label: "Run Doctor".to_string(), onclick: move |_| state.fire(UiCommand::RunDoctor) }
@@ -490,9 +644,128 @@ pub fn SettingsPage() -> Element {
                 }
             }
             div { style: "margin-top: 16px;",
+                Panel { title: format!("Available Models ({})", models.len()),
+                    if models.is_empty() {
+                        p { style: "margin: 0; color: {COLOR_TEXT_DIM}; font-size: 12px;", "No models discovered yet. Make sure your LLM API keys are set, then click Refresh below." }
+                    } else {
+                        div { style: "display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto;",
+                            for m in models.iter() {
+                                div {
+                                    style: "padding: 8px 12px; background-color: {COLOR_PANEL_HOVER}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; display: flex; align-items: center; gap: 12px; cursor: pointer;",
+                                    onclick: {
+                                        let mid = m.id.clone();
+                                        let pid = m.provider.clone();
+                                        move |_| {
+                                            model_input.set(mid.clone());
+                                            provider_input.set(pid.clone());
+                                        }
+                                    },
+                                    div { style: "flex: 1; min-width: 0;",
+                                        div { style: "font-family: monospace; font-size: 12px; color: {COLOR_TEXT}; word-break: break-all;",
+                                            "{m.id}"
+                                        }
+                                        div { style: "font-size: 11px; color: {COLOR_TEXT_DIM};",
+                                            "Provider: {m.provider} \u{00B7} {m.context_window} tokens"
+                                        }
+                                    }
+                                    if m.available {
+                                        span { style: "color: {COLOR_SUCCESS}; font-size: 11px; padding: 2px 6px; background-color: rgba(34,197,94,0.1); border-radius: 3px;",
+                                            "available"
+                                        }
+                                    } else {
+                                        span { style: "color: {COLOR_WARNING}; font-size: 11px; padding: 2px 6px; background-color: rgba(245,158,11,0.1); border-radius: 3px;",
+                                            "no key"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { style: "display: flex; gap: 8px; margin-top: 12px;",
+                        SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListModels) }
+                    }
+                }
+            }
+            div { style: "margin-top: 16px;",
                 Panel { title: "Environment",
                     p { style: "margin: 0 0 8px 0; color: {COLOR_TEXT_DIM}; font-size: 12px;", "API keys are loaded from .env or system environment. Use 'volt doctor' to check status." }
-                    p { style: "margin: 0; color: {COLOR_TEXT_MUTED}; font-size: 11px; font-family: {FONT_MONO};", "GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, NVIDIA_API_KEY, OLLAMA_API_KEY, HF_TOKEN, YOUCOM_API_KEY" }
+                    p { style: "margin: 0 0 12px 0; color: {COLOR_TEXT_MUTED}; font-size: 11px; font-family: {FONT_MONO};", "GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, NVIDIA_API_KEY, OLLAMA_API_KEY, HF_TOKEN, YOUCOM_API_KEY" }
+                    div { style: "display: flex; gap: 8px;",
+                        SecondaryButton {
+                            label: "Run API Key Setup".to_string(),
+                            onclick: move |_| {
+                                // Reopen the wizard. If the runtime is
+                                // already configured the wizard will
+                                // still let the user change provider.
+                                let providers = vec![
+                                    crate::webui::commands::ProviderInfo {
+                                        slug: "groq".into(),
+                                        label: "Groq \u{2014} fast cloud inference (free tier)".into(),
+                                        env_var: crate::config::provider_env_var("groq"),
+                                        default_model: crate::config::default_model_for_provider("groq").into(),
+                                    },
+                                    crate::webui::commands::ProviderInfo {
+                                        slug: "openai".into(),
+                                        label: "OpenAI \u{2014} GPT-4o, GPT-4o-mini".into(),
+                                        env_var: crate::config::provider_env_var("openai"),
+                                        default_model: crate::config::default_model_for_provider("openai").into(),
+                                    },
+                                    crate::webui::commands::ProviderInfo {
+                                        slug: "anthropic".into(),
+                                        label: "Anthropic \u{2014} Claude Sonnet 4.5".into(),
+                                        env_var: crate::config::provider_env_var("anthropic"),
+                                        default_model: crate::config::default_model_for_provider("anthropic").into(),
+                                    },
+                                    crate::webui::commands::ProviderInfo {
+                                        slug: "nvidia".into(),
+                                        label: "NVIDIA NIM \u{2014} hosted open models".into(),
+                                        env_var: crate::config::provider_env_var("nvidia"),
+                                        default_model: crate::config::default_model_for_provider("nvidia").into(),
+                                    },
+                                    crate::webui::commands::ProviderInfo {
+                                        slug: "ollama".into(),
+                                        label: "Ollama \u{2014} local or cloud (OLLAMA_API_KEY)".into(),
+                                        env_var: crate::config::provider_env_var("ollama"),
+                                        default_model: crate::config::default_model_for_provider("ollama").into(),
+                                    },
+                                ];
+                                state.setup_providers.set(providers);
+                                state.show_setup_wizard.set(true);
+                            }
+                        }
+                        SecondaryButton { label: "Run Doctor".to_string(), onclick: move |_| state.fire(UiCommand::RunDoctor) }
+                    }
+                }
+            }
+            if let Some(report) = doctor {
+                div { style: "margin-top: 16px;",
+                    Panel { title: "Doctor Report",
+                        div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;",
+                            span { style: "color: {COLOR_TEXT_DIM};", "OS" }
+                            span { style: "color: {COLOR_TEXT}; font-family: monospace;", "{report.os} ({report.arch})" }
+                            span { style: "color: {COLOR_TEXT_DIM};", "Rust channel" }
+                            span { style: "color: {COLOR_TEXT}; font-family: monospace;", "{report.rust_channel}" }
+                            span { style: "color: {COLOR_TEXT_DIM};", "Database" }
+                            span { style: "color: {COLOR_TEXT}; font-family: monospace;", "{report.database}" }
+                            span { style: "color: {COLOR_TEXT_DIM};", "Embedder" }
+                            span { style: "color: {COLOR_TEXT}; font-family: monospace;", "{report.embedder_provider} / {report.embedder_model}" }
+                            span { style: "color: {COLOR_TEXT_DIM};", "Disk free" }
+                            span { style: "color: {COLOR_TEXT};", "{report.disk_free_gb:.1} GB" }
+                        }
+                        div { style: "margin-top: 12px;",
+                            div { style: "font-size: 11px; color: {COLOR_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;",
+                                "API Keys"
+                            }
+                            div { style: "display: flex; flex-direction: column; gap: 3px;",
+                                for k in report.api_keys.iter() {
+                                    div { style: "display: flex; justify-content: space-between; padding: 4px 8px; background-color: {COLOR_PANEL_HOVER}; border-radius: 4px; font-family: monospace; font-size: 11px;",
+                                        span { style: "color: {COLOR_TEXT};", "{k.name}" }
+                                        span { style: "color: {COLOR_TEXT_DIM};", "{k.masked}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             div { style: "margin-top: 16px;",
@@ -507,13 +780,34 @@ pub fn SettingsPage() -> Element {
 #[component]
 pub fn WorktreesPage() -> Element {
     let mut state: VoltState = use_context();
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListWorktrees);
+        });
+    }
+    let worktrees = state.worktrees.read().clone();
     rsx! {
         PageHeader { title: "Worktrees", subtitle: "Git worktree sessions from agent runs" }
         div { style: "padding: 24px 32px;",
             div { style: "margin-bottom: 16px;",
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListWorktrees) }
             }
-            EmptyState { icon: "\u{1F33F}", title: "No worktrees", description: "Run an agent with --worktree to create an isolated worktree session." }
+            if worktrees.is_empty() {
+                EmptyState { icon: "\u{1F33F}", title: "No worktrees", description: "Run an agent with --worktree to create an isolated worktree session." }
+            } else {
+                div { style: "display: flex; flex-direction: column; gap: 8px;",
+                    for w in worktrees.iter() {
+                        Panel { title: format!("{} (+{} commits)", w.branch, w.commits_ahead),
+                            div { style: "display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: {COLOR_TEXT_DIM};",
+                                span { "Path: " }
+                                span { style: "font-family: monospace; color: {COLOR_TEXT}; word-break: break-all;", "{w.path}" }
+                                span { "Session: " }
+                                span { style: "font-family: monospace; color: {COLOR_TEXT};", "{w.session_id}" }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -566,7 +860,7 @@ pub fn JobsPage() -> Element {
                             for j in jobs.iter() {
                                 Panel { title: format!("{} ({})", j.name, j.last_status),
                                     div { style: "display: flex; gap: 16px; font-size: 12px; color: {COLOR_TEXT_DIM};",
-                                        span { "ID: " }, span { style: "font-family: {FONT_MONO}; color: {COLOR_TEXT};", "{&j.id[..8.min(j.id.len())]}" }
+                                        span { "ID: " }, span { style: "font-family: {FONT_MONO}; color: {COLOR_TEXT};", "{crate::webui::app::short_id(&j.id)}" }
                                         span { "•" }
                                         span { "Attempts: {j.attempt_count}" }
                                         if let Some(w) = &j.worker_id { span { "•" } span { "Worker: {w}" } }
@@ -590,11 +884,29 @@ pub fn JobsPage() -> Element {
                                                 }
                                             }
                                         }}
-                                        DangerButton { label: "Fail".to_string(), onclick: {
+                                        DangerButton { label: "Fail\u{2026}".to_string(), onclick: {
                                             let id_str = j.id.clone();
+                                            let prompt = format!(
+                                                "Fail job {} ({}): reason?",
+                                                &id_str[..8.min(id_str.len())],
+                                                j.name,
+                                            );
+                                            // Native browser confirm() is
+                                            // unavailable in the Dioxus
+                                            // webview; the inline two-step
+                                            // pattern from SessionsList is
+                                            // the right answer. We
+                                            // short-circuit to a toast
+                                            // that prompts for the reason.
                                             move |_| {
                                                 if let Ok(uuid) = uuid::Uuid::parse_str(&id_str) {
-                                                    state.fire(UiCommand::FailJob { id: uuid, error: "marked failed from webui".into() });
+                                                    state.toast(
+                                                        ToastLevel::Warning,
+                                                        format!(
+                                                            "{} Reply with `volt jobs fail {} <reason>` to record the failure.",
+                                                            prompt, uuid,
+                                                        ),
+                                                    );
                                                 }
                                             }
                                         }}
@@ -681,7 +993,7 @@ pub fn RoutinesPage() -> Element {
                                     div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 8px;",
                                         span { "Trigger: {r.trigger}" }
                                         span { " • ID: " }
-                                        span { style: "font-family: {FONT_MONO};", "{&r.id[..8.min(r.id.len())]}" }
+                                        span { style: "font-family: {FONT_MONO};", "{crate::webui::app::short_id(&r.id)}" }
                                     }
                                     div { style: "font-size: 13px; color: {COLOR_TEXT}; margin-bottom: 12px;",
                                         "{r.action_prompt}"
@@ -747,7 +1059,7 @@ pub fn SkillsPage() -> Element {
             }
             if *show_search.read() {
                 Panel { title: "Catalog Search",
-                    div { style: "display: flex; gap: 8px; margin-bottom: 12px;",
+                    div { style: "display: flex; gap: 8px; margin-bottom: 12px; align-items: center;",
                         input { style: "flex: 1; padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
                             placeholder: "Search skills...",
                             value: "{search_query.read()}",
@@ -758,6 +1070,14 @@ pub fn SkillsPage() -> Element {
                             if !q.is_empty() {
                                 state.fire(UiCommand::SearchCatalogSkills { query: q });
                             }
+                        }}
+                        SecondaryButton { label: "Close".to_string(), onclick: move |_| {
+                            // Clear stale results so reopening
+                            // doesn't show the previous query.
+                            state.catalog_results.set(Vec::new());
+                            state.catalog_query.set(String::new());
+                            search_query.set(String::new());
+                            show_search.set(false);
                         }}
                     }
                     {
@@ -1000,10 +1320,12 @@ pub fn WorkflowsPage() -> Element {
     let mut agents_str = use_signal(String::new);
     let mut tasks_str = use_signal(String::new);
     let mut allow_check = use_signal(|| false);
-    let pattern_val = pattern_str.read().clone();
-    let agents_val = agents_str.read().clone();
-    let tasks_val = tasks_str.read().clone();
-    let allow_val = *allow_check.read();
+    {
+        let _ = use_resource(move || async move {
+            state.fire(UiCommand::ListWorkflows);
+        });
+    }
+    let workflows = state.workflows.read().clone();
     rsx! {
         PageHeader { title: "Workflows", subtitle: "DAG-based multi-agent orchestration" }
         div { style: "padding: 24px 32px;",
@@ -1013,7 +1335,7 @@ pub fn WorkflowsPage() -> Element {
                         label { style: "display: block; font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 4px;", "Pattern" }
                         input { style: "width: 100%; padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px;",
                             placeholder: "research-code-review",
-                            value: "{pattern_val}",
+                            value: "{pattern_str.read()}",
                             oninput: move |e| pattern_str.set(e.value().to_string()),
                         }
                     }
@@ -1021,7 +1343,7 @@ pub fn WorkflowsPage() -> Element {
                         label { style: "display: block; font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 4px;", "Agents (JSON)" }
                         input { style: "width: 100%; padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px; font-family: {FONT_MONO};",
                             placeholder: "[agent-a, agent-b]",
-                            value: "{agents_val}",
+                            value: "{agents_str.read()}",
                             oninput: move |e| agents_str.set(e.value().to_string()),
                         }
                     }
@@ -1029,12 +1351,12 @@ pub fn WorkflowsPage() -> Element {
                         label { style: "display: block; font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 4px;", "Tasks (JSON)" }
                         input { style: "width: 100%; padding: 8px 12px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; color: {COLOR_TEXT}; font-size: 13px; font-family: {FONT_MONO};",
                             placeholder: "task-1 ...",
-                            value: "{tasks_val}",
+                            value: "{tasks_str.read()}",
                             oninput: move |e| tasks_str.set(e.value().to_string()),
                         }
                     }
                     div { style: "display: flex; align-items: center; gap: 8px;",
-                        input { r#type: "checkbox", checked: "{allow_val}", onchange: move |e| allow_check.set(e.value() == "true") }
+                        input { r#type: "checkbox", checked: "{*allow_check.read()}", onchange: move |e| allow_check.set(e.checked()) }
                         label { style: "font-size: 13px; color: {COLOR_TEXT_DIM};", "Allow all tool calls without prompting" }
                     }
                     PrimaryButton { label: "Run Workflow".to_string(), onclick: move |_| {
@@ -1049,8 +1371,31 @@ pub fn WorkflowsPage() -> Element {
                 }
             }
             div { style: "margin-top: 16px;",
-                Panel { title: "Available Patterns",
-                    EmptyState { icon: "\u{1F504}", title: "No workflows loaded", description: "Workflows are loaded from .volt/workflows/ as JSON DAG files. Use 'volt workflow' CLI to manage them." }
+                Panel { title: format!("Available Patterns ({})", workflows.len()),
+                    if workflows.is_empty() {
+                        EmptyState { icon: "\u{1F504}", title: "No workflows loaded", description: "Workflows are loaded from .volt/workflows/ as JSON DAG files. Use 'volt workflow' CLI to manage them." }
+                    } else {
+                        div { style: "display: flex; flex-direction: column; gap: 6px;",
+                            for w in workflows.iter() {
+                                div {
+                                    style: "padding: 10px 12px; background-color: {COLOR_PANEL_HOVER}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; cursor: pointer;",
+                                    onclick: {
+                                        let pat = w.pattern.clone();
+                                        move |_| pattern_str.set(pat.clone())
+                                    },
+                                    div { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;",
+                                        span { style: "font-family: monospace; font-size: 13px; color: {COLOR_TEXT}; font-weight: 600;", "{w.name}" }
+                                        span { style: "font-size: 11px; padding: 2px 6px; border-radius: 3px; background-color: rgba(168,85,247,0.15); color: {COLOR_ACCENT}; text-transform: uppercase;",
+                                            "{w.pattern}"
+                                        }
+                                    }
+                                    div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; line-height: 1.4;",
+                                        "{w.description}"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

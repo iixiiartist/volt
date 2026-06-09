@@ -135,12 +135,33 @@ pub async fn get_tool_source(pool: &PgPool, tool_name: &str) -> anyhow::Result<O
     Ok(row.and_then(|r| r.try_get("source_code").ok()))
 }
 
+/// A tool row loaded from the `agent_tools` table.
+///
+/// Marked `#[non_exhaustive]` so downstream consumers cannot destructure
+/// every field by name; new columns can be added without breaking semver.
+/// `sqlx::FromRow` still works since it doesn't go through pattern matching.
 #[derive(sqlx::FromRow)]
+#[non_exhaustive]
 pub struct DbTool {
     pub tool_name: String,
     pub description: String,
     pub parameter_schema: serde_json::Value,
     pub source_code: String,
+}
+
+impl DbTool {
+    pub fn tool_name(&self) -> &str {
+        &self.tool_name
+    }
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+    pub fn parameter_schema(&self) -> &serde_json::Value {
+        &self.parameter_schema
+    }
+    pub fn source_code(&self) -> &str {
+        &self.source_code
+    }
 }
 
 pub async fn list_tools_with_schema(pool: &PgPool) -> anyhow::Result<Vec<DbTool>> {

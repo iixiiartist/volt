@@ -76,11 +76,35 @@ pub fn project_config_path() -> std::path::PathBuf {
     std::path::Path::new(".volt").join("config.toml")
 }
 
+/// Load `.env` from the current directory and **force** its values to win
+/// over the process environment, unlike `dotenvy::dotenv()` which only sets
+/// variables that are not already present.
+///
+/// Reads `.env`, splits on the first `=`, and calls `std::env::set_var` for
+/// every non-empty, non-comment line. This is the canonical pattern across
+/// bench and test binaries; centralizing it here keeps the behavior in one
+/// place (e.g. add proper quote-stripping later without touching every call
+/// site).
+pub fn load_dotenv_overriding() {
+    let _ = dotenvy::dotenv();
+    if let Ok(content) = std::fs::read_to_string(".env") {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                std::env::set_var(k.trim(), v.trim());
+            }
+        }
+    }
+}
+
 /// Walk the .env file (CWD or binary dir) and warn if any KEY in it
 /// is shadowed by a different value already in the process env.
 /// This is the silent-failure trap that bit us twice: `dotenvy::dotenv()`
-/// does not override existing env vars, so a stale `setx GROQ_API_KEY=foo`
-/// from a year ago will silently win over the .env value, and the user
+/// does not override existing env vars, so a stale shell-set env var
+/// will silently win over the .env value, and the user
 /// gets a confusing 401.
 ///
 /// Prints to stderr. Intended to be called once at startup, BEFORE any
@@ -735,4 +759,209 @@ mod tests {
         // `.volt` in the worst case — that's still acceptable.
         assert!(s.ends_with(".volt"), "got {}", s);
     }
+
+    #[test]
+    fn provider_env_var_known_slugs() {
+        // Cloud providers always need a key.
+        assert_eq!(provider_env_var("groq").as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(provider_env_var("openai").as_deref(), Some("OPENAI_API_KEY"));
+        assert_eq!(provider_env_var("anthropic").as_deref(), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(provider_env_var("nvidia").as_deref(), Some("NVIDIA_API_KEY"));
+        // Ollama: key only when the user has set OLLAMA_API_KEY (cloud tier).
+        std::env::remove_var("OLLAMA_API_KEY");
+        assert_eq!(provider_env_var("ollama"), None);
+        std::env::set_var("OLLAMA_API_KEY", "test_cloud_key");
+        assert_eq!(provider_env_var("ollama").as_deref(), Some("OLLAMA_API_KEY"));
+        std::env::remove_var("OLLAMA_API_KEY");
+        // Unknown slug falls back to LLM_API_KEY.
+        assert_eq!(provider_env_var("custom").as_deref(), Some("LLM_API_KEY"));
+    }
+
+    #[test]
+    fn default_model_for_provider_known_slugs() {
+        for slug in ["groq", "openai", "anthropic", "nvidia", "nim", "ollama"] {
+            assert!(
+                !default_model_for_provider(slug).is_empty(),
+                "default model for {} should be non-empty",
+                slug
+            );
+        }
+    }
+
+    #[test]
+    fn save_api_key_persists_and_idempotent() {
+        // Use a sentinel env var that we can verify was set.
+        let env_var = save_api_key("groq", "gsk_test_persistence_key_12345")
+            .expect("save should succeed");
+        assert_eq!(env_var, "GROQ_API_KEY");
+        // Visible in process env.
+        assert_eq!(
+            std::env::var("GROQ_API_KEY").ok().as_deref(),
+            Some("gsk_test_persistence_key_12345")
+        );
+        // On disk.
+        let home = volt_home();
+        let path = home.join(".env");
+        let body = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            body.contains("GROQ_API_KEY=gsk_test_persistence_key_12345"),
+            "expected GROQ_API_KEY in {}, got {}",
+            path.display(),
+            body
+        );
+        // Overwrite (re-save with new key) — old line must be replaced.
+        let _ = save_api_key("groq", "gsk_test_overwrite_key_67890");
+        let body2 = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            !body2.contains("gsk_test_persistence_key_12345"),
+            "old key should be removed"
+        );
+        assert!(body2.contains("GROQ_API_KEY=gsk_test_overwrite_key_67890"));
+        assert_eq!(
+            std::env::var("GROQ_API_KEY").ok().as_deref(),
+            Some("gsk_test_overwrite_key_67890")
+        );
+        // Cleanup: remove the line we wrote so this test is hermetic.
+        let cleaned: Vec<String> = body2
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("GROQ_API_KEY="))
+            .map(String::from)
+            .collect();
+        let _ = std::fs::write(&path, cleaned.join("\n") + "\n");
+        std::env::remove_var("GROQ_API_KEY");
+    }
+
+    #[test]
+    fn save_api_key_rejects_empty() {
+        let result = save_api_key("groq", "   ");
+        assert!(result.is_err(), "empty/whitespace key should be rejected");
+    }
+
+    #[test]
+    fn has_any_llm_key_round_trip() {
+        // Start clean.
+        for k in LLM_KEY_ENV_VARS {
+            std::env::remove_var(k);
+        }
+        assert!(!has_any_llm_key());
+        std::env::set_var("LLM_API_KEY", "x");
+        assert!(has_any_llm_key());
+        std::env::remove_var("LLM_API_KEY");
+        assert!(!has_any_llm_key());
+    }
+}
+
+// =============================================================================
+// Setup-wizard helpers
+// =============================================================================
+
+/// The set of LLM env vars we recognize when checking whether any provider
+/// is configured. Order matters only for diagnostics; the first match wins
+/// when the runtime resolves a default provider.
+pub const LLM_KEY_ENV_VARS: &[&str] = &[
+    "GROQ_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "NVIDIA_API_KEY",
+    "NVCF_API_KEY",
+    "OLLAMA_API_KEY",
+    "LLM_API_KEY",
+];
+
+/// True iff at least one LLM API key is visible in the process env. Used
+/// by the webui to decide whether to show the first-run setup wizard.
+pub fn has_any_llm_key() -> bool {
+    LLM_KEY_ENV_VARS.iter().any(|k| {
+        std::env::var(k)
+            .ok()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    })
+}
+
+/// Map a provider slug to the env var the runtime reads for its API key.
+/// Returns `None` for local Ollama runs that have no `OLLAMA_API_KEY`
+/// set. When `OLLAMA_API_KEY` is present, the cloud tier is used and a
+/// key is required.
+pub fn provider_env_var(slug: &str) -> Option<String> {
+    match slug {
+        "groq" => Some("GROQ_API_KEY".to_string()),
+        "openai" => Some("OPENAI_API_KEY".to_string()),
+        "anthropic" => Some("ANTHROPIC_API_KEY".to_string()),
+        "nvidia" => Some("NVIDIA_API_KEY".to_string()),
+        "nim" => Some("NVIDIA_API_KEY".to_string()),
+        "ollama" => std::env::var("OLLAMA_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(|_| "OLLAMA_API_KEY".to_string()),
+        _ => Some("LLM_API_KEY".to_string()),
+    }
+}
+
+/// Default model id for a given provider slug.
+pub fn default_model_for_provider(slug: &str) -> &'static str {
+    match slug {
+        "groq" => "llama-3.1-8b-instant",
+        "openai" => "gpt-4o-mini",
+        "anthropic" => "claude-sonnet-4-5",
+        "nvidia" | "nim" => "meta/llama-3.1-8b-instruct",
+        "ollama" => "llama3.2:3b",
+        _ => "llama-3.1-8b-instant",
+    }
+}
+
+/// Persist an API key to `volt_home()/.env`, set it in the process
+/// environment, and return the resolved env-var name. Idempotent: a
+/// re-write replaces the previous value.
+pub fn save_api_key(provider_slug: &str, api_key: &str) -> anyhow::Result<String> {
+    let env_var = provider_env_var(provider_slug)
+        .ok_or_else(|| anyhow::anyhow!("provider '{}' has no key", provider_slug))?;
+    if api_key.trim().is_empty() {
+        anyhow::bail!("API key is empty");
+    }
+    let home = volt_home();
+    std::fs::create_dir_all(&home)?;
+    let env_path = home.join(".env");
+
+    // Read existing lines, drop any matching key, then append the new one.
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = existing
+        .lines()
+        .filter(|l| {
+            let trimmed = l.trim_start();
+            !trimmed.starts_with(&format!("{}=", env_var))
+        })
+        .map(|s| s.to_string())
+        .collect();
+    // Preserve a trailing newline so the appended entry starts on its own line.
+    if !lines.is_empty() && !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+        lines.push(String::new());
+    }
+    lines.push(format!("{}={}", env_var, api_key.trim()));
+    let body = lines.join("\n") + "\n";
+    std::fs::write(&env_path, body)?;
+
+    // Make it visible to the rest of this process.
+    std::env::set_var(&env_var, api_key.trim());
+    Ok(env_var)
+}
+
+/// Read the `.env` file the wizard would have written, if it exists.
+/// Used by tests and the runtime's reload-from-disk flow.
+#[cfg(test)]
+pub fn read_volt_home_env() -> std::collections::HashMap<String, String> {
+    let path = volt_home().join(".env");
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    content
+        .lines()
+        .filter_map(|l| {
+            let trimmed = l.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return None;
+            }
+            l.split_once('=').map(|(k, v)| {
+                (k.trim().to_string(), v.trim().to_string())
+            })
+        })
+        .collect()
 }

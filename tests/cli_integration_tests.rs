@@ -368,6 +368,10 @@ core_tools = ["read"]
     cmd.current_dir(&temp_dir)
         .env("LLM_BASE_URL", server.uri())
         .env("LLM_API_KEY", "dummy-key")
+        // Skip the 60+ second compute_embeddings pass; this test only needs
+        // tool registrations, not their dense vectors. response_format
+        // generation does not depend on tool embeddings.
+        .env("VOLT_SKIP_TOOL_EMBEDDINGS", "1")
         .arg("agent-run")
         .arg("--blueprint")
         .arg(blueprints_dir.join("strict_test.toml"))
@@ -376,6 +380,8 @@ core_tools = ["read"]
         .arg("--model")
         .arg("test-model");
 
+    // The agent still has to load ONNX (10s cold) + DB+session init (~2s) +
+    // auto-seed workers (~1s), so 60s is plenty.
     let output = cmd
         .timeout(std::time::Duration::from_secs(60))
         .output()
@@ -384,7 +390,9 @@ core_tools = ["read"]
     let body = captured.lock().unwrap().clone();
     assert!(
         body.is_some(),
-        "Expected HTTP request to be captured. Stderr: {}",
+        "Expected HTTP request to be captured. Exit status: {:?}\nStdout: {}\nStderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let body = body.unwrap();
@@ -423,8 +431,13 @@ fn test_execute_cli_exec_missing_gate_fails_gracefully() {
     .arg("--params")
     .arg("{\"binary\":\"task\",\"args\":[]}");
 
+    // Agent-run takes 10–15s for ONNX model load + 10–20s for 43 tool
+    // embeddings on first run; 180s gives headroom for cold cache.
+    // (The sibling auto-blueprint test takes 60+ seconds and passes because
+    // it asserts on an early [router] log line; this test asserts on a late
+    // HTTP body capture, so it needs a longer budget.)
     let output = cmd
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(180))
         .output()
         .unwrap();
 

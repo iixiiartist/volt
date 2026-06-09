@@ -60,7 +60,8 @@ async fn ping_returns_pong() {
             return;
         }
     };
-    let handle = Runtime::start().await.expect("runtime start");
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle
         .send(UiCommand::Ping)
         .await
@@ -73,7 +74,8 @@ async fn ping_returns_pong() {
 async fn list_tools_returns_populated() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListTools).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::ToolsListed { .. })).await;
     match ev {
@@ -89,7 +91,8 @@ async fn list_tools_returns_populated() {
 async fn get_config_round_trips() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::GetConfig).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::ConfigLoaded { .. })).await;
     match ev {
@@ -108,7 +111,8 @@ async fn get_config_round_trips() {
 async fn list_sessions_returns_array() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListSessions).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::SessionsListed { .. })).await;
     assert!(matches!(ev, Some(UiEvent::SessionsListed { .. })));
@@ -118,7 +122,8 @@ async fn list_sessions_returns_array() {
 async fn list_jobs_uses_postgres() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListJobs).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::JobsListed { .. })).await;
     match ev {
@@ -134,7 +139,8 @@ async fn list_jobs_uses_postgres() {
 async fn create_job_appears_in_list() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     let desc = format!("e2e-test-job-{}", Uuid::new_v4());
     handle
         .send(UiCommand::CreateJob {
@@ -167,7 +173,8 @@ async fn create_job_appears_in_list() {
 async fn list_routines_uses_postgres() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListRoutines).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::RoutinesListed { .. })).await;
     match ev {
@@ -182,7 +189,8 @@ async fn list_routines_uses_postgres() {
 async fn create_routine_appears_in_list() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     let name = format!("e2e-routine-{}", Uuid::new_v4());
     handle
         .send(UiCommand::CreateRoutine {
@@ -214,7 +222,8 @@ async fn create_routine_appears_in_list() {
 async fn list_skills_returns_array() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListSkills).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::SkillsListed { .. })).await;
     match ev {
@@ -229,7 +238,8 @@ async fn list_skills_returns_array() {
 async fn search_catalog_skills_works() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle
         .send(UiCommand::SearchCatalogSkills {
             query: "git".into(),
@@ -250,7 +260,8 @@ async fn search_catalog_skills_works() {
 async fn list_mcp_servers_returns_array() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListMcpServers).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::McpServersListed { .. })).await;
     assert!(matches!(ev, Some(UiEvent::McpServersListed { .. })));
@@ -260,7 +271,8 @@ async fn list_mcp_servers_returns_array() {
 async fn register_mcp_server_persists() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     let name = format!("e2e-mcp-{}", Uuid::new_v4());
     handle
         .send(UiCommand::RegisterMcpServer {
@@ -297,7 +309,8 @@ async fn register_mcp_server_persists() {
 async fn doctor_returns_report() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::RunDoctor).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::DoctorCompleted { .. })).await;
     match ev {
@@ -320,7 +333,8 @@ async fn doctor_returns_report() {
 async fn audit_log_returns_entries() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle
         .send(UiCommand::GetAuditLog { limit: 10 })
         .await
@@ -333,7 +347,8 @@ async fn audit_log_returns_entries() {
 async fn list_workflows_returns_known_patterns() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListWorkflows).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::WorkflowsListed { .. })).await;
     match ev {
@@ -353,7 +368,8 @@ async fn list_workflows_returns_known_patterns() {
 async fn list_models_returns_active_providers() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     handle.send(UiCommand::ListModels).await.unwrap();
     let ev = wait_for(&handle, |e| matches!(e, UiEvent::ModelsListed { .. })).await;
     match ev {
@@ -369,7 +385,8 @@ async fn list_models_returns_active_providers() {
 async fn create_session_persists() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     let name = format!("e2e-session-{}", Uuid::new_v4());
     handle
         .send(UiCommand::CreateSession { name: name.clone() })
@@ -395,7 +412,8 @@ async fn create_session_persists() {
 async fn chat_completes_with_real_llm() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
 
     handle
         .send(UiCommand::Chat {
@@ -435,7 +453,8 @@ async fn chat_completes_with_real_llm() {
 async fn chat_emits_streaming_chunks() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
 
     handle
         .send(UiCommand::Chat {
@@ -488,7 +507,8 @@ async fn chat_emits_streaming_chunks() {
 async fn execute_tool_bash_runs() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     let args = serde_json::json!({
         "command": "echo hello-webui"
     });
@@ -513,7 +533,8 @@ async fn execute_tool_bash_runs() {
 async fn install_skill_persists_to_postgres() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     // Use a real catalog entry
     handle
         .send(UiCommand::InstallSkill {
@@ -538,7 +559,8 @@ async fn install_skill_persists_to_postgres() {
 async fn uninstall_skill_removes_from_postgres() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     // Install a real catalog skill first
     handle
         .send(UiCommand::InstallSkill {
@@ -569,7 +591,8 @@ async fn uninstall_skill_removes_from_postgres() {
 async fn chat_message_persists_to_sqlite() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
 
     // Send a chat
     handle
@@ -637,7 +660,8 @@ async fn chat_message_persists_to_sqlite() {
 async fn delete_session_removes_messages_transactionally() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
 
     // 1. Create a session, send a chat to populate messages, then
     //    delete it. The transaction-based handler must remove the
@@ -693,7 +717,8 @@ async fn delete_session_removes_messages_transactionally() {
 async fn toggle_routine_persists() {
     let _g = env_or_skip("GROQ_API_KEY").unwrap();
     let _p = env_or_skip("DATABASE_URL").unwrap();
-    let handle = Runtime::start().await.unwrap();
+    let start_result = Runtime::start().await;
+    let handle = start_result.expect("runtime start").handle.clone();
     let name = format!("e2e-toggle-routine-{}", Uuid::new_v4());
     handle
         .send(UiCommand::CreateRoutine {
@@ -722,3 +747,5 @@ async fn toggle_routine_persists() {
     let deleted = wait_for(&handle, |e| matches!(e, UiEvent::RoutineDeleted { .. })).await;
     assert!(matches!(deleted, Some(UiEvent::RoutineDeleted { .. })));
 }
+
+

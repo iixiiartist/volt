@@ -13,6 +13,7 @@ use anyhow::Context;
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::Value;
+use volt::config::load_dotenv_overriding;
 use volt::llm::openai::OpenAIProvider;
 use volt::llm::LLMProvider;
 use volt::models::{LLMMessage, LLMRequest, ToolDefinition};
@@ -358,20 +359,7 @@ async fn run_category(
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    // Load .env
-    dotenvy::dotenv().ok();
-    // Force env from .env file
-    if let Ok(content) = std::fs::read_to_string(".env") {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((k, v)) = line.split_once('=') {
-                std::env::set_var(k.trim(), v.trim());
-            }
-        }
-    }
+    load_dotenv_overriding();
     // Map Groq API key to OPENAI_API_KEY for the OpenAI provider
     std::env::set_var(
         "OPENAI_API_KEY",

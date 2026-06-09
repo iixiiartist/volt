@@ -126,4 +126,16 @@ async fn test_program_bench() {
     println!("RESULTS — ProgramBench | {}ms total", total_duration);
     println!("  Accuracy: {}/{} = {:.1}%", correct, total, pct);
     println!("{}", "=".repeat(70));
+
+    assert!(
+        total > 0,
+        "program_bench: PROBLEMS list is empty, cannot run"
+    );
+    if std::env::var("VOLT_PROGRAM_BENCH_REQUIRE_PASS").as_deref() == Ok("1") {
+        assert!(
+            correct > 0,
+            "program_bench: agent got 0/{} correct (require at least 1)",
+            total
+        );
+    }
 }

@@ -1,6 +1,10 @@
 use crate::models::{MCPServerConfig, MCPTransport, ToolResult};
 use serde_json::Value;
 
+fn build_http_client() -> reqwest::Client {
+    crate::http_client_with_timeout(std::time::Duration::from_secs(60))
+}
+
 pub async fn call_mcp_tool(server: &MCPServerConfig, tool: &str, args: &Value) -> ToolResult {
     match &server.transport {
         MCPTransport::Stdio {
@@ -96,12 +100,7 @@ async fn http_send(
     headers: &Option<std::collections::HashMap<String, String>>,
     request: serde_json::Value,
 ) -> ToolResult {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .pool_max_idle_per_host(100)
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .build()
-        .unwrap_or_default();
+    let client = build_http_client();
     let mut req_builder = client.post(url).json(&request);
     if let Some(hdrs) = headers {
         for (k, v) in hdrs {

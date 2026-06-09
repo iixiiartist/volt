@@ -63,7 +63,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
                 let wt_id = uuid::Uuid::new_v4();
                 match mgr.create_for_session(wt_id).await {
                     Ok(info) => {
-                        eprintln!(
+                        tracing::info!(
                             "[worktree] isolated to {} (branch {})",
                             info.path.display(),
                             info.branch
@@ -71,17 +71,17 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
                         info.path
                     }
                     Err(e) => {
-                        eprintln!("[worktree] failed: {} — using cwd", e);
+                        tracing::warn!("[worktree] failed: {} - using cwd", e);
                         cwd
                     }
                 }
             }
             Ok(None) => {
-                eprintln!("[worktree] not in a git repo — --worktree ignored");
+                tracing::info!("[worktree] not in a git repo - --worktree ignored");
                 std::env::current_dir().unwrap_or_default()
             }
             Err(e) => {
-                eprintln!("[worktree] detect failed: {} — using cwd", e);
+                tracing::warn!("[worktree] detect failed: {} - using cwd", e);
                 std::env::current_dir().unwrap_or_default()
             }
         }

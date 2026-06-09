@@ -103,7 +103,7 @@ pub async fn delegate_task_with_cap_mgr(
     }
 
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(300),
         sub_agent.run(&safe_task),
     )
     .await;

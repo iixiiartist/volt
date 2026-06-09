@@ -352,6 +352,10 @@ pub struct Usage {
 pub struct PromptTokensDetails {
     #[serde(default)]
     pub cached_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_tokens: Option<u64>,
 }
 
 /// Per-model usage breakdown from Compound System responses.
@@ -704,6 +708,13 @@ impl CancelToken {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clear the cancelled flag so the same token can be reused for
+    /// the next operation. Used by the webui runtime to avoid leaking
+    /// cancellation state across chat turns.
+    pub fn reset(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

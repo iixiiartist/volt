@@ -159,6 +159,21 @@ pub enum UiCommand {
 
     /// Liveness probe.
     Ping,
+
+    /// Persist a newly-entered API key. The runtime writes the value
+    /// to `volt_home()/.env` (so it survives restarts), sets it in the
+    /// process environment, and rebuilds the LLM provider. Emitted
+    /// back to the UI as a `SetupReady` event on success.
+    SubmitApiKey {
+        /// Provider slug, e.g. "groq", "openai", "anthropic", "nvidia",
+        /// "ollama". The runtime maps this to the correct env var name.
+        provider: String,
+        /// The API key value. Ignored for providers with no key (e.g.
+        /// local Ollama).
+        api_key: String,
+        /// Default model to use for this provider (e.g. "llama-3.1-8b-instant").
+        model: String,
+    },
 }
 
 // =============================================================================
@@ -304,8 +319,42 @@ pub enum UiEvent {
     /// Pong response to `UiCommand::Ping`.
     Pong,
 
+    /// The runtime started but no LLM API key is configured. The UI
+    /// should show a setup wizard and let the user enter credentials.
+    /// Includes the current env-var search paths so the UI can tell
+    /// the user which key names are accepted.
+    SetupNeeded {
+        providers: Vec<ProviderInfo>,
+    },
+
+    /// The runtime accepted a new API key, persisted it, and rebuilt
+    /// the LLM provider successfully. The UI should close the wizard.
+    SetupReady { provider: String, model: String },
+
     /// Generic transport-level or command-handler error.
     Error { source: String, message: String },
+}
+
+/// One entry in the provider list shown by the setup wizard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub slug: String,
+    pub label: String,
+    /// Env var that the runtime will read (e.g. "GROQ_API_KEY").
+    /// `None` for local providers that don't need a key.
+    pub env_var: Option<String>,
+    /// Default model id for this provider.
+    pub default_model: String,
+}
+
+/// UI-side record of an `ApprovalRequest` event. Stored in
+/// `VoltState::pending_approvals` so the modal can render all
+/// outstanding requests and the user can answer each one in turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequestInfo {
+    pub request_id: uuid::Uuid,
+    pub tool_name: String,
+    pub args: serde_json::Value,
 }
 
 // =============================================================================
@@ -482,7 +531,7 @@ impl std::fmt::Display for SkillSource {
 }
 
 /// Snapshot entry describing a single tool in the registry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolInfo {
     pub name: String,
     pub description: String,

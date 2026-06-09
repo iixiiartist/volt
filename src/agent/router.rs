@@ -260,7 +260,9 @@ mod tests {
 
     #[test]
     fn test_get_active_providers_groq_only() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
         unsafe {
             std::env::set_var("GROQ_API_KEY", "test-key");
@@ -276,7 +278,9 @@ mod tests {
 
     #[test]
     fn test_get_active_providers_no_remote_adds_local() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
 
         let active = get_active_providers();

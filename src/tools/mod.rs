@@ -29,8 +29,6 @@ pub mod read_tool;
 pub mod registration;
 pub mod registry;
 pub mod scrape_tool;
-#[cfg(feature = "tools-screenshot")]
-pub mod screenshot;
 pub mod searchhq;
 pub mod sequential_thinking;
 pub mod time_tool;

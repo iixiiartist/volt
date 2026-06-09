@@ -114,41 +114,6 @@ impl EmbeddingClient {
         }
     }
 
-    pub fn embed_description_blocking(&self, description: &str) -> anyhow::Result<Vec<f32>> {
-        #[cfg(feature = "tools-local-embeddings")]
-        if let Some(local) = &self.local {
-            let truncated = truncate_description(description);
-            return local.embed(truncated).map(normalize_dims);
-        }
-        Err(anyhow::anyhow!("no local embedder available"))
-    }
-
-    /// Batch-embed multiple descriptions in a single ONNX forward pass.
-    /// Uses spawn_blocking so it doesn't starve the async runtime.
-    pub async fn batch_embed_descriptions(
-        &self,
-        descriptions: &[String],
-    ) -> anyhow::Result<Vec<Vec<f32>>> {
-        if descriptions.is_empty() {
-            return Ok(Vec::new());
-        }
-        let texts: Vec<String> = descriptions
-            .iter()
-            .map(|d| truncate_description(d).to_string())
-            .collect();
-
-        #[cfg(feature = "tools-local-embeddings")]
-        if let Some(local) = &self.local {
-            let cloned = local.clone();
-            return tokio::task::spawn_blocking(move || cloned.batch_embed(&texts))
-                .await
-                .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
-                .map(|v| v.into_iter().map(normalize_dims).collect());
-        }
-
-        Err(anyhow::anyhow!("no local embedder available"))
-    }
-
     pub async fn embed_description(&self, description: &str) -> anyhow::Result<Vec<f32>> {
         if self.providers.is_empty() {
             return Ok(deterministic_placeholder_embedding(description));
@@ -249,8 +214,14 @@ impl EmbeddingClient {
         };
 
         let (_status, resp_text) = async {
-            let max_retries = 3;
-            for attempt in 0..max_retries {
+            const MAX_RETRIES: u32 = 3;
+            const RETRY_BACKOFF_BASE_MS: u64 = 1000;
+            // Per-attempt HTTP timeout. Without this a hung TCP connection
+            // (firewall drops, dead proxy, server-side deadlock) can block
+            // the entire embedding pipeline for minutes. 30s is generous
+            // for any real remote embedder (HF API usually responds in 2-5s).
+            const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+            for attempt in 0..MAX_RETRIES {
                 let req = self.http.post(&config.endpoint).json(&body);
                 let req = if config.provider != EmbeddingProvider::Ollama && !api_key.is_empty() {
                     req.header("Authorization", format!("Bearer {}", api_key))
@@ -258,8 +229,8 @@ impl EmbeddingClient {
                     req
                 };
 
-                match req.send().await {
-                    Ok(resp) => {
+                match tokio::time::timeout(REQUEST_TIMEOUT, req.send()).await {
+                    Ok(Ok(resp)) => {
                         let status = resp.status();
                         let text = resp.text().await.unwrap_or_default();
                         if status.is_success() {
@@ -274,8 +245,8 @@ impl EmbeddingClient {
                                 &text[..200.min(text.len())]
                             );
                         }
-                        if sc == 429 && attempt + 1 < max_retries {
-                            let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                        if sc == 429 && attempt + 1 < MAX_RETRIES {
+                            let delay = std::time::Duration::from_millis(RETRY_BACKOFF_BASE_MS * 2u64.pow(attempt));
                             if self.verbose {
                                 eprintln!(
                                     "[embed] {:?} rate limited (429), retrying in {:?}",
@@ -291,11 +262,12 @@ impl EmbeddingClient {
                             &text[..200.min(text.len())]
                         );
                     }
-                    Err(e) => {
-                        if attempt + 1 < max_retries && (e.is_timeout() || e.is_connect()) {
-                            let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                    Ok(Err(e)) => {
+                        // Network-level failure (connect refused, DNS, TLS, etc.)
+                        if attempt + 1 < MAX_RETRIES && (e.is_timeout() || e.is_connect()) {
+                            let delay = std::time::Duration::from_millis(RETRY_BACKOFF_BASE_MS * 2u64.pow(attempt));
                             if self.verbose {
-                                eprintln!("[embed] {:?} connection issue (attempt {}/{}), retrying in {:?}: {}", config.provider, attempt + 1, max_retries, delay, e);
+                                eprintln!("[embed] {:?} connection issue (attempt {}/{}), retrying in {:?}: {}", config.provider, attempt + 1, MAX_RETRIES, delay, e);
                             }
                             tokio::time::sleep(delay).await;
                             continue;
@@ -306,12 +278,37 @@ impl EmbeddingClient {
                         );
                         anyhow::bail!(msg);
                     }
+                    Err(_elapsed) => {
+                        // Per-attempt timeout (REQUEST_TIMEOUT). Treat the same
+                        // as a connection timeout — retryable up to MAX_RETRIES.
+                        if attempt + 1 < MAX_RETRIES {
+                            let delay = std::time::Duration::from_millis(RETRY_BACKOFF_BASE_MS * 2u64.pow(attempt));
+                            if self.verbose {
+                                eprintln!(
+                                    "[embed] {:?} request timeout after {:?} (attempt {}/{}), retrying in {:?}",
+                                    config.provider,
+                                    REQUEST_TIMEOUT,
+                                    attempt + 1,
+                                    MAX_RETRIES,
+                                    delay
+                                );
+                            }
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        anyhow::bail!(
+                            "{:?} embedding timed out after {} attempts ({}s each)",
+                            config.provider,
+                            MAX_RETRIES,
+                            REQUEST_TIMEOUT.as_secs()
+                        );
+                    }
                 }
             }
             anyhow::bail!(
                 "{:?} embedding failed after {} attempts",
                 config.provider,
-                max_retries
+                MAX_RETRIES
             )
         }
         .await?;

@@ -1203,7 +1203,6 @@ fn count_atom_matches(inner: &Token, ci: usize, chars: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[allow(dead_code)]
     fn make_registry(defs: Vec<HookDefinition>, event: HookEvent) -> HookRegistry {
@@ -1553,10 +1552,5 @@ command = "echo a"
     }
 
     // Smoke test for the merge override behaviour with mixed project/user
-    // entries. (HashMap isn't actually used by HookConfig but is included
-    // to keep the test module compiling when other tests reference it.)
-    #[allow(dead_code)]
-    fn _unused_hashmap_import() -> HashMap<String, String> {
-        HashMap::new()
-    }
+    // entries.
 }

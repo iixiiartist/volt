@@ -116,17 +116,32 @@ impl SeedEvent {
 
 // ── MPSC channel wrapper ───────────────────────────────────────────────────
 
+/// Bounded channel capacity for the seed-event bus. Adversarial agent loops
+/// (or pathological retries) could otherwise OOM by emitting unlimited events.
+const SEED_CHANNEL_CAPACITY: usize = 256;
+
 /// Clone-able sender for the MPSC channel from agent loop to background worker.
-/// Non-blocking — silently logs warnings if the worker has stopped.
+/// Non-blocking — drops events with a warning if the buffer is full or the
+/// worker has stopped.
 #[derive(Clone)]
 pub struct SeedChannel {
-    tx: mpsc::UnboundedSender<SeedEvent>,
+    tx: mpsc::Sender<SeedEvent>,
 }
 
 impl SeedChannel {
+    /// `try_send` is non-blocking. If the buffer is full we drop the event
+    /// (with a warning) rather than block the agent loop. The seed channel
+    /// is best-effort telemetry; losing events is preferable to backpressuring
+    /// tool execution.
     pub fn send(&self, event: SeedEvent) {
-        if let Err(e) = self.tx.send(event) {
-            tracing::warn!("[volt worker] seed channel closed, event dropped: {:?}", e);
+        match self.tx.try_send(event) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!("[volt worker] seed channel full ({}), event dropped", SEED_CHANNEL_CAPACITY);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!("[volt worker] seed channel closed, event dropped");
+            }
         }
     }
 
@@ -178,8 +193,8 @@ impl SeedChannel {
     }
 }
 
-pub fn create_seed_channel() -> (SeedChannel, mpsc::UnboundedReceiver<SeedEvent>) {
-    let (tx, rx) = mpsc::unbounded_channel();
+pub fn create_seed_channel() -> (SeedChannel, mpsc::Receiver<SeedEvent>) {
+    let (tx, rx) = mpsc::channel(SEED_CHANNEL_CAPACITY);
     (SeedChannel { tx }, rx)
 }
 
@@ -211,7 +226,7 @@ impl AutoSeedWorker {
         }
     }
 
-    pub fn spawn(self, mut rx: mpsc::UnboundedReceiver<SeedEvent>) {
+    pub fn spawn(self, mut rx: mpsc::Receiver<SeedEvent>) {
         tokio::spawn(async move {
             info!("[volt worker] auto-seed daemon started");
 
@@ -258,7 +273,13 @@ impl AutoSeedWorker {
                         let text = format!("{}: {}", entry.kind.as_str(), entry.content);
                         async move {
                             let _permit = sem.acquire().await.ok();
-                            let emb = embedder.embed_description(&text).await.ok();
+                            let emb = match embedder.embed_description(&text).await {
+                                Ok(e) => Some(e),
+                                Err(e) => {
+                                    tracing::warn!("[worker] embedder failed for entry: {}", e);
+                                    None
+                                }
+                            };
                             (entry.clone(), emb)
                         }
                     })
@@ -340,7 +361,13 @@ impl AutoSeedWorker {
                 let text = format!("{}: {}", entry.kind.as_str(), entry.content);
                 async move {
                     let _permit = sem.acquire().await.ok();
-                    let emb = embedder.embed_description(&text).await.ok();
+                    let emb = match embedder.embed_description(&text).await {
+                        Ok(e) => Some(e),
+                        Err(e) => {
+                            tracing::warn!("[worker] embedder failed: {}", e);
+                            None
+                        }
+                    };
                     (entry.clone(), emb)
                 }
             })
@@ -493,7 +520,13 @@ pub async fn seed_permissions(
             def.name,
             def.description,
         );
-        let embedding = embedder.embed_description(&content).await.ok();
+        let embedding = match embedder.embed_description(&content).await {
+            Ok(e) => Some(e),
+            Err(e) => {
+                tracing::warn!("[worker] embedder failed for skill content: {}", e);
+                None
+            }
+        };
         entries.push(ContextEntry {
             id: uuid::Uuid::new_v4(),
             kind: ContextKind::Permission,

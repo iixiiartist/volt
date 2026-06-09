@@ -376,7 +376,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
                 }
                 None => {
                     // Truly empty: just print the error to stderr.
-                    eprintln!("error: {}", e);
+                    tracing::error!("error: {}", e);
                 }
             }
         }
@@ -443,10 +443,10 @@ async fn load_tool_stubs(
                     }
                 }
             }
-            eprintln!("[tools] loaded {} BFCL stubs from {}", count, path);
+            tracing::info!("[tools] loaded {} BFCL stubs from {}", count, path);
             tools.compute_embeddings(embedder).await;
         }
-        Err(e) => eprintln!("[tools] failed to load {}: {}", path, e),
+        Err(e) => tracing::warn!("[tools] failed to load {}: {}", path, e),
     }
 }
 

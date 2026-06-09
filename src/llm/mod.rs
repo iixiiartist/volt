@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod ollama;
 pub mod openai;
+pub mod poll_async;
 pub mod provider;
 pub mod riva;
 pub use anthropic::AnthropicProvider;

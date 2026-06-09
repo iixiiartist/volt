@@ -28,7 +28,7 @@ impl MCPClient {
         if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(val) = serde_json::from_str::<Value>(&content) {
                 if let Some(token) = val.get("access_token").and_then(|v| v.as_str()) {
-                    *self.access_token.lock().unwrap() = Some(token.to_string());
+        *self.access_token.lock().expect("mcp access_token mutex poisoned") = Some(token.to_string());
                 }
             }
         }
@@ -89,7 +89,7 @@ impl MCPClient {
                         req = req.header(k, v);
                     }
                 }
-                if let Some(token) = self.access_token.lock().unwrap().as_ref() {
+                if let Some(token) = self.access_token.lock().expect("mcp access_token mutex poisoned").as_ref() {
                     req = req.header("Authorization", format!("Bearer {}", token));
                 }
                 let resp = req.send().await?;
@@ -147,7 +147,7 @@ impl MCPClient {
                         req = req.header(k, v);
                     }
                 }
-                if let Some(token) = self.access_token.lock().unwrap().as_ref() {
+                if let Some(token) = self.access_token.lock().expect("mcp access_token mutex poisoned").as_ref() {
                     req = req.header("Authorization", format!("Bearer {}", token));
                 }
                 let resp = req.send().await?;

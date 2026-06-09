@@ -293,6 +293,11 @@ async fn test_bfcl_voltr_pipeline() {
         println!("  --- {} RESULTS ---", mode.to_uppercase());
         println!("  Accuracy: {}/{} = {:.1}%", correct, total, pct);
         println!("  Avg prompt tokens: {:.0}", avg_tok);
+
+        assert!(total > 0, "bfcl_pipeline: no cases were evaluated");
+        if std::env::var("VOLT_BFCL_REQUIRE_PASS").as_deref() == Ok("1") {
+            assert!(correct > 0, "bfcl_pipeline {}: 0/{} correct", mode, total);
+        }
     }
 
     println!("\n{}", "=".repeat(70));

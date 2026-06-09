@@ -587,48 +587,132 @@ impl Orchestrator {
     ) -> anyhow::Result<WorkflowResult> {
         let started = Instant::now();
 
+        if worker_specs.is_empty() {
+            anyhow::bail!("supervisor mode requires at least one worker_spec");
+        }
+
         let worker_descriptions: Vec<String> = worker_specs
             .iter()
             .map(|w| format!("- {} (model: {})", w.name, w.model))
             .collect();
         let worker_block = worker_descriptions.join("\n");
 
-        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "qwen/qwen3-32b".into());
-        let supervisor_spec = AgentSpec {
-            name: "supervisor".into(),
-            model,
-            system_prompt: Some(format!(
-                "You are a supervisor agent coordinating worker agents.\n\n\
-                 Available workers:\n{}\n\n\
-                 Route the user's task to the appropriate worker(s) and synthesize their results.",
-                worker_block
-            )),
-            max_iterations: 15,
-            temperature: 0.3,
+        let supervisor_model =
+            std::env::var("LLM_MODEL").unwrap_or_else(|_| "qwen/qwen3-32b".into());
+
+        let task = task.to_string();
+        let cap_mgr = self.cap_mgr.clone();
+        let tools = self.tools.clone();
+
+        // Spawn all workers in parallel — each is given the task plus the list
+        // of peer workers (so it can include context in its output if useful).
+        let mut handles = Vec::with_capacity(worker_specs.len());
+        for spec in worker_specs {
+            let task = task.clone();
+            let worker_block = worker_block.clone();
+            let cap_mgr = cap_mgr.clone();
+            let tools = tools.clone();
+            handles.push(tokio::spawn(async move {
+                let started = Instant::now();
+                let worker_task = format!(
+                    "Worker role: {}\n\nPeer workers in this supervisor group:\n{}\n\nTask: {}",
+                    spec.name, worker_block, task
+                );
+                let agent = create_agent(spec.clone(), tools, Some(cap_mgr)).await;
+                match agent.run(&worker_task).await {
+                    Ok(output) => StepResult {
+                        agent_name: spec.name,
+                        output,
+                        duration_ms: started.elapsed().as_millis(),
+                        success: true,
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        error: None,
+                    },
+                    Err(e) => StepResult {
+                        agent_name: spec.name,
+                        output: format!("error: {}", e),
+                        duration_ms: started.elapsed().as_millis(),
+                        success: false,
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        error: Some(e.to_string()),
+                    },
+                }
+            }));
+        }
+
+        let mut worker_steps: Vec<StepResult> = Vec::with_capacity(handles.len());
+        for h in handles {
+            let step = h
+                .await
+                .map_err(|e| anyhow::anyhow!("worker join: {}", e))?;
+            worker_steps.push(step);
+        }
+
+        // Synthesizer: a single LLM call that takes the supervisor task plus all
+        // worker outputs and produces a final consolidated response.
+        let synthesizer_prompt = format!(
+            "You are a supervisor agent coordinating worker agents.\n\n\
+             Available workers and their outputs:\n{}\n\n\
+             Synthesize a final consolidated response to the user's original task: {}\n\n\
+             Use the [Worker Output] sections above as your evidence. Be concise.",
+            worker_steps
+                .iter()
+                .map(|s| format!(
+                    "[Worker: {}]\n{}{}",
+                    s.agent_name,
+                    s.output,
+                    s.error
+                        .as_ref()
+                        .map(|e| format!("\n(worker error: {})", e))
+                        .unwrap_or_default()
+                ))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            task
+        );
+
+        let synthesizer_spec = AgentSpec {
+            name: "supervisor-synthesizer".into(),
+            model: supervisor_model,
+            system_prompt: None,
+            max_iterations: 1,
+            temperature: 0.2,
             allow_all: false,
             mode: None,
         };
+        let synthesizer = create_agent(synthesizer_spec, tools, Some(cap_mgr)).await;
+        let synth_started = Instant::now();
+        let synth_result = synthesizer.run(&synthesizer_prompt).await;
+        let synth_state = synthesizer.state().lock().await;
+        let synth_step = match synth_result {
+            Ok(out) => StepResult {
+                agent_name: "supervisor-synthesizer".into(),
+                output: out.clone(),
+                duration_ms: synth_started.elapsed().as_millis(),
+                success: true,
+                prompt_tokens: synth_state.total_prompt_tokens,
+                completion_tokens: synth_state.total_completion_tokens,
+                error: None,
+            },
+            Err(e) => StepResult {
+                agent_name: "supervisor-synthesizer".into(),
+                output: format!("synthesizer error: {}", e),
+                duration_ms: synth_started.elapsed().as_millis(),
+                success: false,
+                prompt_tokens: synth_state.total_prompt_tokens,
+                completion_tokens: synth_state.total_completion_tokens,
+                error: Some(e.to_string()),
+            },
+        };
 
-        let supervisor = create_agent(
-            supervisor_spec,
-            self.tools.clone(),
-            Some(self.cap_mgr.clone()),
-        )
-        .await;
-        let output = supervisor.run(task).await?;
-        let state = supervisor.state().lock().await;
+        let mut steps = worker_steps;
+        steps.push(synth_step.clone());
 
         Ok(WorkflowResult {
-            steps: vec![StepResult {
-                agent_name: "supervisor".into(),
-                output: output.clone(),
-                duration_ms: started.elapsed().as_millis(),
-                success: true,
-                prompt_tokens: state.total_prompt_tokens,
-                completion_tokens: state.total_completion_tokens,
-                error: None,
-            }],
-            final_output: output,
+            final_output: synth_step.output,
+            steps,
             total_duration_ms: started.elapsed().as_millis(),
         })
     }

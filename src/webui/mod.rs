@@ -4,4 +4,5 @@ pub mod layout;
 pub mod pages;
 pub mod routes;
 pub mod runtime;
+pub mod setup_wizard;
 pub mod state;

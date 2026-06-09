@@ -9,113 +9,152 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 impl Agent {
+
     pub async fn run(&self, input: &str) -> anyhow::Result<String> {
         // PreRun hooks (one-shot side effects; not allowed to block).
         if let Some(registry) = &self.hook_registry {
             registry.run_pre_run().await;
         }
+        self.setup_session_and_prompt(input).await;
+        if self.config.use_cot {
+            self.run_planning_cot(input).await;
+        }
+        self.push_user_message(input).await;
+
+        let result = self.run_iteration_loop(input).await;
+
+        // PostRun hooks fire whether the run succeeded or failed.
+        if let Some(registry) = &self.hook_registry {
+            registry.run_post_run().await;
+        }
+        result
+    }
+
+    /// Phase 1: session load, system-prompt install, precision-mode check.
+    /// Runs before any LLM call so the agent starts with consistent context.
+    async fn setup_session_and_prompt(&self, input: &str) {
         let is_precision = self.is_precision_mode();
         if !is_precision {
             if let (Some(sid), Some(pool)) = (self.session_id, &self.sqlite_pool) {
                 match crate::session::load_messages(pool, sid).await {
                     Ok(msgs) if !msgs.is_empty() => {
                         let mut state = self.state.lock().await;
+                        // CRITICAL: clear any prior in-memory conversation
+                        // before loading the new session's history. The
+                        // webui reuses the same `Agent` across sessions
+                        // and chats, so without this every new session
+                        // would inherit the previous session's messages
+                        // — including prior failed runs, stale tool
+                        // outputs, and any messages that don't belong to
+                        // the current session_id.
+                        state.messages.clear();
+                        state.last_saved_message_idx = 0;
                         state.messages.extend(msgs);
                         tracing::info!(
-                            "[session] loaded {} messages from {}",
+                            "[session] loaded {} messages for {}",
                             state.messages.len(),
                             sid
                         );
                     }
-                    Ok(_) => {}
+                    Ok(_) => {
+                        // No messages in DB for this session — clear any
+                        // stale in-memory state from a prior session.
+                        let mut state = self.state.lock().await;
+                        state.messages.clear();
+                        state.last_saved_message_idx = 0;
+                    }
                     Err(e) => tracing::warn!("[session] failed to load messages: {}", e),
                 }
             }
         }
 
-        {
-            let mut state = self.state.lock().await;
-            let current_prompt = if self.config.framework.is_some() {
-                prompt_builder::build_prompt(
-                    &build_system_prompt(&self.config, self.workspace.as_deref()),
-                    input,
-                    None,
-                    None,
-                )
-            } else {
-                build_system_prompt(&self.config, self.workspace.as_deref())
-            };
-            let existing_idx = state.messages.iter().position(|m| m.role == "system");
-            match existing_idx {
-                Some(idx) => {
-                    if state.messages[idx].content.as_ref() != &current_prompt {
-                        state.messages[idx].content = Arc::new(current_prompt);
-                        tracing::info!("[system] replaced stale system prompt on session resume");
-                    }
-                }
-                None => {
-                    state.messages.insert(
-                        0,
-                        Message {
-                            id: Uuid::new_v4(),
-                            parent_message_id: None,
-                            role: "system".into(),
-                            content: Arc::new(current_prompt),
-                            tool_calls: None,
-                            tool_result: None,
-                            tool_name: None,
-                            created_at: chrono::Utc::now(),
-                        },
-                    );
+        let mut state = self.state.lock().await;
+        let current_prompt = if self.config.framework.is_some() {
+            prompt_builder::build_prompt(
+                &build_system_prompt(&self.config, self.workspace.as_deref()),
+                input,
+                None,
+                None,
+            )
+        } else {
+            build_system_prompt(&self.config, self.workspace.as_deref())
+        };
+        let existing_idx = state.messages.iter().position(|m| m.role == "system");
+        match existing_idx {
+            Some(idx) => {
+                if state.messages[idx].content.as_ref() != &current_prompt {
+                    state.messages[idx].content = Arc::new(current_prompt);
+                    tracing::info!("[system] replaced stale system prompt on session resume");
                 }
             }
-        }
-
-        if self.config.use_cot {
-            let tool_names: Vec<String> = self
-                .tools
-                .get_definitions()
-                .await
-                .iter()
-                .map(|d| d.name.clone())
-                .collect();
-            let plan_prompt = cot::planning_prompt(input, &tool_names);
-            let planning_messages = vec![LLMMessage {
-                role: "user".to_string(),
-                content: Arc::new(plan_prompt),
-                tool_calls: None,
-                tool_call_id: None,
-            }];
-            let _model_ctx = crate::models::ModelContext::for_model(&self.config.model);
-            let plan_request = LLMRequest {
-                model: self.config.model.clone(),
-                messages: planning_messages,
-                temperature: Some(0.2),
-                max_tokens: Some(512),
-                stop: None,
-                tools: None,
-                stream: false,
-                ..Default::default()
-            };
-            if let Ok(plan_response) = self.provider.complete(&plan_request).await {
-                let plan_text = plan_response.content.as_str();
-                let plan_steps = cot::parse_plan(plan_text);
-                if !plan_steps.is_empty() {
-                    let plan_summary = plan_steps
-                        .iter()
-                        .map(|(n, desc, _tool)| format!("{}. {}", n, desc))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    tracing::info!("[CoT] plan generated:\n{}", plan_summary);
-                    let state = self.state.lock().await;
-                    crate::tools::memory_tool::memory_append("plan", &plan_summary).await;
-                    drop(state);
-                }
+            None => {
+                state.messages.insert(
+                    0,
+                    Message {
+                        id: Uuid::new_v4(),
+                        parent_message_id: None,
+                        role: "system".into(),
+                        content: Arc::new(current_prompt),
+                        tool_calls: None,
+                        tool_result: None,
+                        tool_name: None,
+                        created_at: chrono::Utc::now(),
+                    },
+                );
             }
         }
+    }
 
-        self.push_user_message(input).await;
+    /// Phase 1b: optional Chain-of-Thought planning call. Asks the model to
+    /// emit a numbered plan and stores it in the memory tool for visibility.
+    /// Best-effort — any error is silently swallowed (planning is advisory).
+    async fn run_planning_cot(&self, input: &str) {
+        let tool_names: Vec<String> = self
+            .tools
+            .get_definitions()
+            .await
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
+        let plan_prompt = cot::planning_prompt(input, &tool_names);
+        let planning_messages = vec![LLMMessage {
+            role: "user".to_string(),
+            content: Arc::new(plan_prompt),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let plan_request = LLMRequest {
+            model: self.config.model.clone(),
+            messages: planning_messages,
+            temperature: Some(0.2),
+            max_tokens: Some(512),
+            stop: None,
+            tools: None,
+            stream: false,
+            ..Default::default()
+        };
+        if let Ok(plan_response) = self.provider.complete(&plan_request).await {
+            let plan_text = plan_response.content.as_str();
+            let plan_steps = cot::parse_plan(plan_text);
+            if !plan_steps.is_empty() {
+                let plan_summary = plan_steps
+                    .iter()
+                    .map(|(n, desc, _tool)| format!("{}. {}", n, desc))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                tracing::info!("[CoT] plan generated:\n{}", plan_summary);
+                let state = self.state.lock().await;
+                crate::tools::memory_tool::memory_append("plan", &plan_summary).await;
+                drop(state);
+            }
+        }
+    }
 
+    /// Phase 2: the main tool-using loop. Runs up to `config.max_iterations`,
+    /// each iteration calling the LLM, executing any returned tool calls, and
+    /// feeding results back. Returns the final answer (or an error if cancelled
+    /// or no answer was produced within the budget).
+    async fn run_iteration_loop(&self, input: &str) -> anyhow::Result<String> {
         for _iteration in 0..self.config.max_iterations {
             tokio::task::yield_now().await;
 
@@ -222,8 +261,23 @@ impl Agent {
             state.iteration += 1;
             state.updated_at = chrono::Utc::now();
             if let Some(ref usage) = response.usage {
+                tracing::warn!(
+                    "[agent] iter {}: usage.prompt={} completion={} content_len={} tool_calls={}",
+                    state.iteration,
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                    response.content.len(),
+                    response.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0)
+                );
                 state.total_prompt_tokens += usage.prompt_tokens;
                 state.total_completion_tokens += usage.completion_tokens;
+            } else {
+                tracing::warn!(
+                    "[agent] iter {}: NO USAGE! content_len={} tool_calls={}",
+                    state.iteration,
+                    response.content.len(),
+                    response.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0)
+                );
             }
 
             self.save_checkpoint(
@@ -317,12 +371,59 @@ impl Agent {
                 }
 
                 if let Some(final_call) = tool_calls.iter().find(|tc| tc.name == "final_answer") {
-                    let answer = final_call
+                    let arg_answer = final_call
                         .arguments
                         .get("answer")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+                    // Multi-stage fallback for empty `answer`:
+                    //   1. Model's natural-language content in this turn.
+                    //   2. Any non-empty string field in the tool-call JSON.
+                    //   3. The most recent non-empty assistant message in
+                    //      the conversation history. Some models emit the
+                    //      answer in a prior turn and then "confirm" with
+                    //      a redundant final_answer({}) call.
+                    //   4. The most recent non-empty tool message (last
+                    //      resort for models that put the answer in tool
+                    //      output rather than final_answer).
+                    let answer = if arg_answer.trim().is_empty() {
+                        let fallback = response.content.as_str().trim().to_string();
+                        if !fallback.is_empty() {
+                            fallback
+                        } else {
+                            final_call
+                                .arguments
+                                .as_object()
+                                .and_then(|obj| {
+                                    obj.values()
+                                        .find_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                                })
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| {
+                                    state
+                                        .messages
+                                        .iter()
+                                        .rev()
+                                        .find(|m| m.role == "assistant" && !m.content.trim().is_empty())
+                                        .map(|m| m.content.as_str().trim().to_string())
+                                        .unwrap_or_default()
+                                })
+                        }
+                    } else {
+                        arg_answer
+                    };
+                    tracing::warn!(
+                        "[agent] final_answer received: arg_len={} content_len={} recovered_len={}",
+                        final_call
+                            .arguments
+                            .get("answer")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.len())
+                            .unwrap_or(0),
+                        response.content.len(),
+                        answer.len()
+                    );
                     self.push_assistant_message(&mut state, &response, Some(tool_calls))
                         .await;
                     drop(state);
@@ -448,38 +549,46 @@ impl Agent {
                     .await;
                 drop(state);
                 self.save_session_messages_delta().await;
-                if let Some(registry) = &self.hook_registry {
-                    registry.run_post_run().await;
-                }
                 return Ok(Arc::unwrap_or_clone(response.content));
             }
         }
 
+        // Iteration budget exhausted — try to recover the last assistant or
+        // tool message as a best-effort answer, otherwise surface a hard
+        // error. `finalize_response` handles the post-run hook and the
+        // empty-content branch uniformly.
+        self.finalize_response().await
+    }
+
+    /// Phase 3: end-of-run cleanup. Saves the session delta, scans message
+    /// history for a last non-empty assistant (or tool) text, and returns
+    /// it. Returns Err if the loop exited without producing any text and
+    /// nothing useful is recoverable.
+    async fn finalize_response(&self) -> anyhow::Result<String> {
         self.save_session_messages_delta().await;
         let state = self.state.lock().await;
+        // Prefer the latest non-empty assistant message, then fall back
+        // to the latest non-empty tool message. Some models (notably the
+        // small 8B) emit the answer as the *content* of an assistant
+        // message but ALSO call final_answer with empty arguments. We
+        // want that content.
         let last_answer = state
             .messages
             .iter()
             .rev()
-            .find(|m| m.role == "assistant" && !m.content.is_empty())
+            .find(|m| m.role == "assistant" && !m.content.trim().is_empty())
             .or_else(|| {
                 state
                     .messages
                     .iter()
                     .rev()
-                    .find(|m| m.role == "tool" && !m.content.is_empty())
+                    .find(|m| m.role == "tool" && !m.content.trim().is_empty())
             })
             .map(|m| m.content.as_str().to_string())
             .unwrap_or_default();
         if !last_answer.is_empty() {
-            if let Some(registry) = &self.hook_registry {
-                registry.run_post_run().await;
-            }
             Ok(last_answer)
         } else {
-            if let Some(registry) = &self.hook_registry {
-                registry.run_post_run().await;
-            }
             Err(anyhow::anyhow!(
                 "max iterations reached without final response"
             ))
@@ -667,7 +776,13 @@ impl Agent {
         };
 
         let context_embedding = if let Some(ref embedder) = self.embedder {
-            embedder.embed_description(&context_query).await.ok()
+            match embedder.embed_description(&context_query).await {
+                Ok(e) => Some(e),
+                Err(e) => {
+                    tracing::warn!("[build_context] embedder failed: {}", e);
+                    None
+                }
+            }
         } else {
             None
         };
@@ -814,7 +929,32 @@ impl Agent {
     async fn build_llm_messages(&self) -> Vec<LLMMessage> {
         let state_snapshot = self.state.lock().await;
         let mut llm_messages: Vec<LLMMessage> = Vec::new();
-        let linearized = crate::models::linearize_messages(&state_snapshot.messages);
+        // Keep the conversation lean: only the last N turns go into
+        // the LLM prompt verbatim. Older turns live in the
+        // `Conversation` context kind and are retrieved on demand via
+        // RAG in `build_context` (semantic search). This is the
+        // "Everything-as-RAG" pattern — stuffing the full history
+        // into every request blows past the 8B's effective working
+        // context after a few turns.
+        const MAX_RECENT_TURNS: usize = 6;
+        const MAX_RECENT_MESSAGES: usize = 12;
+        let total = state_snapshot.messages.len();
+        let start = total.saturating_sub(MAX_RECENT_MESSAGES);
+        // Find the boundary of the last MAX_RECENT_TURNS user/assistant
+        // exchanges so we don't cut mid-tool-call.
+        let mut cut = start;
+        let mut user_turns = 0;
+        for (i, m) in state_snapshot.messages.iter().enumerate().skip(start) {
+            if m.role == "user" {
+                user_turns += 1;
+                if user_turns > MAX_RECENT_TURNS {
+                    cut = i;
+                    break;
+                }
+            }
+        }
+        let window: &[crate::models::Message] = &state_snapshot.messages[cut..];
+        let linearized = crate::models::linearize_messages(window);
 
         for m in linearized {
             let mut msg = LLMMessage {
@@ -830,6 +970,12 @@ impl Agent {
                 msg.tool_call_id = Some(tid.clone());
             }
             llm_messages.push(msg);
+        }
+        if cut > 0 {
+            tracing::info!(
+                "[build_llm_messages] trimmed {} older messages from LLM context (relying on RAG for recall)",
+                cut
+            );
         }
         llm_messages
     }
@@ -856,63 +1002,17 @@ impl Agent {
     async fn execute_tool_calls(
         &self,
         tool_calls: &[ToolCall],
-        allow_session: bool,
+        mut allow_session: bool,
     ) -> Vec<(String, String, String, ToolResult)> {
-        let mut allow_session = allow_session;
         for tc in tool_calls {
             if self.is_cancelled() {
                 return Vec::new();
             }
-            let needs_approval = self.tools.get_permission(&tc.name).await
-                == PermissionLevel::Prompt
-                && !self.config.allow_all
-                && !allow_session;
-            if !needs_approval {
+            if !self.needs_approval(&tc.name).await || allow_session || self.config.allow_all {
                 continue;
             }
-
-            // Decide via the TUI callback if one is installed, otherwise
-            // fall back to the legacy stdin prompt.
-            let decision = if let Some(approval_fn) = &self.approval_fn {
-                approval_fn(&tc.name, &tc.arguments).await
-            } else {
-                eprintln!(
-                    "\n\x1b[33m[approval]\x1b[0m tool '{}({:?})' requires approval.",
-                    tc.name, tc.arguments
-                );
-                eprint!("Proceed? [y/N/a = always allow for this session] ");
-                use std::io::Write;
-                std::io::stderr().flush().ok();
-                let answer = tokio::task::spawn_blocking(|| {
-                    let mut buf = String::new();
-                    std::io::stdin().read_line(&mut buf).ok();
-                    buf.trim().to_lowercase()
-                })
-                .await
-                .unwrap_or_default();
-                match answer.as_str() {
-                    "y" | "yes" => crate::agent::ApprovalDecision::AllowOnce,
-                    "a" => crate::agent::ApprovalDecision::AllowSession,
-                    _ => crate::agent::ApprovalDecision::Deny,
-                }
-            };
-
-            match decision {
-                crate::agent::ApprovalDecision::AllowOnce => {
-                    // proceed with this tool, no session-wide change
-                }
-                crate::agent::ApprovalDecision::AllowSession => {
-                    allow_session = true;
-                }
-                crate::agent::ApprovalDecision::Deny => {
-                    // Skip this tool call. The agent loop's downstream
-                    // capability check will exclude it.
-                    tracing::info!(
-                        "[approval] denied tool '{}' with args {:?}",
-                        tc.name,
-                        tc.arguments
-                    );
-                }
+            if self.request_approval(&tc.name, &tc.arguments).await {
+                allow_session = true;
             }
         }
 
@@ -920,13 +1020,63 @@ impl Agent {
             return Vec::new();
         }
 
-        let mut allowed = Vec::new();
+        let allowed = self.filter_by_capability(tool_calls).await;
+        let failure_filtered = self.filter_by_failure_tracker(&allowed).await;
+        let mut results = self.run_tools_parallel(&failure_filtered).await;
+
+        // Surface skipped (failure-tracker warnings) and (denied) tool calls.
+        self.append_skipped(&mut results, &allowed, &failure_filtered);
+        self.publish_executed_events(&results);
+        if allow_session {
+            self.state.lock().await.allow_session = true;
+        }
+        results
+    }
+
+    async fn needs_approval(&self, tool_name: &str) -> bool {
+        self.tools.get_permission(tool_name).await == PermissionLevel::Prompt
+    }
+
+    /// Ask the user (or TUI callback) for permission. Returns `true` if the
+    /// user chose to allow all tools for the rest of the session.
+    async fn request_approval(&self, name: &str, args: &serde_json::Value) -> bool {
+        let decision = if let Some(approval_fn) = &self.approval_fn {
+            approval_fn(name, args).await
+        } else {
+            eprintln!(
+                "\n\x1b[33m[approval]\x1b[0m tool '{}({:?})' requires approval.",
+                name, args
+            );
+            eprint!("Proceed? [y/N/a = always allow for this session] ");
+            use std::io::Write;
+            std::io::stderr().flush().ok();
+            let answer = tokio::task::spawn_blocking(|| {
+                let mut buf = String::new();
+                std::io::stdin().read_line(&mut buf).ok();
+                buf.trim().to_lowercase()
+            })
+            .await
+            .unwrap_or_default();
+            match answer.as_str() {
+                "y" | "yes" => crate::agent::ApprovalDecision::AllowOnce,
+                "a" => crate::agent::ApprovalDecision::AllowSession,
+                _ => crate::agent::ApprovalDecision::Deny,
+            }
+        };
+        matches!(decision, crate::agent::ApprovalDecision::AllowSession)
+    }
+
+    /// Drop any tool call that has no valid capability token for its required scope.
+    async fn filter_by_capability(&self, tool_calls: &[ToolCall]) -> Vec<ToolCall> {
+        let mut allowed = Vec::with_capacity(tool_calls.len());
         for tc in tool_calls {
             let scope = crate::capability::tool_required_scope(&tc.name);
             let tokens = self.capability_manager.list_tokens().await;
-            let has_valid = tokens
-                .iter()
-                .any(|t| t.scope == scope && t.remaining > 0 && chrono::Utc::now() <= t.expires_at);
+            let has_valid = tokens.iter().any(|t| {
+                t.scope == scope
+                    && t.remaining > 0
+                    && chrono::Utc::now() <= t.expires_at
+            });
             if !has_valid {
                 tracing::warn!(
                     "[capability] no valid token for {:?} — skipping tool '{}'",
@@ -937,149 +1087,190 @@ impl Agent {
             }
             allowed.push(tc.clone());
         }
+        allowed
+    }
 
-        let mut skipped = Vec::new();
-        let mut failure_filtered = Vec::new();
-        for tc in &allowed {
-            if let Some(ref tracker) = self.failure_tracker {
-                if let Some(warning) = tracker.should_avoid(&tc.name).await {
-                    skipped.push((tc.name.clone(), tc.id.clone(), warning));
-                    continue;
-                }
+    /// Drop any tool call that the failure tracker has flagged.
+    async fn filter_by_failure_tracker(&self, tool_calls: &[ToolCall]) -> Vec<ToolCall> {
+        let Some(tracker) = self.failure_tracker.as_ref() else {
+            return tool_calls.to_vec();
+        };
+        let mut kept = Vec::with_capacity(tool_calls.len());
+        for tc in tool_calls {
+            if let Some(warning) = tracker.should_avoid(&tc.name).await {
+                tracing::info!("[failure-tracker] skipping '{}': {}", tc.name, warning);
+                continue;
             }
-            failure_filtered.push(tc.clone());
+            kept.push(tc.clone());
         }
+        kept
+    }
 
+    /// Execute a batch of tool calls in parallel. Runs Pre/PostToolUse hooks,
+    /// wraps output, records the run in the context store, and returns the
+    /// `(name, id, output, result)` tuples.
+    async fn run_tools_parallel(
+        &self,
+        tool_calls: &[ToolCall],
+    ) -> Vec<(String, String, String, ToolResult)> {
         let cap_mgr = self.capability_manager.clone();
         let hook_registry = self.hook_registry.clone();
-        let futures: Vec<_> = failure_filtered
+        let futures: Vec<_> = tool_calls
             .iter()
-            .map(|tc| {
-                let tools = self.tools.clone();
-                let cap_mgr = cap_mgr.clone();
-                let name = tc.name.clone();
-                let args = tc.arguments.clone();
-                let id = tc.id.clone();
-                let store = self.context_store.clone();
-                let embedder = self.embedder.clone();
-                let hook_registry = hook_registry.clone();
-                tracing::debug!("executing tool: {} with {}", name, args);
-                async move {
-                    // PreToolUse hook: can block or modify args.
-                    let mut effective_args = args.clone();
-                    let mut blocked_reason: Option<String> = None;
-                    if let Some(registry) = &hook_registry {
-                        let decision = registry.run_pre_tool_use(&name, &args).await;
-                        match decision {
-                            crate::agent::hooks::PreToolDecision::Allow => {}
-                            crate::agent::hooks::PreToolDecision::Block { reason } => {
-                                blocked_reason = Some(reason);
-                            }
-                            crate::agent::hooks::PreToolDecision::ModifyArgs { args: new_args } => {
-                                effective_args = new_args;
-                            }
-                        }
-                    }
-
-                    let (effective_name, output, result) = if let Some(reason) = blocked_reason {
-                        (
-                            name.clone(),
-                            format!("[hook blocked] {}", reason),
-                            ToolResult {
-                                success: false,
-                                output: String::new(),
-                                error: Some(format!("blocked by hook: {}", reason)),
-                                duration_ms: 0,
-                            },
-                        )
-                    } else {
-                        let result = tools
-                            .execute_gated(&name, &effective_args, &cap_mgr)
-                            .await
-                            .unwrap_or_else(|e| ToolResult {
-                                success: false,
-                                output: String::new(),
-                                error: Some(format!("tool error: {}", e)),
-                                duration_ms: 0,
-                            });
-
-                        if let (Some(ref store), Some(ref emb)) = (&store, &embedder) {
-                            if let Ok(_emb) = emb.embed_description(&name).await {
-                                store
-                                    .record_run(
-                                        &effective_args.to_string(),
-                                        &name,
-                                        result.success,
-                                        serde_json::json!({
-                                            "tool_name": name,
-                                            "duration_ms": result.duration_ms,
-                                            "error": result.error,
-                                        }),
-                                    )
-                                    .await;
-                            }
-                        }
-
-                        let error_msg = result.error.clone();
-                        let raw_output = if result.success {
-                            result.output.clone()
-                        } else {
-                            format!("error: {}", error_msg.unwrap_or_default())
-                        };
-
-                        let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref()
-                            != Some("false")
-                        {
-                            crate::safety_layer::wrap_tool_output(&name, &raw_output)
-                        } else {
-                            raw_output
-                        };
-
-                        // PostToolUse hook: collect any context injections.
-                        let mut post_output = output;
-                        if let Some(registry) = &hook_registry {
-                            let outcome = registry
-                                .run_post_tool_use(
-                                    &name,
-                                    &effective_args,
-                                    &post_output,
-                                    result.success,
-                                    result.duration_ms as u64,
-                                )
-                                .await;
-                            let ctx = outcome.merged_context();
-                            if !ctx.trim().is_empty() {
-                                post_output.push_str("\n\n[hook context]\n");
-                                post_output.push_str(&ctx);
-                            }
-                        }
-
-                        (name.clone(), post_output, result)
-                    };
-
-                    (effective_name, id, output, result)
-                }
-            })
+            .map(|tc| self.run_single_tool(tc, &cap_mgr, hook_registry.as_ref()))
             .collect();
+        futures::future::join_all(futures).await
+    }
 
-        let mut results: Vec<(String, String, String, ToolResult)> =
-            futures::future::join_all(futures).await;
+    #[allow(clippy::type_complexity)]
+    fn run_single_tool<'a>(
+        &'a self,
+        tc: &'a ToolCall,
+        cap_mgr: &'a Arc<crate::capability::CapabilityManager>,
+        hook_registry: Option<&'a crate::agent::hooks::HookRegistry>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = (String, String, String, ToolResult)> + Send + 'a>,
+    > {
+        let tools = self.tools.clone();
+        let context_store = self.context_store.clone();
+        let embedder = self.embedder.clone();
+        Box::pin(async move {
+            let name = tc.name.clone();
+            let args = tc.arguments.clone();
+            let id = tc.id.clone();
+            tracing::debug!("executing tool: {} with {}", name, args);
 
-        for (name, id, warning) in skipped {
-            results.push((
-                name,
-                id,
-                warning.clone(),
-                ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(warning),
-                    duration_ms: 0,
-                },
-            ));
+            let mut effective_args = args.clone();
+            let mut blocked_reason: Option<String> = None;
+            if let Some(registry) = hook_registry {
+                match registry.run_pre_tool_use(&name, &args).await {
+                    crate::agent::hooks::PreToolDecision::Allow => {}
+                    crate::agent::hooks::PreToolDecision::Block { reason } => {
+                        blocked_reason = Some(reason);
+                    }
+                    crate::agent::hooks::PreToolDecision::ModifyArgs { args: new_args } => {
+                        effective_args = new_args;
+                    }
+                }
+            }
+
+            let (effective_name, output, result) = if let Some(reason) = blocked_reason {
+                (
+                    name.clone(),
+                    format!("[hook blocked] {}", reason),
+                    ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("blocked by hook: {}", reason)),
+                        duration_ms: 0,
+                    },
+                )
+            } else {
+                let result = tools
+                    .execute_gated(&name, &effective_args, cap_mgr)
+                    .await
+                    .unwrap_or_else(|e| ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!("tool error: {}", e)),
+                        duration_ms: 0,
+                    });
+
+                if let (Some(ref store), Some(ref emb)) = (&context_store, &embedder) {
+                    if emb.embed_description(&name).await.is_ok() {
+                        store
+                            .record_run(
+                                &effective_args.to_string(),
+                                &name,
+                                result.success,
+                                serde_json::json!({
+                                    "tool_name": name,
+                                    "duration_ms": result.duration_ms,
+                                    "error": result.error,
+                                }),
+                            )
+                            .await;
+                    }
+                }
+
+                let error_msg = result.error.clone();
+                let raw_output = if result.success {
+                    result.output.clone()
+                } else {
+                    format!("error: {}", error_msg.unwrap_or_default())
+                };
+
+                let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref()
+                    != Some("false")
+                {
+                    crate::safety_layer::wrap_tool_output(&name, &raw_output)
+                } else {
+                    raw_output
+                };
+
+                let mut post_output = output;
+                if let Some(registry) = hook_registry {
+                    let outcome = registry
+                        .run_post_tool_use(
+                            &name,
+                            &effective_args,
+                            &post_output,
+                            result.success,
+                            result.duration_ms as u64,
+                        )
+                        .await;
+                    let ctx = outcome.merged_context();
+                    if !ctx.trim().is_empty() {
+                        post_output.push_str("\n\n[hook context]\n");
+                        post_output.push_str(&ctx);
+                    }
+                }
+
+                (name.clone(), post_output, result)
+            };
+
+            (effective_name, id, output, result)
+        })
+    }
+
+    /// Add failure-tracker `skipped` warnings back into the result list as
+    /// synthetic `ToolResult::error` entries, so the LLM can see why a
+    /// tool was rejected.
+    fn append_skipped(
+        &self,
+        results: &mut Vec<(String, String, String, ToolResult)>,
+        allowed: &[ToolCall],
+        failure_filtered: &[ToolCall],
+    ) {
+        let filtered_ids: std::collections::HashSet<&str> =
+            failure_filtered.iter().map(|tc| tc.id.as_str()).collect();
+        for tc in allowed {
+            if filtered_ids.contains(tc.id.as_str()) {
+                continue;
+            }
+            let warning = self
+                .failure_tracker
+                .as_ref()
+                .and_then(|t| futures::executor::block_on(t.should_avoid(&tc.name)));
+            if let Some(warning) = warning {
+                results.push((
+                    tc.name.clone(),
+                    tc.id.clone(),
+                    warning.clone(),
+                    ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(warning),
+                        duration_ms: 0,
+                    },
+                ));
+            }
         }
+    }
 
-        for (name, _, _, ref result) in &results {
+    /// Publish `ToolExecuted` events for every result.
+    fn publish_executed_events(&self, results: &[(String, String, String, ToolResult)]) {
+        for (name, _, _, result) in results {
             if let Some(ref bus) = self.event_bus {
                 bus.publish(crate::events::Event::ToolExecuted {
                     tool_name: name.clone(),
@@ -1087,14 +1278,8 @@ impl Agent {
                 });
             }
         }
-
-        if allow_session {
-            let mut state = self.state.lock().await;
-            state.allow_session = true;
-        }
-
-        results
     }
+
 
     async fn store_memory(
         &self,

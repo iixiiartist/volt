@@ -65,12 +65,12 @@ pub async fn import_skill(
     use crate::skills::importer;
 
     if !path.exists() {
-        eprintln!("File not found: {:?}", path);
+        tracing::error!("File not found: {:?}", path);
         std::process::exit(1);
     }
 
     let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
-        eprintln!("Failed to read {:?}: {}", path, e);
+        tracing::error!("Failed to read {:?}: {}", path, e);
         anyhow::anyhow!("read error")
     })?;
 
