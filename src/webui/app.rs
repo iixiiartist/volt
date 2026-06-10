@@ -210,6 +210,28 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
         UiEvent::WorkflowsListed { workflows } => {
             state.workflows.set(workflows);
         }
+        UiEvent::CanvasWorkflowsListed { workflows } => {
+            state.canvas_workflows.set(workflows);
+        }
+        UiEvent::CanvasWorkflowLoaded { name, graph_json } => {
+            state.canvas_loaded_name.set(Some(name));
+            state.canvas_graph_json.set(graph_json);
+        }
+        UiEvent::CanvasWorkflowSaved { name, path } => {
+            state.toast(
+                ToastLevel::Success,
+                format!("Saved {} ({})", name, short_id(&path)),
+            );
+        }
+        UiEvent::CanvasWorkflowDeleted { name } => {
+            state.toast(ToastLevel::Info, format!("Deleted {}", name));
+            // If the deleted workflow is the one currently loaded, clear it.
+            let current = state.canvas_loaded_name.peek().clone();
+            if current.as_deref() == Some(name.as_str()) {
+                state.canvas_loaded_name.set(None);
+                state.canvas_graph_json.set(String::new());
+            }
+        }
         UiEvent::ModelsListed { models } => {
             state.models.set(models);
         }

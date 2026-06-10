@@ -88,7 +88,6 @@ pub struct VoltState {
     pub toasts: Signal<Vec<Toast>>,
     pub toast_counter: Signal<u64>,
 
-    pub modal: Signal<Option<Modal>>,
     pub sidebar_collapsed: Signal<bool>,
     pub show_command_palette: Signal<bool>,
     pub show_trace_panel: Signal<bool>,
@@ -108,6 +107,13 @@ pub struct VoltState {
     pub tools: Signal<Vec<super::commands::ToolInfo>>,
     pub worktrees: Signal<Vec<super::commands::WorktreeInfo>>,
     pub workflows: Signal<Vec<super::commands::WorkflowInfo>>,
+    pub canvas_workflows: Signal<Vec<super::commands::CanvasWorkflowInfo>>,
+    /// Name of the workflow currently loaded into the canvas editor.
+    pub canvas_loaded_name: Signal<Option<String>>,
+    /// Serialized `WorkflowGraph` JSON of the currently loaded workflow.
+    /// Stored as a string so the editor can mutate/parse on every
+    /// edit without round-tripping through serde at the signal level.
+    pub canvas_graph_json: Signal<String>,
     pub models: Signal<Vec<super::commands::ModelInfo>>,
     pub doctor_report: Signal<Option<super::commands::DoctorReport>>,
     pub config: Signal<serde_json::Value>,
@@ -146,34 +152,6 @@ pub struct VoltState {
     pub focus_in_text_input: Signal<bool>,
 }
 
-/// Reserved for future modals. The current UI uses individual
-/// boolean signals (`show_setup_wizard`, `show_command_palette`,
-/// `pending_approvals`) so the `Modal` enum is unused but kept
-/// in place for the next iteration that needs generic modal dispatch.
-#[derive(Clone, Debug)]
-pub enum Modal {
-    NewSession { name: String },
-    ImportSkill,
-    InstallSkill { query: String },
-    RunWorkflow {
-        pattern: String,
-        agents: String,
-        tasks: String,
-    },
-    ToolExecute {
-        name: String,
-        schema: serde_json::Value,
-        args: String,
-    },
-    About,
-    Settings,
-    Confirm {
-        title: String,
-        message: String,
-        action: String,
-    },
-}
-
 impl Default for VoltState {
     fn default() -> Self {
         Self {
@@ -188,7 +166,6 @@ impl Default for VoltState {
             embedder_loaded: Signal::new(false),
             toasts: Signal::new(Vec::new()),
             toast_counter: Signal::new(0),
-            modal: Signal::new(None),
             sidebar_collapsed: Signal::new(false),
             show_command_palette: Signal::new(false),
             show_trace_panel: Signal::new(false),
@@ -204,6 +181,9 @@ impl Default for VoltState {
             tools: Signal::new(Vec::new()),
             worktrees: Signal::new(Vec::new()),
             workflows: Signal::new(Vec::new()),
+            canvas_workflows: Signal::new(Vec::new()),
+            canvas_loaded_name: Signal::new(None),
+            canvas_graph_json: Signal::new(String::new()),
             models: Signal::new(Vec::new()),
             doctor_report: Signal::new(None),
             config: Signal::new(serde_json::Value::Null),
@@ -223,7 +203,7 @@ impl Default for VoltState {
 
 impl VoltState {
     pub fn toast(&mut self, level: ToastLevel, message: impl Into<String>) {
-        let id = *self.toast_counter.read() + 1;
+        let id = *self.toast_counter.peek() + 1;
         self.toast_counter.set(id);
         let mut toasts = self.toasts.write();
         toasts.push(Toast {
@@ -266,18 +246,10 @@ impl VoltState {
         }
     }
 
-    pub fn open_modal(&mut self, modal: Modal) {
-        self.modal.set(Some(modal));
-    }
-
-    pub fn close_modal(&mut self) {
-        self.modal.set(None);
-    }
-
     pub async fn dispatch(&mut self, cmd: UiCommand) {
-        let handle_opt = self.handle.read().clone();
+        let handle_opt = self.handle.peek().clone();
         if let Some(handle) = handle_opt {
-            let count = *self.total_commands.read() + 1;
+            let count = *self.total_commands.peek() + 1;
             self.total_commands.set(count);
             if let Err(e) = handle.send(cmd).await {
                 self.toast(ToastLevel::Error, format!("Dispatch failed: {}", e));
@@ -291,8 +263,8 @@ impl VoltState {
     /// Increments the command counter and spawns the actual send on the tokio runtime
     /// (detached from the Dioxus component scope so commands aren't lost on navigation).
     pub fn fire(&mut self, cmd: UiCommand) {
-        let handle_opt = self.handle.read().clone();
-        let count = *self.total_commands.read() + 1;
+        let handle_opt = self.handle.peek().clone();
+        let count = *self.total_commands.peek() + 1;
         self.total_commands.set(count);
         if let Some(handle) = handle_opt {
             tokio::spawn(async move {

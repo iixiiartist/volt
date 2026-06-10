@@ -45,6 +45,7 @@ pub mod vector_index;
 #[cfg(feature = "webui")]
 pub mod webui;
 pub mod worker;
+pub mod workflow;
 
 #[cfg(any(test, feature = "testutils"))]
 pub mod test_utils;

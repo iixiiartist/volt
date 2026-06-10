@@ -606,6 +606,19 @@ impl Runtime {
                 self.handle_run_workflow(pattern, agents, tasks, allow)
                     .await
             }
+            UiCommand::ListCanvasWorkflows => self.handle_list_canvas_workflows().await,
+            UiCommand::LoadCanvasWorkflow { name } => {
+                self.handle_load_canvas_workflow(name).await
+            }
+            UiCommand::SaveCanvasWorkflow { name, graph_json } => {
+                self.handle_save_canvas_workflow(name, graph_json).await
+            }
+            UiCommand::DeleteCanvasWorkflow { name } => {
+                self.handle_delete_canvas_workflow(name).await
+            }
+            UiCommand::NewCanvasWorkflow { name } => {
+                self.handle_new_canvas_workflow(name).await
+            }
             UiCommand::ListJobs => self.handle_list_jobs().await,
             UiCommand::CreateJob { description } => self.handle_create_job(description).await,
             UiCommand::StartJob { id, worker_id } => self.handle_start_job(id, worker_id).await,
@@ -1262,6 +1275,110 @@ impl Runtime {
                 }
             }
         });
+    }
+
+    async fn handle_list_canvas_workflows(&self) {
+        let paths = match crate::workflow::list_all() {
+            Ok(p) => p,
+            Err(e) => {
+                self.emit_error("list_canvas_workflows", e);
+                return;
+            }
+        };
+        let mut out = Vec::new();
+        for p in paths {
+            match crate::workflow::load(&p) {
+                Ok(g) => out.push(CanvasWorkflowInfo {
+                    name: g.name.clone(),
+                    path: p.display().to_string(),
+                    node_count: g.nodes.len() as u32,
+                    edge_count: g.edges.len() as u32,
+                }),
+                Err(e) => {
+                    tracing::warn!(
+                        "[webui] skipping unreadable workflow file {:?}: {}",
+                        p,
+                        e
+                    );
+                }
+            }
+        }
+        self.emit(UiEvent::CanvasWorkflowsListed { workflows: out });
+    }
+
+    async fn handle_load_canvas_workflow(&self, name: String) {
+        let dir = match crate::workflow::ensure_workflows_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.emit_error("load_canvas_workflow", e);
+                return;
+            }
+        };
+        let path = dir.join(format!("{}.workflow.json", name));
+        match crate::workflow::load(&path) {
+            Ok(g) => match g.to_pretty_json() {
+                Ok(json) => {
+                    self.emit(UiEvent::CanvasWorkflowLoaded { name, graph_json: json });
+                }
+                Err(e) => self.emit_error("load_canvas_workflow", e),
+            },
+            Err(e) => self.emit_error("load_canvas_workflow", e),
+        }
+    }
+
+    async fn handle_save_canvas_workflow(&self, name: String, graph_json: String) {
+        let graph = match crate::workflow::WorkflowGraph::from_json(&graph_json) {
+            Ok(g) => g,
+            Err(e) => {
+                self.emit_error("save_canvas_workflow", e);
+                return;
+            }
+        };
+        // Use the requested name (so renames work) but otherwise keep
+        // the parsed structure intact.
+        let mut to_save = graph;
+        to_save.name = name.clone();
+        to_save.version = crate::workflow::WORKFLOW_FILE_VERSION;
+        to_save.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        match crate::workflow::save(&to_save) {
+            Ok(path) => {
+                self.emit(UiEvent::CanvasWorkflowSaved {
+                    name,
+                    path: path.display().to_string(),
+                });
+                // Refresh the file list so the sidebar updates.
+                let _ = self.handle_list_canvas_workflows().await;
+            }
+            Err(e) => self.emit_error("save_canvas_workflow", e),
+        }
+    }
+
+    async fn handle_delete_canvas_workflow(&self, name: String) {
+        let dir = match crate::workflow::ensure_workflows_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.emit_error("delete_canvas_workflow", e);
+                return;
+            }
+        };
+        let path = dir.join(format!("{}.workflow.json", name));
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.emit(UiEvent::CanvasWorkflowDeleted { name });
+                let _ = self.handle_list_canvas_workflows().await;
+            }
+            Err(e) => self.emit_error("delete_canvas_workflow", anyhow::anyhow!(e)),
+        }
+    }
+
+    async fn handle_new_canvas_workflow(&self, name: String) {
+        let graph = crate::workflow::WorkflowGraph::new(name.clone());
+        match graph.to_pretty_json() {
+            Ok(json) => {
+                self.emit(UiEvent::CanvasWorkflowLoaded { name, graph_json: json });
+            }
+            Err(e) => self.emit_error("new_canvas_workflow", e),
+        }
     }
 
     async fn handle_list_jobs(&self) {

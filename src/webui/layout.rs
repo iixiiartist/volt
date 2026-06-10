@@ -281,6 +281,8 @@ fn Sidebar() -> Element {
                 NavItem { page: Page::Chat, label: "Chat", current: current }
                 NavItem { page: Page::Tools, label: "Tools", current: current }
                 NavItem { page: Page::Sessions, label: "Sessions", current: current }
+                NavItem { page: Page::Settings, label: "Settings", current: current }
+                div { style: "margin: 8px 12px; height: 1px; background-color: {COLOR_BORDER};" }
                 NavItem { page: Page::Workflows, label: "Workflows", current: current }
                 NavItem { page: Page::Worktrees, label: "Worktrees", current: current }
                 NavItem { page: Page::Jobs, label: "Jobs", current: current }
@@ -288,7 +290,6 @@ fn Sidebar() -> Element {
                 NavItem { page: Page::Skills, label: "Skills", current: current }
                 NavItem { page: Page::Registry, label: "Registry", current: current }
                 NavItem { page: Page::Audit, label: "Audit", current: current }
-                NavItem { page: Page::Settings, label: "Settings", current: current }
             }
             div {
                 style: "padding: 12px; border-top: 1px solid {COLOR_BORDER}; font-size: 11px;",

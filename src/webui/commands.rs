@@ -89,6 +89,23 @@ pub enum UiCommand {
         allow: bool,
     },
 
+    /// Load the list of saved workflow files from disk.
+    ListCanvasWorkflows,
+
+    /// Load a specific workflow file into the canvas editor.
+    LoadCanvasWorkflow { name: String },
+
+    /// Save the current canvas state as a workflow file. The body is
+    /// the serialized `WorkflowGraph` JSON. If `name` matches an
+    /// existing file, that file is overwritten.
+    SaveCanvasWorkflow { name: String, graph_json: String },
+
+    /// Delete a workflow file.
+    DeleteCanvasWorkflow { name: String },
+
+    /// Create a new empty workflow in the canvas editor.
+    NewCanvasWorkflow { name: String },
+
     /// List scheduled jobs.
     ListJobs,
 
@@ -253,6 +270,18 @@ pub enum UiEvent {
 
     /// Workflow list snapshot.
     WorkflowsListed { workflows: Vec<WorkflowInfo> },
+
+    /// Canvas workflow list (files in the workflows directory).
+    CanvasWorkflowsListed { workflows: Vec<CanvasWorkflowInfo> },
+
+    /// A workflow file was loaded into the canvas.
+    CanvasWorkflowLoaded { name: String, graph_json: String },
+
+    /// A workflow file was saved successfully.
+    CanvasWorkflowSaved { name: String, path: String },
+
+    /// A workflow file was deleted.
+    CanvasWorkflowDeleted { name: String },
 
     /// A workflow run has started.
     WorkflowStarted { pattern: String, run_id: String },
@@ -641,6 +670,15 @@ pub struct WorkflowInfo {
     pub description: String,
     pub pattern: String,
     pub agents: Vec<String>,
+}
+
+/// Summary of a saved workflow file (for the canvas file browser).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasWorkflowInfo {
+    pub name: String,
+    pub path: String,
+    pub node_count: u32,
+    pub edge_count: u32,
 }
 
 /// A scheduled job.

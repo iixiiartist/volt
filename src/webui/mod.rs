@@ -1,4 +1,5 @@
 ﻿pub mod app;
+pub mod canvas;
 pub mod commands;
 pub mod layout;
 pub mod pages;

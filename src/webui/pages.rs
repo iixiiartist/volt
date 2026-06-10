@@ -2,6 +2,7 @@
 // we just want it to run on first mount of each page.
 #![allow(clippy::let_underscore_future)]
 
+use super::canvas::{CanvasInspector, CanvasQuickAdd, WorkflowCanvas};
 use super::commands::{AuditResult, ChatRole, ToolInfo, UiCommand};
 use super::routes::Page;
 use super::state::{
@@ -325,17 +326,6 @@ fn send_chat_message(state: &mut VoltState, mut input: Signal<String>, text: Str
 }
 
 /// Pop the stashed user input back into the chat textarea, if any.
-/// Currently unused — `ChatPage`'s `use_effect` does the restoration
-/// because it owns the input `Signal<String>`. Kept as a hint for
-/// future handlers that need to restore directly.
-#[allow(dead_code)]
-fn restore_user_draft(state: &mut VoltState) {
-    if state.last_user_draft.read().is_some() {
-        // Drop the read guard before calling `set` to avoid the
-        // signal-cell borrow-checker conflict.
-        state.last_user_draft.set(None);
-    }
-}
 
 #[component]
 fn ChatBubble(role: ChatRole, content: String) -> Element {
@@ -1369,16 +1359,94 @@ pub fn WorkflowsPage() -> Element {
     let mut agents_str = use_signal(String::new);
     let mut tasks_str = use_signal(String::new);
     let mut allow_check = use_signal(|| false);
+    let mut new_workflow_name = use_signal(String::new);
     {
         let _ = use_resource(move || async move {
             state.fire(UiCommand::ListWorkflows);
+            state.fire(UiCommand::ListCanvasWorkflows);
         });
     }
     let workflows = state.workflows.read().clone();
+    let canvas_workflows = state.canvas_workflows.read().clone();
+    let loaded_name = state.canvas_loaded_name.read().clone();
     rsx! {
         PageHeader { title: "Workflows", subtitle: "DAG-based multi-agent orchestration" }
-        div { style: "padding: 24px 32px;",
-            Panel { title: "Run a Workflow",
+        div { style: "padding: 24px 32px; display: flex; flex-direction: column; gap: 16px;",
+            // Visual editor panel — primary surface.
+            Panel { title: format!("Visual Editor{}", loaded_name.as_deref().map(|n| format!(" — {}", n)).unwrap_or_default()),
+                div { style: "display: flex; flex-direction: column; gap: 12px;",
+                    // Top toolbar: file ops + quick-add.
+                    div { style: "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;",
+                        input { style: "flex: 1; min-width: 200px; padding: 6px 10px; background-color: {COLOR_BG}; border: 1px solid {COLOR_BORDER}; border-radius: 4px; color: {COLOR_TEXT}; font-size: 12px;",
+                            placeholder: "Workflow name (e.g. research-pipeline)",
+                            value: "{new_workflow_name.read()}",
+                            oninput: move |e| new_workflow_name.set(e.value().to_string()),
+                        }
+                        button { style: "padding: 6px 12px; background-color: {COLOR_PANEL_HOVER}; color: {COLOR_TEXT}; border: 1px solid {COLOR_BORDER}; border-radius: 4px; font-size: 12px; cursor: pointer;",
+                            onclick: move |_| {
+                                let name = new_workflow_name.read().trim().to_string();
+                                if !name.is_empty() {
+                                    state.fire(UiCommand::NewCanvasWorkflow { name });
+                                }
+                            },
+                            "New"
+                        }
+                        button { style: "padding: 6px 12px; background-color: {COLOR_PANEL_HOVER}; color: {COLOR_TEXT}; border: 1px solid {COLOR_BORDER}; border-radius: 4px; font-size: 12px; cursor: pointer;",
+                            onclick: move |_| {
+                                let name = loaded_name.clone().unwrap_or_default();
+                                let json = state.canvas_graph_json.read().clone();
+                                if !name.is_empty() && !json.is_empty() {
+                                    state.fire(UiCommand::SaveCanvasWorkflow { name, graph_json: json });
+                                }
+                            },
+                            "Save"
+                        }
+                        CanvasQuickAdd {}
+                    }
+                    // Side-by-side: canvas + side panel.
+                    div { style: "display: grid; grid-template-columns: 1fr 280px; gap: 12px;",
+                        WorkflowCanvas {}
+                        div { style: "display: flex; flex-direction: column; gap: 8px;",
+                            CanvasInspector {}
+                            // Saved workflows list.
+                            div { style: "padding: 12px; background-color: {COLOR_PANEL}; border: 1px solid {COLOR_BORDER}; border-radius: 6px;",
+                                div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 8px;",
+                                    "Saved workflows ({canvas_workflows.len()})"
+                                }
+                                if canvas_workflows.is_empty() {
+                                    div { style: "font-size: 11px; color: {COLOR_TEXT_MUTED};", "No saved workflows yet" }
+                                } else {
+                                    div { style: "display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto;",
+                                        for w in canvas_workflows.iter() {
+                                            div { style: "padding: 6px 8px; background-color: {COLOR_PANEL_HOVER}; border: 1px solid {COLOR_BORDER}; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center;",
+                                                div { style: "flex: 1; min-width: 0;",
+                                                    onclick: {
+                                                        let n = w.name.clone();
+                                                        move |_| state.fire(UiCommand::LoadCanvasWorkflow { name: n.clone() })
+                                                    },
+                                                    div { style: "font-size: 12px; color: {COLOR_TEXT}; font-family: {FONT_MONO}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
+                                                        "{w.name}"
+                                                    }
+                                                    div { style: "font-size: 10px; color: {COLOR_TEXT_MUTED};", "{w.node_count} nodes · {w.edge_count} edges" }
+                                                }
+                                                button { style: "padding: 2px 6px; background-color: transparent; color: {COLOR_DANGER}; border: 1px solid {COLOR_DANGER}; border-radius: 3px; font-size: 10px; cursor: pointer;",
+                                                    onclick: {
+                                                        let n = w.name.clone();
+                                                        move |_| state.fire(UiCommand::DeleteCanvasWorkflow { name: n.clone() })
+                                                    },
+                                                    "Delete"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Existing text-based pattern runner — kept for quick ad-hoc runs.
+            Panel { title: "Quick Run (text)",
                 div { style: "display: flex; flex-direction: column; gap: 12px;",
                     div {
                         label { style: "display: block; font-size: 12px; color: {COLOR_TEXT_DIM}; margin-bottom: 4px;", "Pattern" }
@@ -1419,28 +1487,26 @@ pub fn WorkflowsPage() -> Element {
                     }}
                 }
             }
-            div { style: "margin-top: 16px;",
-                Panel { title: format!("Available Patterns ({})", workflows.len()),
-                    if workflows.is_empty() {
-                        EmptyState { icon: "\u{1F504}", title: "No workflows loaded", description: "Workflows are loaded from .volt/workflows/ as JSON DAG files. Use 'volt workflow' CLI to manage them." }
-                    } else {
-                        div { style: "display: flex; flex-direction: column; gap: 6px;",
-                            for w in workflows.iter() {
-                                div {
-                                    style: "padding: 10px 12px; background-color: {COLOR_PANEL_HOVER}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; cursor: pointer;",
-                                    onclick: {
-                                        let pat = w.pattern.clone();
-                                        move |_| pattern_str.set(pat.clone())
-                                    },
-                                    div { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;",
-                                        span { style: "font-family: monospace; font-size: 13px; color: {COLOR_TEXT}; font-weight: 600;", "{w.name}" }
-                                        span { style: "font-size: 11px; padding: 2px 6px; border-radius: 3px; background-color: rgba(168,85,247,0.15); color: {COLOR_ACCENT}; text-transform: uppercase;",
-                                            "{w.pattern}"
-                                        }
+            Panel { title: format!("Available Patterns ({})", workflows.len()),
+                if workflows.is_empty() {
+                    EmptyState { icon: "\u{1F504}", title: "No workflows loaded", description: "Workflows are loaded from .volt/workflows/ as JSON DAG files. Use 'volt workflow' CLI to manage them." }
+                } else {
+                    div { style: "display: flex; flex-direction: column; gap: 6px;",
+                        for w in workflows.iter() {
+                            div {
+                                style: "padding: 10px 12px; background-color: {COLOR_PANEL_HOVER}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; cursor: pointer;",
+                                onclick: {
+                                    let pat = w.pattern.clone();
+                                    move |_| pattern_str.set(pat.clone())
+                                },
+                                div { style: "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;",
+                                    span { style: "font-family: monospace; font-size: 13px; color: {COLOR_TEXT}; font-weight: 600;", "{w.name}" }
+                                    span { style: "font-size: 11px; padding: 2px 6px; border-radius: 3px; background-color: rgba(168,85,247,0.15); color: {COLOR_ACCENT}; text-transform: uppercase;",
+                                        "{w.pattern}"
                                     }
-                                    div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; line-height: 1.4;",
-                                        "{w.description}"
-                                    }
+                                }
+                                div { style: "font-size: 12px; color: {COLOR_TEXT_DIM}; line-height: 1.4;",
+                                    "{w.description}"
                                 }
                             }
                         }
