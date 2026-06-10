@@ -282,6 +282,13 @@ core_tools = ["read"]
     let mut cmd = cmd_isolated();
     cmd.current_dir(&temp_dir)
         .env("OLLAMA_HOST", "http://localhost:11434")
+        // Enable the cloud-provider gate so the test's `local-model`
+        // request can still reach a routing decision. The vLLM-first
+        // posture (default off) is the right product behavior; this
+        // test is about the blueprint router, not provider policy.
+        .env("VOLT_ENABLE_CLOUD_PROVIDERS", "1")
+        .env("LLM_BASE_URL", "http://localhost:8000/v1")
+        .env("LLM_API_KEY", "test-key-for-integration-test")
         .arg("agent-run")
         .arg("--auto-blueprint")
         .arg("--input")
