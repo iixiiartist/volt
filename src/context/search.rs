@@ -42,7 +42,11 @@ impl ContextStore {
         let mut updates: Vec<(Uuid, Vec<f32>)> = Vec::new();
         let mut entries = self.entries.write().await;
         for (id, emb) in results {
-            if let Some(emb_vec) = emb {
+            let emb_vec = emb.filter(|v| {
+                // Reject placeholder or broken embeddings: all-zeros or NaN.
+                !v.is_empty() && !v.iter().all(|&x| x == 0.0) && !v.iter().any(|&x| x.is_nan())
+            });
+            if let Some(emb_vec) = emb_vec {
                 if let Some(pos) = entries.iter().position(|e| e.entry.id == id) {
                     entries[pos].entry.embedding = Some(emb_vec.clone());
                     newly_embedded.push((pos, emb_vec.clone()));
@@ -80,6 +84,7 @@ impl ContextStore {
         min_score: f32,
         query_text: Option<&str>,
     ) -> Vec<ContextEntry> {
+        crate::metrics::inc_queries();
         if let Some(pool) = self.db() {
             let kind_str = kind_filter.as_ref().map(|k| k.as_str());
             let db_limit = (limit as i64) * 2;

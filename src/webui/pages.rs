@@ -151,15 +151,17 @@ pub fn DashboardPage() -> Element {
                     StatusRow { label: "LLM Provider", online: *state.llm_online.read() }
                     StatusRow { label: "Database", online: *state.db_connected.read() }
                     StatusRow { label: "Embedder", online: *state.embedder_loaded.read() }
+                    StatusRow { label: "Context Store", online: state.doctor_report.read().as_ref().and_then(|r| r.context_entries.as_ref()).map(|c| !c.is_empty()).unwrap_or(false) }
                 }
             }
             div { style: "margin-top: 16px;",
                 Panel { title: "Compliance",
                     p { style: "color: {COLOR_TEXT_DIM}; font-size: 12px; line-height: 1.6; margin: 0;",
-                        "All agent actions are logged with structured tracing. Audit log is available in the "
-                        "Audit section and complies with EU AI Act Art. 12 (record-keeping) and Art. 14 "
-                        "(human oversight). Sensitive operations require explicit approval via the in-app "
-                        "approval prompt before tool execution."
+                        "Agent actions are logged with structured tracing and persisted to PostgreSQL "
+                        "(append-only, EU AI Act Art. 12). The 3-kind context store (Tool, Memory, "
+                        "Conversation) is auto-seeded from workspace files and tool definitions. "
+                        "Sensitive operations require explicit approval via the in-app prompt "
+                        "(Art. 14 human oversight). Audit log is available in the Audit section."
                     }
                 }
             }
@@ -359,6 +361,7 @@ pub fn ToolsPage() -> Element {
     let mut state: VoltState = use_context();
     let mut filter = use_signal(String::new);
     let selected = use_signal(|| None::<ToolInfo>);
+    let mut show_all = use_signal(|| false);
     {
         // Auto-load on first mount.
         let _ = use_resource(move || async move {
@@ -377,9 +380,19 @@ pub fn ToolsPage() -> Element {
                     onblur: move |_| state.focus_in_text_input.set(false),
                 }
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::ListTools) }
+                label { style: "display: flex; align-items: center; gap: 6px; font-size: 12px; color: {COLOR_TEXT_DIM}; cursor: pointer; white-space: nowrap;",
+                    input { r#type: "checkbox", style: "accent-color: {COLOR_ACCENT};",
+                        checked: "{show_all()}",
+                        oninput: move |_| {
+                        let next = !*show_all.read();
+                        show_all.set(next);
+                    },
+                    }
+                    {format_args!("Show all disabled ({})", state.tools.read().len())}
+                }
             }
             div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 16px;",
-                ToolList { filter: filter, selected: selected }
+                ToolList { filter: filter, selected: selected, show_all: show_all }
                 ToolDetail { selected: selected }
             }
         }
@@ -387,13 +400,16 @@ pub fn ToolsPage() -> Element {
 }
 
 #[component]
-fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>) -> Element {
+fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>, show_all: Signal<bool>) -> Element {
     let state: VoltState = use_context();
     let tools = state.tools.read().clone();
     let needle = filter.read().to_lowercase();
+    let all = *show_all.read();
+    let active_count = tools.iter().filter(|t| t.enabled).count();
     let visible: Vec<_> = tools
         .iter()
         .filter(|t| {
+            if !all && !t.enabled { return false; }
             needle.is_empty()
                 || t.name.to_lowercase().contains(&needle)
                 || t.description.to_lowercase().contains(&needle)
@@ -401,8 +417,13 @@ fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>) -> Eleme
         })
         .cloned()
         .collect();
+    let title = if all {
+        format!("All Tools ({})", tools.len())
+    } else {
+        format!("Active Tools ({})", active_count)
+    };
     rsx! {
-        Panel { title: format!("Registered Tools ({})", tools.len()),
+        Panel { title: title,
             if tools.is_empty() {
                 div { style: "color: {COLOR_TEXT_DIM}; font-size: 13px; padding: 20px 0; text-align: center;",
                     "No tools registered yet. Click Refresh to fetch the registry."
@@ -431,13 +452,19 @@ fn ToolRow(tool: ToolInfo, selected: Signal<Option<ToolInfo>>) -> Element {
         super::commands::ToolPermission::Prompt => COLOR_WARNING,
         super::commands::ToolPermission::Deny => COLOR_DANGER,
     };
+    let opacity = if tool.enabled { "1" } else { "0.5" };
     rsx! {
         div {
-            style: "padding: 10px 12px; background-color: {bg}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;",
+            style: "padding: 10px 12px; background-color: {bg}; border: 1px solid {COLOR_BORDER}; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; opacity: {opacity};",
             onclick: move |_| selected.set(Some(tool.clone())),
             div { style: "display: flex; align-items: center; gap: 8px;",
                 span { style: "font-family: monospace; font-size: 13px; color: {COLOR_TEXT}; font-weight: 600; flex: 1; word-break: break-all;",
                     "{tool.name}"
+                }
+                if !tool.enabled {
+                    span { style: "font-size: 10px; padding: 2px 6px; border-radius: 3px; background-color: rgba(239,68,68,0.15); color: {COLOR_DANGER}; text-transform: uppercase;",
+                        "BLOCKED"
+                    }
                 }
                 span { style: "font-size: 10px; padding: 2px 6px; border-radius: 3px; background-color: rgba(168,85,247,0.15); color: {perm_color}; text-transform: uppercase;",
                     "{tool.permission}"
@@ -767,6 +794,12 @@ pub fn SettingsPage() -> Element {
                             span { style: "color: {COLOR_TEXT}; font-family: monospace;", "{report.embedder_provider} / {report.embedder_model}" }
                             span { style: "color: {COLOR_TEXT_DIM};", "Disk free" }
                             span { style: "color: {COLOR_TEXT};", "{report.disk_free_gb:.1} GB" }
+                            if let Some(ref ctx) = report.context_entries {
+                                span { style: "color: {COLOR_TEXT_DIM};", "Context Store" }
+                                span { style: "color: {COLOR_TEXT}; font-family: monospace;",
+                                    {ctx.iter().map(|(k, v)| format!("{}: {}", k, v)).collect::<Vec<_>>().join(", ")}
+                                }
+                            }
                         }
                         div { style: "margin-top: 12px;",
                             div { style: "font-size: 11px; color: {COLOR_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;",
@@ -1290,7 +1323,7 @@ pub fn AuditPage() -> Element {
                 }
                 SecondaryButton { label: "Refresh".to_string(), onclick: move |_| state.fire(UiCommand::GetAuditLog { limit: 200 }) }
                 div { style: "flex: 1;" }
-                span { style: "color: {COLOR_TEXT_MUTED}; font-size: 11px;", "Persistent in .volt/audit.log + structured tracing" }
+                span { style: "color: {COLOR_TEXT_MUTED}; font-size: 11px;", "Append-only PostgreSQL + in-memory ring buffer (EU AI Act Art. 12)" }
             }
             {
                 let entries = state.audit_entries.read();

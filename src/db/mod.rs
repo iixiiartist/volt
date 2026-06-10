@@ -77,8 +77,10 @@ where
 }
 
 pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
-    let sql = include_str!("../../migrations/0001_core.sql");
-    for statement in split_sql_statements(sql) {
+    let dim = crate::embedding::embedding_dimension();
+    let sql = include_str!("../../migrations/0001_core.sql")
+        .replace("vector(1024)", &format!("vector({})", dim));
+    for statement in split_sql_statements(&sql) {
         let statement = statement.trim();
         if !statement.is_empty() {
             sqlx::query(statement).execute(pool).await?;
@@ -93,6 +95,13 @@ pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
     }
     let sql3 = include_str!("../../migrations/0003_storage_optimizations.sql");
     for statement in split_sql_statements(sql3) {
+        let statement = statement.trim();
+        if !statement.is_empty() {
+            sqlx::query(statement).execute(pool).await?;
+        }
+    }
+    let sql4 = include_str!("../../migrations/0004_audit_log.sql");
+    for statement in split_sql_statements(sql4) {
         let statement = statement.trim();
         if !statement.is_empty() {
             sqlx::query(statement).execute(pool).await?;

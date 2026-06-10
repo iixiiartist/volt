@@ -1,228 +1,168 @@
-# Volt Architecture Documentation
+# Volt Architecture
 
 ## Overview
 
-Volt is a Rust-native AI agent framework implementing a **Unified RAG Loop** for dynamic retrieval across 12 context fields. It replaces static injection with vector similarity search, backed by a background auto-seeding worker, pgvector persistence, and four-pillar eviction.
+Volt is a Rust-native AI agent middleware with a **3-kind context store**, **~20 curated tools**, **provider-agnostic routing**, and **DAG-based multi-agent orchestration**. It replaces the common pattern of hardcoded provider defaults + 50+ tool injection with a focused, auto-detecting, self-hosted design.
 
-**Verified results**: 100% accuracy at 200 distractors with argument-level validation (BFCL V4, llama-3.1-8b-instant). Flat tool-count scaling curve. 74% token savings. Full methodology in [`paper/draft.md`](paper/draft.md).
+**Key differentiators from standard agent frameworks:**
+- No hardcoded provider or model defaults — auto-detects whatever you have configured
+- 3 context kinds (not 12) — Tool schemas, Memory, Conversation — the three signals for tool selection
+- ~20 tools (not 50+) — deleted `final_answer`, `sequentialthinking`, `get_current_time`, 9 other files
+- 12 git tools collapsed to 2 (`git_query` + `git_mutate` taking raw subcommand strings)
+- `web_scrape` merged into `web_fetch` with optional `selector` param
+- Keyword table routing (~100µs) replaces LLM-based blueprint selection
+- Supervisor synthesizer opt-in (default: direct concatenation, saves 1+N+1 LLM cascade)
+- Append-only PostgreSQL audit log (EU AI Act Art. 12)
 
 ---
 
 ## Core Design Decisions
 
-### 1. Unified RAG Loop
-
-Every agent turn performs semantic search across all context kinds:
-
-```
-User Query + Context
-    ↓
-[Embed via 7-provider fallback chain]
-    ↓
-[Cosine similarity search across 12 context kinds]
-    ↓
-┌──────────┬──────────┬──────────┬──────────┐
-│ Top-8    │ Top-3    │ Top-5    │ Top-3    │
-│ Tools    │ Skills   │ Memories │ Conversations │
-└──────────┴──────────┴──────────┴──────────┘
-    ↓
-[XML-tagged context injection]
-    ↓
-[LLM Call with tool execution + auto-seeding]
-```
-
-### 2. Unified Context Store (Everything-as-RAG)
-
-12 context kinds, each with per-kind quota and dynamic retrieval:
+### 1. 3-Kind Context Store (was 12-kind)
 
 | Kind | Quota | Source |
 |---|---|---|
-| Tool | 500 | Tool schemas (name + description + JSON Schema) |
-| Skill | 200 | Compiled SKILL.md manifests from PostgreSQL |
-| Conversation | 300 | SeedEvent::EpisodeComplete after each agent run |
-| Memory | 500 | MEMORY.md + DB memories |
-| AgentRun | 200 | Full LLM turn audit logs (EU AI Act Art. 12) |
-| Artifact | 300 | Write/edit/bash execution side effects |
-| SystemPrompt | 20 | SOUL.md |
-| FewShot | 50 | Reserved |
-| Policy | 50 | AGENTS.md |
-| Permission | 50 | Per-tool allow/prompt rules |
-| Security | 30 | Sandbox limits, EU AI Act Art. 14 oversight |
-| MCPConfig | 100 | MCP server schema distillation |
+| Tool | 500 | All registered tool schemas (name + description + JSON schema) |
+| Memory | 500 | MEMORY.md workspace file + DB memories |
+| Conversation | 300 | `SeedEvent::EpisodeComplete` after each agent run |
 
-Each entry stores: UUID, kind, content, 1024d embedding, JSON metadata, frequency counter, success rate, usage count, and timestamps.
+Remaining 9 kinds (Skill, AgentRun, Artifact, SystemPrompt, FewShot, Policy, Permission, Security, MCPConfig) are still seedable and queryable via explicit `store.search_by_kind()` but excluded from the default context window to reduce noise.
 
-### 3. Four-Pillar Eviction
+### 2. ~20 Active Tools (dynamically gated)
+
+| Category | Tools | Gate |
+|---|---|---|
+| **Core** | `read`, `write`, `edit`, `bash`, `glob`, `grep`, `sleep_until` | Always (bash hidden in VOLT_BFCL_MODE) |
+| **Web** | `web_fetch` (with `selector`), `web_search` | YOUCOM_API_KEY for search |
+| **Data** | `csv_read`, `csv_write`, `archive_extract`, `archive_create`, `create_bar_chart`, `create_line_chart`, `create_pdf` | Charts/PDF hidden in VOLT_MINIMAL_TOOLS |
+| **Git** | `git_query`, `git_mutate` (raw subcommand strings) | Always |
+| **Orchestration** | `delegate`, `run_workflow` | Always |
+| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop feature |
+| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser feature |
+| **NVIDIA Cloud** | `nvidia_list_functions`, `nvidia_call_function`, `nvidia_deploy_function` | NVIDIA_API_KEY |
+| **Ollama Web** | `ollama_web_search`, `ollama_web_fetch` | OLLAMA_API_KEY |
+| **CLI Gateway** | `cli_exec`, `cli_query` | VOLT_ENABLE_CLI_TOOLS=1 |
+| **Local LLM** | `litertlm`, `llamacpp`, `mtp` | VOLT_ENABLE_LOCAL_LLM_TOOLS=1 |
+
+### 3. Auto-Detecting Provider Router
+
+`ProviderDetector` (`src/llm/provider_detector.rs`) checks at startup:
+- Environment variables (`GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`, `NVIDIA_API_KEY`)
+- Running local servers (Ollama, llama.cpp, LiteRT-LM)
+- Custom base URLs (`LLM_BASE_URL`)
+
+Returns `Result<ProviderRoute, ResolveError>` with descriptive error variants — no silent fallback to unconfigured providers. Vendor-prefixed model names (e.g., `openai/gpt-oss-20b`, `qwen/qwen3-32b`) are routed to the correct provider automatically.
+
+### 4. Keyword Table Routing (was LLM Blueprint Selector)
+
+Agent blueprint selection uses substring matching against a keyword table instead of an LLM call. Keywords are defined per blueprint in `keywords: Vec<String>` on `AgentBlueprint`. First match wins; fallback matches against blueprint name/description words.
+
+### 5. Four-Pillar Eviction
 
 1. **Semantic Dedup**: Cosine ≥ 0.92 on same kind → merge frequency, skip insert
 2. **Per-Kind Quotas**: Evict lowest composite-score entries when kind exceeds quota
-3. **Composite Score**: 0.4×recency + 0.3×success + 0.2×log(frequency) + 0.1×density
-4. **Episodic Merging**: Every 10 batches, cluster Conversation entries ≥0.85 cosine with ≥3 members; replace with high-density merged entry
+3. **Composite Score**: 0.4×recency + 0.3×success + 0.2×frequency + 0.1×density
+4. **Episodic Merging**: Cluster Conversation entries ≥0.85 cosine with ≥3 members; replace with high-density merged entry
 
-### 4. Background Auto-Seeding Worker
+### 6. Background Auto-Seeding Worker
 
-A Tokio MPSC channel architecture maintains the context store asynchronously:
+MPSC channel architecture (`src/worker.rs`):
+- `SeedChannel` — clone-able sender; agent loop emits events without blocking
+- `AutoSeedWorker` — `tokio::spawn` daemon drains batches (≤32), embeds (semaphore=5), seeds with dedup + eviction
+- Episodic merger runs every 10 batches
+- Pre-warms at startup from workspace files (SOUL.md, MEMORY.md, AGENTS.md), tool intents, permissions, security policy
+- **LeakDetector** scanning before creating ContextEntry — files with detected leaks are skipped and logged
+- **Workspace gate**: accepts `Option<PathBuf>` — workspace seeding skipped when path doesn't exist
+
+### 7. Embedding Pipeline
+
+- Dimension configurable via `EMBEDDING_DIMENSION` env var (default: 1024)
+- Provider chain: local ONNX (ort) → configured remote providers
+- Deterministic SHA-256 placeholder when no provider is available
+- Placeholder/broken embeddings (all-zeros, NaN) filtered at application layer in `compute_embeddings()`
+
+### 8. Agent Loop
 
 ```
-[Agent Loop] → SeedChannel.send(SeedEvent) → [AutoSeedWorker daemon]
-                                                ├─ Batch drain (≤32 events)
-                                                ├─ Embed via 7-provider chain (semaphore=5)
-                                                ├─ seed_batch() with dedup + eviction
-                                                └─ Episodic merge (every 10 batches)
+1. Push user message + sanitize (LeakDetector)
+2. Build context: single unified store.search() across 3 kinds
+3. Retrieve tools from ToolRegistry with hybrid RRF (BM25 + dense cosine)
+4. Compress context if over token budget (80% of model max)
+5. Build system prompt with time injection + tool descriptions
+6. Call LLM → parse tool calls with schema validation
+7. Execute tool calls (parallel join_all, permission-gated via capability manager)
+8. Emit SeedEvent for background worker
+9. Store conversation to session DB
+10. Fallback: last assistant message on max_iterations exhaustion
 ```
 
-Three event types: `EpisodeComplete`, `ArtifactCreated`, `MCPRegistered`. Pre-warm at startup: workspace files, tool intents, permissions, security policy, skills from DB.
-
-### 5. Multi-Provider Embedding Fallback
-
-7-provider chain, tried in order:
-1. Ollama (local, mxbai-embed-large, 1024d)
-2. llama.cpp (local, OpenAI-compatible endpoint)
-3. NVIDIA NIM (cloud, llama-nemotron-embed-1b-v2, 2048d→1024d)
-4. OpenAI (cloud, text-embedding-3-small)
-5. HuggingFace Inference API (cloud, BAAI/bge-small-en-v1.5, 384d→1024d)
-6. Moonshot (cloud, moonshot-v1-embed)
-7. Deterministic (SHA-256, always works, zero network)
-
-All embeddings normalized to 1024d via `normalize_dims()` (pad shorter, truncate longer). Exponential backoff retry (1s/2s/4s) on 429 rate limits and connection errors. Text truncated to 2000 chars for Ollama's 512-token context window.
-
-### 6. Production Hardening
-
-| Feature | Implementation |
-|---|---|
-| **Tool registry** | DashMap lock-free concurrent HashMap |
-| **Tool execution** | `futures::join_all` parallel execution |
-| **Path safety** | RwLock-cached root with staleness check |
-| **Sandbox** | env_clear() on Windows + Unix, timeout, output limits |
-| **Feature flags** | All opt-in (`default = ["tools-local-embeddings"]`) |
-| **Agent state** | SQLite session persistence |
-| **Token counting** | tiktoken-rs cl100k_base (replaces chars/3) |
-| **OpenTelemetry** | tracing→OTel bridge with OTLP export support |
-| **GraphRAG** | petgraph ToolGraph with BFS traversal |
-| **Local ONNX** | ort ONNX Runtime BGE-small-en-v1.5 (tools-local-embeddings, DirectML/OpenVINO/CUDA) |
-| **LSH index** | vector_index::LshIndex for approximate nearest neighbor |
-
-### 7. Permission System
-
-23 tools default to `PermissionLevel::Prompt`. Three modes:
-- **Autonomous** (`--allow` / `-a`): no prompts, unattended execution
-- **Semi-autonomous** (no `-a`): individual approvals, answer `a` for session
-- **Human-in-the-loop**: default prompt gating on destructive operations
-
----
-
-## Tool Registry
-
-### Built-in Tools (39+)
-
-| Category | Tools | Feature Flag |
-|---|---|---|
-| **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | built-in |
-| **Shell** | `bash` | built-in |
-| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all`, `web_search`, `you_research`, `you_contents` | built-in |
-| **Data** | `json_validate`, `json_prettify`, `json_query`, `csv_read`, `csv_write` | built-in |
-| **Archives** | `archive_extract`, `archive_create` | built-in |
-| **Memory** | `memory_append`, `todo_add` | built-in |
-| **Git** | `git_status`, `git_diff_*` (2), `git_commit`, `git_add`, `git_reset`, `git_log`, `git_*` (5) | built-in |
-| **Time** | `get_current_time`, `convert_time` | built-in |
-| **Reasoning** | `sequentialthinking` | built-in |
-| **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
-| **Screenshot** | `screenshot` | tools-screenshot |
-| **PDF** | `create_pdf` | tools-pdf |
-| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop |
-| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser |
-| **Delegation** | `delegate`, `run_workflow`, `final_answer` | built-in |
-| **MCP** | `searchhq_*` (19 tools) | runtime registration |
-
----
-
-## Database Schema
-
-### Core Tables
+### 9. Database Schema
 
 ```sql
--- Context entries (unified RAG persistence)
+-- Context entries (3-kind unified persistence)
 CREATE TABLE context_entries (
     id UUID PRIMARY KEY,
     kind VARCHAR(32) NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(1024),
-    metadata JSONB,
-    frequency INT DEFAULT 0,
-    success_rate REAL DEFAULT 0.0,
-    usage_count INT DEFAULT 0,
-    last_used_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    embedding vector($EMBEDDING_DIMENSION),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    frequency INT NOT NULL DEFAULT 0,
+    success_rate REAL NOT NULL DEFAULT 0.0,
+    usage_count INT NOT NULL DEFAULT 0,
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- HNSW indexes on all vector columns
-CREATE INDEX ON context_entries USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX ON agent_tools USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX ON skills USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX ON memories USING hnsw (embedding vector_cosine_ops);
+-- Per-kind HNSW partial indexes (lowercase kind values)
+CREATE INDEX ON context_entries USING hnsw (embedding vector_cosine_ops) WHERE kind = 'tool';
+CREATE INDEX ON context_entries USING hnsw (embedding vector_cosine_ops) WHERE kind = 'memory';
+CREATE INDEX ON context_entries USING hnsw (embedding vector_cosine_ops) WHERE kind = 'conversation';
+
+-- Append-only audit log (EU AI Act Art. 12)
+CREATE TABLE audit_log (
+    id UUID PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT '',
+    result TEXT NOT NULL DEFAULT 'ok',
+    detail JSONB NOT NULL DEFAULT '{}',
+    session_id UUID
+);
 ```
 
 ---
 
-## Agent Loop
+## Files (Key)
 
-```rust
-async fn run(&self, input: &str) -> Result<String> {
-    // 1. Push user message + sanitize
-    // 2. Build context (embed last 3 msgs + input)
-    // 3. Retrieve 12-kind unified context via ContextStore
-    // 4. Retrieve skills (3) and memories (5) via pgvector
-    // 5. Search tools via RAG (top-8 + 4 essential)
-    // 6. Compress context if over token budget
-    // 7. Build LLM request with XML-tagged context
-    // 8. Call LLM with 3-retry exponential backoff
-    // 9. Execute tool calls (parallel join_all, permission-gated)
-    // 10. Emit SeedEvent for background worker
-    // 11. Store memory to pgvector
-    // 12. Persist session to SQLite
-}
-```
+### Deleted
+- `src/tools/final_answer.rs`, `json_tool.rs`, `memory_tool.rs`, `scrape_tool.rs`, `sequential_thinking.rs`, `time_tool.rs`, `todo_tool.rs`
+- `src/tools/groups/memory.rs`, `src/tools/groups/time_sequential.rs`
+
+### Created
+- `src/tools/git_tool.rs` (rewritten with git_query/git_mutate)
+- `src/tools/time_utils.rs` (sleep_until)
+- `src/llm/provider_detector.rs` (ProviderDetector)
+- `src/commands/config.rs` (volt config CLI)
+- `migrations/0004_audit_log.sql`
+- `src/metrics.rs` (Prometheus endpoint)
+
+---
+
+## Tests
+
+283 lib tests pass (`cargo test --lib --features testutils`). 24 professional workflow tests, 11 real-world benchmarks, 1 program benchmark. Coverage includes: DAG orchestration, RRF hybrid retrieval, MCP agent-to-agent, prompt compression, tool validation, provider detection, keyword routing, schema migration.
 
 ---
 
 ## Benchmarks
 
-### BFCL V4 (End-to-End Volt Binary)
-
-| Model | Distractors | Accuracy | Evaluation |
-|---|---|---|---|
-| llama-3.1-8b-instant | 200 | **100%** | Argument-aware |
-| qwen/qwen3-32b | 200 | 92% | Argument-aware |
-| llama-3.3-70b-versatile | 200 | 90% | Argument-aware |
-
-### Tool-Count Scaling Ablation
-
-| Distractors | Accuracy | Avg Latency |
+| Configuration | Accuracy | Notes |
 |---|---|---|
-| 0 | 100% | 30.8s |
-| 10 | 100% | 33.2s |
-| 50 | 100% | 38.6s |
-| 100 | 100% | 42.7s |
-| 200 | 100% | 54.0s |
-
-**Flat curve.** Accuracy invariant from 0 to 200+ distractors.
-
-### Python Raw-API (470 Cases)
-
-74% token savings, +4.8pp accuracy. Full table in [`paper/draft.md`](paper/draft.md).
-
----
-
-## Performance
-
-| Metric | Value |
-|---|---|
-| Binary size | Linux glibc ~10 MB, Linux musl ~8 MB, Windows ~20 MB (compressed) |
-| Cold start | <100ms |
-| Tool search | <1ms (in-memory) |
-| Memory search | <5ms (pgvector HNSW) |
-| Source lines | ~13,000 (57 files) |
-| Tests | 66 (54 unit + 4 agent + 3 workflow + 5 integration) |
+| llama-3.1-8b-instant, BFCL v4 simple_python (400 cases) | 95.0% | 20 Groq API schema errors, not bad tool selection |
+| qwen3-32b, BFCL v3 | 75.7% | #2 globally behind GLM 4.5 |
+| Dense tools only, 200 distractors | 86% | +12pp over TF-IDF baseline |
+| Token savings vs static injection (470 cases) | 74% | ~$0.37 total |
 
 ---
 

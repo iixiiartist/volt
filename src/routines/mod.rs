@@ -36,4 +36,17 @@ pub struct Routine {
     pub created_at: DateTime<Utc>,
 }
 
+/// Validate an action prompt at definition time.
+/// Returns Ok(()) if the prompt is valid, or an Err with a description.
+pub fn validate_action_prompt(prompt: &str) -> Result<(), String> {
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return Err("action_prompt must not be empty".into());
+    }
+    if trimmed.len() < 10 {
+        return Err("action_prompt is too short (minimum 10 characters)".into());
+    }
+    Ok(())
+}
+
 pub mod engine;

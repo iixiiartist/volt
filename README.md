@@ -1,29 +1,37 @@
 # VOLT — Virtual Operations for Local Tasks
 
-> **VOLT (Virtual Operations for Local Tasks) is a Rust-native AI agent framework with unified RAG across 12 context fields, background auto-seeding worker, multi-agent orchestration (DAG/parallel/pipeline), MCP protocol server, CLI gateway, and 38 active tools (dynamically gated by env vars). ONNX Runtime with DirectML/OpenVINO/CUDA hardware acceleration. 95.0% BFCL v4 accuracy on 400 cases (llama-3.1-8b-instant).**
+> **VOLT (Virtual Operations for Local Tasks) is a Rust-native AI agent middleware with a 3-kind context store (Tool, Memory, Conversation), ~20 built-in tools, auto-detecting provider router (Groq, Ollama, NVIDIA NIM, OpenAI, Anthropic, local ONNX), DAG-based multi-agent orchestration, and PostgreSQL persistence. No hardcoded defaults, no paid tiers, no telemetry — runs self-hosted with append-only audit logging for EU AI Act Art. 12 compliance.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![Pipeline Status](https://gitlab.com/iixiiartist-volt/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist-volt/volt/-/commits/main)
 
 ## Why VOLT?
 
-**Virtual Operations for Local Tasks** — VOLT is built for agents that run *here*, not "somewhere in the cloud." Most agent frameworks inject every available tool into every LLM call. VOLT replaces static injection with **unified dynamic RAG** — tools, skills, memories, conversation history, artifacts, MCP configs, permissions, and security policies are all retrieved via vector similarity, so the model only sees what's relevant.
+**Virtual Operations for Local Tasks** — VOLT is built for agents that run *here*, not "somewhere in the cloud." Most agent frameworks hardcode their provider choice and inject every available tool into every LLM call. VOLT does neither:
+
+- **Provider-agnostic**: Auto-detects whatever LLM or embedding provider you have configured (Groq, Ollama, NVIDIA NIM, OpenAI, Anthropic, HuggingFace, local ONNX) — no hardcoded defaults, no silent fallbacks.
+- **~20 curated tools** (not 50+): Read, write, edit, glob, grep, bash, web_fetch, web_search, git operations, CSV, PDF, charts, desktop/browser automation, and multi-agent DAG workflows. Tools are gated by env vars — unconfigured tools are simply not registered.
+- **3-kind context store** (not 12): Tool schemas, conversation history, and long-term memory — the three signal sources that matter for tool selection. Other kinds (skills, policies, permissions) are still stored and queryable but excluded from the default context window.
+- **Keyword routing over LLM routing**: Task-to-agent dispatch uses keyword table matching (~100µs) instead of an LLM call.
 
 **Verified results (BFCL V4, 400 cases, argument-aware evaluation):**
 - **95.0% accuracy** on llama-3.1-8b-instant (380/400) — all failures are Groq API schema validation errors (boolean/integer types passed as strings)
 - **Flat tool-count scaling curve** — accuracy invariant from 1 to 200+ tools
 - **74% token savings** vs static injection (470 cases, ~$0.37 total)
+- **qwen3-32b scores 100%** on simple_python tool selection (3/3 cases)
 
 Key design decisions:
 
-- **Everything-as-RAG**: 12 context kinds dynamically retrievable from unified vector store
-- **Background Auto-Seeding Worker**: MPSC channel daemon maintains context autonomously via Tokio
+- **3-Kind Context Store**: Tool schemas (500), Memory (500), Conversation (300) — the three signal sources for tool selection. Background auto-seeding worker with MPSC channel architecture keeps the store populated.
 - **Four-Pillar Eviction**: Semantic dedup, per-kind quotas, composite scores, episodic merging
-- **38 Active Tools** (dynamically retrieved via RAG): File I/O, shell, web, git, time, reasoning, data, PDF, charts, desktop, browser, MCP, CLI gateway. Broken/optional tools auto-gated by env vars.
-- **Multi-Agent Orchestration**: Parallel, pipeline, supervisor, supervisor-agenda, and DAG patterns
-- **pgvector Persistence**: PostgreSQL with HNSW indexes, context survives restarts
-- **Hardware-Accelerated ONNX Runtime**: ort with DirectML/OpenVINO/CUDA fallback chain — auto-detects Intel NPU/GPU, NVIDIA GPU, or CPU
-- **MCP Protocol Server**: Expose 50+ tools to external clients (Claude Desktop, Cline, Goose) over stdio or HTTP with permission-gated execution
-- **Single Executable**: No Python, Node.js, or Java runtime required. ONNX Runtime libraries download on first use to `~/.cache/ort.pyke.io/`.
+- **~20 Active Tools**: File I/O, shell, web fetch/search, git, CSV, PDF, charts, desktop, browser, CLI gateway, DAG workflows. Broken/optional tools auto-gated by env vars (VOLT_ENABLE_CLI_TOOLS, NVIDIA_API_KEY, etc.)
+- **Deleted bloat**: No `final_answer`, `sequentialthinking`, `get_current_time`, `memory_append`, `todo_add`, `json_query` — 9 source files removed. 12 git tools collapsed to 2 (`git_query`/`git_mutate`). `web_scrape` merged into `web_fetch` with optional `selector` param.
+- **Multi-Agent Orchestration**: Parallel, pipeline, and DAG patterns. Supervisor synthesizer is opt-in (default: direct concatenation).
+- **Auto-Detecting Provider Router**: `ProviderDetector` checks environment variables and local hosts at startup — no hardcoded default model or provider. `volt config wizard` guides first-time setup.
+- **Auto-Migration**: `init_schema()` runs on every `connect()` — no manual `volt init-db` step needed.
+- **PostgreSQL Persistence**: pgvector with HNSW indexes, append-only audit log (EU AI Act Art. 12), connection pooling.
+- **ONNX Runtime**: Hardware-accelerated embeddings via DirectML/OpenVINO/CUDA fallback chain — auto-detects Intel GPU, NVIDIA GPU, or CPU.
+- **MCP Protocol Server**: Expose tools to external clients (Claude Desktop, Cline, Goose) over stdio or HTTP with permission-gated execution.
+- **Single Executable**: No Python, Node.js, or Java runtime required. ONNX Runtime libraries download on first use.
 
 ## Quick Start
 
@@ -31,21 +39,18 @@ Key design decisions:
 
 ```powershell
 # 1. Download volt.exe from https://github.com/iixiiartist/volt/releases
-# 2. Run PostgreSQL with pgvector (Docker — one command):
+# 2. (Optional) Run PostgreSQL with pgvector for persistence:
 docker compose -f docker-compose.db.yml up -d
 
-# 3. Set your API key and DB connection:
+# 3. Set your preferred provider's API key:
 set GROQ_API_KEY=gsk_your_key_here
-set DATABASE_URL=postgres://volt:volt@localhost:5432/volt
 
-# 4. Initialize the database schema (one-time):
-volt.exe init-db
-
-# 5. Run:
-volt.exe agent-run --input "Analyze this codebase" --allow
+# 4. Run — schema auto-migrates on first connect, no manual init needed:
+volt.exe webui
 ```
 
-> **No Docker?** Set `DATABASE_URL` to any value (PostgreSQL unreachable is caught gracefully — runs without persistence).
+> **No PostgreSQL?** Volt runs without it (SQLite used for sessions). `DATABASE_URL` is optional.
+> **No API key?** The WebUI shows a setup wizard where you can enter keys interactively, or run `volt config wizard`.
 
 ### Option A+: Install with desktop shortcut (Windows)
 
@@ -138,24 +143,15 @@ cargo build --release
 
 ## Features
 
-### Unified Context Store (Everything-as-RAG)
+### 3-Kind Context Store
 
-12 context kinds, all dynamically retrievable via vector similarity:
+Default retrieval includes only 3 context kinds (others still stored/queryable but excluded from default context window):
 
 | Kind | Quota | Source |
 |---|---|---|
-| Tool | 500 | All registered tool schemas |
-| Skill | 200 | Compiled SKILL.md manifests |
-| Conversation | 300 | Episodic memory after each run |
+| Tool | 500 | All registered tool schemas (name + description + JSON schema) |
 | Memory | 500 | MEMORY.md + DB memories |
-| AgentRun | 200 | Full LLM turn audit logs |
-| Artifact | 300 | Write/edit/bash side effects |
-| SystemPrompt | 20 | SOUL.md |
-| FewShot | 50 | Reserved |
-| Policy | 50 | AGENTS.md |
-| Permission | 50 | Tool allow/prompt rules |
-| Security | 30 | Sandbox limits, oversight |
-| MCPConfig | 100 | MCP server schema distillation |
+| Conversation | 300 | Episodic memory after each agent run |
 
 ### BFCL v4 Results (llama-3.1-8b-instant, 400 cases)
 
@@ -167,23 +163,25 @@ Full 17-category BFCL v4 sweep pending. All failures were Groq API schema valida
 
 **Tool-count scaling: flat curve.** Accuracy invariant from 0 to 200+ distractors (VOLT RAG benchmark, 50-case ablation verified).
 
-### Built-in Tools (38 active, 55+ total)
+### Built-in Tools (~20 active)
 
-| Category | Tools | Feature Flag |
+| Category | Tools | Gate |
 |---|---|---|
-| **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | built-in |
-| **Shell** | `bash` | built-in |
-| **Web** | `web_fetch`, `web_scrape`, `web_scrape_all`, `web_search`, `you_research`, `you_contents` | built-in |
-| **Data** | `csv_read`, `csv_write`, `archive_extract`, `archive_create`, `create_bar_chart`, `create_line_chart`, `create_pdf` | built-in / feature-gated |
-| **Memory** | `memory_append`, `todo_add` | built-in |
-| **Git** | `git_status`, `git_diff`, `git_diff_unstaged`, `git_diff_staged`, `git_add`, `git_commit`, `git_reset`, `git_log`, `git_branch`, `git_checkout`, `git_show`, `git_create_branch` | built-in |
-| **Time** | `get_current_time`, `convert_time` | built-in |
-| **Reasoning** | `sequentialthinking` | built-in |
-| **Charts** | `create_bar_chart`, `create_line_chart` | built-in |
-| **Screenshot/PDF/Desktop/Browser** | Feature-gated (12 tools) | opt-in features |
-| **Delegation** | `delegate`, `run_workflow`, `final_answer` | built-in |
-| **CLI Gateway** | `cli_exec`, `cli_query` (task, crm, hledger, khal, vdirsyncer, qsv, himalaya) | built-in |
-| **MCP** | SearchHQ (19 tools), extensible via `VOLT mcp-serve` | built-in |
+| **File I/O** | `read`, `write`, `edit`, `glob`, `grep` | always |
+| **Shell** | `bash` | always (hidden in VOLT_BFCL_MODE) |
+| **Web** | `web_fetch` (with `selector` param), `web_search`, `you_research`, `you_contents` | search tools require YOUCOM_API_KEY |
+| **Data** | `csv_read`, `csv_write`, `archive_extract`, `archive_create`, `create_bar_chart`, `create_line_chart`, `create_pdf` | charts/PDF hidden in VOLT_MINIMAL_TOOLS |
+| **Git** | `git_query`, `git_mutate` (raw subcommand strings, collapsed from 12) | always |
+| **Orchestration** | `delegate`, `run_workflow` | always |
+| **Desktop** | `desktop_click`, `desktop_type`, `desktop_key`, `desktop_find_window` | tools-desktop feature |
+| **Browser** | `browser_navigate`, `browser_extract`, `browser_screenshot` | tools-browser feature |
+| **NVIDIA Cloud** | `nvidia_list_functions`, `nvidia_call_function`, `nvidia_deploy_function` | NVIDIA_API_KEY |
+| **Ollama Web** | `ollama_web_search`, `ollama_web_fetch` | OLLAMA_API_KEY |
+| **CLI Gateway** | `cli_exec`, `cli_query` | VOLT_ENABLE_CLI_TOOLS=1 |
+| **Local LLM** | `litertlm`, `llamacpp`, `mtp` | VOLT_ENABLE_LOCAL_LLM_TOOLS=1 |
+| **MCP** | SearchHQ (19 tools), extensible via `VOLT mcp-serve` | runtime registration |
+
+**Deleted bloat:** `final_answer`, `sequentialthinking`, `get_current_time`, `convert_time`, `memory_append`, `todo_add`, `json_validate`, `json_prettify`, `json_query`, `web_scrape`, `web_scrape_all`, `screenshot`, 10 individual git tools.
 
 ### Embedding
 
@@ -401,10 +399,6 @@ Pre-built binaries for Linux and Windows are available on the [Releases page](ht
 |---|---|---|
 | Linux (x86_64) | ~17 MB `.tar.gz` |
 | Windows (x86_64, MSVC) | ~17 MB `.zip` (49 MB uncompressed) |
-
-## Paper & Benchmarks
-
-The accompanying research paper, *VOLT: Virtual Operations for Local Tasks — A Hardware-Aware Edge Exoskeleton and Compound AI Orchestrator*, is available in `paper/draft.md`. It details the four architectural pillars: Edge Model Exoskeleton (AST coercion), Cloud Optimization (prompt caching + native structured outputs), Observable DAG Orchestration, and Storage/I/O Hardening.
 
 ## Performance
 

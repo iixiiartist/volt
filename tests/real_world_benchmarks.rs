@@ -17,7 +17,7 @@ use volt::commands::AgentMode;
 use volt::context::{ContextEntry, ContextKind, ContextStore};
 use volt::embedding::{deterministic_placeholder_embedding, EmbeddingClient};
 use volt::models::*;
-use volt::orchestrator::DagWorkflow;
+use volt::orchestrator::{AgentSpec, DagScheduler, DagWorkflow};
 use volt::test_utils::MockLLMProvider;
 use volt::tools::ToolRegistry;
 use volt::vector_index::{reciprocal_rank_fusion, tokenize, Bm25Scorer};
@@ -114,8 +114,7 @@ async fn register_mock_tool(
 
 #[tokio::test]
 async fn test_workflow1_software_dev_dag() {
-    // Build a ToolRegistry with the tools the DAG agents will use
-    let registry = ToolRegistry::new();
+    let registry = Arc::new(ToolRegistry::new());
 
     register_mock_tool(
         &registry,
@@ -149,14 +148,6 @@ async fn test_workflow1_software_dev_dag() {
         "src/main.rs:3:fn main()",
     ).await;
 
-    register_mock_tool(
-        &registry,
-        "final_answer",
-        "Submit final answer and terminate",
-        serde_json::json!({"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}),
-        "DAG complete",
-    ).await;
-
     // DAG JSON: research → code → review → report
     let dag_json = r#"{
         "nodes": [
@@ -165,6 +156,7 @@ async fn test_workflow1_software_dev_dag() {
                 "task": "Research: {input}",
                 "agent": {
                     "name": "research-agent",
+                    "model": "mock-model",
                     "system_prompt": "You research API design patterns using web_search",
                     "max_iterations": 3
                 }
@@ -174,6 +166,7 @@ async fn test_workflow1_software_dev_dag() {
                 "task": "Write code based on: {research}",
                 "agent": {
                     "name": "code-agent",
+                    "model": "mock-model",
                     "system_prompt": "You write Rust code using write_file",
                     "max_iterations": 3
                 }
@@ -183,6 +176,7 @@ async fn test_workflow1_software_dev_dag() {
                 "task": "Review code from {code} for issues using grep",
                 "agent": {
                     "name": "review-agent",
+                    "model": "mock-model",
                     "system_prompt": "You review code for bugs and style issues using grep",
                     "max_iterations": 3
                 }
@@ -192,6 +186,7 @@ async fn test_workflow1_software_dev_dag() {
                 "task": "Write final report summarizing: research={research} code={code} review={review}",
                 "agent": {
                     "name": "report-agent",
+                    "model": "mock-model",
                     "system_prompt": "You generate comprehensive reports",
                     "max_iterations": 2
                 }
@@ -205,102 +200,72 @@ async fn test_workflow1_software_dev_dag() {
         ]
     }"#;
 
-    // Each node's mock: the last response is final_answer
-    let _research_provider = mock_tool_calls(vec![
-        mock_tool_call!(
-            "web_search",
-            serde_json::json!({"query": "Rust async patterns"})
-        ),
-        mock_tool_call!(
-            "final_answer",
-            serde_json::json!({"answer": "research complete"})
-        ),
-    ]);
-
-    let _code_provider = mock_tool_calls(vec![
-        mock_tool_call!(
-            "write_file",
-            serde_json::json!({"path": "src/server.rs", "content": "async fn handler()"})
-        ),
-        mock_tool_call!(
-            "final_answer",
-            serde_json::json!({"answer": "code written"})
-        ),
-    ]);
-
-    let _review_provider = mock_tool_calls(vec![
-        mock_tool_call!("grep", serde_json::json!({"pattern": "unsafe"})),
-        mock_tool_call!(
-            "final_answer",
-            serde_json::json!({"answer": "review passed: no unsafe code"})
-        ),
-    ]);
-
-    let _report_provider = mock_tool_calls(vec![mock_tool_call!(
-        "final_answer",
-        serde_json::json!({"answer": "Final report: DAG completed successfully"})
-    )]);
-
-    // We can't easily inject per-node mock providers into DagScheduler since
-    // it uses create_agent which builds an OpenAIProvider. Instead, we test
-    // the DAG structure parsing, topological sort, and execution levels directly.
     let workflow = DagWorkflow::from_json(dag_json).expect("valid DAG JSON");
 
-    // Verify topological correctness
-    let sorted = workflow.topological_sort().expect("valid sort");
-    assert_eq!(sorted.len(), 4, "All 4 nodes sorted");
+    // Per-node mock providers: first LLM call returns a tool call, second returns text
+    let research_provider = Box::new(MockLLMProvider::new(vec![
+        MockLLMProvider::tool_result("Research complete: use tokio with axum"),
+        MockLLMProvider::tool_calls(vec![mock_tool_call!(
+            "web_search",
+            serde_json::json!({"query": "Rust async patterns"})
+        )]),
+    ]));
 
-    // Verify "research" comes before "code" and "report"
-    let pos_research = sorted.iter().position(|id| id == "research").unwrap();
-    let pos_code = sorted.iter().position(|id| id == "code").unwrap();
-    let pos_report = sorted.iter().position(|id| id == "report").unwrap();
-    assert!(pos_research < pos_code, "research before code");
-    assert!(pos_research < pos_report, "research before report");
+    let code_provider = Box::new(MockLLMProvider::new(vec![
+        MockLLMProvider::tool_result("Code written to src/server.rs"),
+        MockLLMProvider::tool_calls(vec![mock_tool_call!(
+            "write_file",
+            serde_json::json!({"path": "src/server.rs", "content": "async fn handler()"})
+        )]),
+    ]));
 
-    // Verify execution levels
-    let levels = workflow.execution_levels().expect("valid levels");
-    assert!(!levels.is_empty(), "At least one level");
-    // Level 0 should contain "research" (the only node with no predecessors)
-    assert!(
-        levels[0].contains(&"research".to_string()),
-        "Level 0 = research"
-    );
-    // Level 1 should contain "code" (depends on research)
-    // Level 2 should contain "review" (depends on code)
-    // Level 2 (or 1) should contain "report" (depends on research + review)
-    // So we need at least 3 levels
-    assert!(
-        levels.len() >= 3,
-        "At least 3 execution levels, got {}",
-        levels.len()
-    );
+    let review_provider = Box::new(MockLLMProvider::new(vec![
+        MockLLMProvider::tool_result("Review passed: no unsafe code"),
+        MockLLMProvider::tool_calls(vec![mock_tool_call!(
+            "grep",
+            serde_json::json!({"pattern": "unsafe"})
+        )]),
+    ]));
 
-    // Verify DAG node count
-    assert_eq!(workflow.nodes.len(), 4);
-    assert_eq!(workflow.edges.len(), 4);
+    let report_provider = Box::new(MockLLMProvider::new(vec![
+        MockLLMProvider::tool_result("Final report: DAG completed with research, code, and review"),
+        MockLLMProvider::tool_calls(vec![mock_tool_call!(
+            "write_file",
+            serde_json::json!({"path": "report.md", "content": "DAG completed"})
+        )]),
+    ]));
 
-    // Verify task template substitution format
-    for node in &workflow.nodes {
-        assert!(
-            node.task_template.contains("{") || node.task_template.contains("{input}"),
-            "Each node should have a template placeholder"
-        );
-    }
+    // Route providers by agent name
+    let scheduler = DagScheduler::new(&registry).with_provider_factory(std::sync::Arc::new(
+        move |spec: AgentSpec| -> Box<dyn volt::llm::LLMProvider> {
+            match spec.name.as_str() {
+                "research-agent" => research_provider.clone(),
+                "code-agent" => code_provider.clone(),
+                "review-agent" => review_provider.clone(),
+                "report-agent" => report_provider.clone(),
+                other => panic!("unexpected agent name: {other}"),
+            }
+        },
+    ));
 
-    // Verify edge references are valid
-    let node_ids: std::collections::HashSet<String> =
-        workflow.nodes.iter().map(|n| n.id.clone()).collect();
-    for edge in &workflow.edges {
-        assert!(
-            node_ids.contains(&edge.from),
-            "Edge from '{}' must exist",
-            edge.from
-        );
-        assert!(
-            node_ids.contains(&edge.to),
-            "Edge to '{}' must exist",
-            edge.to
-        );
+    let results = scheduler
+        .execute(&workflow, "Build a Rust web server")
+        .await
+        .expect("DAG execution succeeds");
+
+    // All 4 nodes executed successfully
+    assert_eq!(results.len(), 4, "All 4 nodes produced results");
+
+    for (id, expected_prefix) in [
+        ("research", "Research complete"),
+        ("code", "Code written"),
+        ("review", "Review passed"),
+        ("report", "Final report"),
+    ] {
+        let step = results.get(id).unwrap_or_else(|| panic!("missing result for {id}"));
+        assert!(step.success, "{id} should succeed");
+        assert!(step.output.contains(expected_prefix), "{id} output '{expected_prefix}' not found in '{}'", step.output);
+        assert!(step.duration_ms > 0, "{id} should record duration");
     }
 }
 
@@ -314,18 +279,10 @@ async fn test_workflow2_data_analysis_pipeline() {
 
     register_mock_tool(
         &registry,
-        "web_scrape",
-        "Scrape content from a URL",
+        "web_fetch",
+        "Fetch content from a URL",
         serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),
         "RAW_DATA: temp=72°F, humidity=45%, wind=10mph",
-    ).await;
-
-    register_mock_tool(
-        &registry,
-        "json_query",
-        "Extract structured data from JSON or text",
-        serde_json::json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
-        r#"{"temperature": 72, "humidity": 45, "wind": 10}"#,
     ).await;
 
     register_mock_tool(
@@ -344,24 +301,11 @@ async fn test_workflow2_data_analysis_pipeline() {
         "Chart generated: weather_trends.png",
     ).await;
 
-    register_mock_tool(
-        &registry,
-        "final_answer",
-        "Submit final answer and terminate",
-        serde_json::json!({"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}),
-        "Analysis pipeline complete",
-    ).await;
-
     let provider = mock_tool_calls(vec![
-        // Scrape
+        // Fetch
         mock_tool_call!(
-            "web_scrape",
+            "web_fetch",
             serde_json::json!({"url": "https://weather.example.com"})
-        ),
-        // Extract
-        mock_tool_call!(
-            "json_query",
-            serde_json::json!({"query": "temperature, humidity, wind"})
         ),
         // Transform + write CSV
         mock_tool_call!(
@@ -372,11 +316,6 @@ async fn test_workflow2_data_analysis_pipeline() {
         mock_tool_call!(
             "create_bar_chart",
             serde_json::json!({"data": "weather_data.csv"})
-        ),
-        // Final answer
-        mock_tool_call!(
-            "final_answer",
-            serde_json::json!({"answer": "Analysis complete: weather data scraped, extracted, charted"})
         ),
     ]);
 
@@ -394,11 +333,9 @@ async fn test_workflow2_data_analysis_pipeline() {
     let defs = registry.get_definitions().await;
     let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
     for required in &[
-        "web_scrape",
-        "json_query",
+        "web_fetch",
         "csv_write",
         "create_bar_chart",
-        "final_answer",
     ] {
         assert!(
             names.contains(required),
@@ -828,14 +765,6 @@ async fn test_workflow6_codebase_refactor() {
         "On branch main, nothing to commit",
     ).await;
 
-    register_mock_tool(
-        &registry,
-        "final_answer",
-        "Submit final answer and terminate",
-        serde_json::json!({"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}),
-        "Refactoring complete: 3 files analyzed, 1 edit, git status verified",
-    ).await;
-
     let provider = mock_tool_calls(vec![
         mock_tool_call!("glob", serde_json::json!({"pattern": "src/**/*.rs"})),
         mock_tool_call!("read_file", serde_json::json!({"path": "src/main.rs"})),
@@ -845,10 +774,6 @@ async fn test_workflow6_codebase_refactor() {
             serde_json::json!({"path": "src/main.rs", "old": "old_function", "new": "new_function"})
         ),
         mock_tool_call!("bash", serde_json::json!({"command": "git status"})),
-        mock_tool_call!(
-            "final_answer",
-            serde_json::json!({"answer": "Refactoring complete"})
-        ),
     ]);
 
     let agent = Agent::new(mock_config("refactor-agent", 7), provider, registry.clone()).await;
@@ -864,7 +789,7 @@ async fn test_workflow6_codebase_refactor() {
     // Verify the tools were correctly registered
     let defs = registry.get_definitions().await;
     let reg_names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-    for required in &["glob", "read_file", "grep", "edit", "bash", "final_answer"] {
+    for required in &["glob", "read_file", "grep", "edit", "bash"] {
         assert!(
             reg_names.contains(required),
             "Tool '{}' must be registered",
@@ -892,21 +817,10 @@ async fn test_workflow7_long_context_stress() {
         "remembered",
     ).await;
 
-    register_mock_tool(
-        &registry,
-        "final_answer",
-        "Submit final answer and terminate",
-        serde_json::json!({"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}),
-        "Context compression test passed",
-    ).await;
-
     // Build 50 responses — LIFO means LAST pushed is returned FIRST.
-    // Push final_answer first so it's at the bottom, then 49 remember calls.
+    // Push text-only response first so it's at the bottom, then 49 remember calls.
     let mut responses: Vec<anyhow::Result<LLMResponse>> = Vec::new();
-    responses.push(MockLLMProvider::tool_calls(vec![mock_tool_call!(
-        "final_answer",
-        serde_json::json!({"answer": "42"})
-    )]));
+    responses.push(MockLLMProvider::tool_result("42"));
     for i in 0..49 {
         responses.push(MockLLMProvider::tool_calls(vec![mock_tool_call!(
             "remember",
@@ -1092,6 +1006,7 @@ async fn test_workflow_all_features_integration() {
                 "task": "Step 1: {input}",
                 "agent": {
                     "name": "step1-agent",
+                    "model": "mock-model",
                     "max_iterations": 2
                 }
             },
@@ -1100,6 +1015,7 @@ async fn test_workflow_all_features_integration() {
                 "task": "Step 2: based on {step1}",
                 "agent": {
                     "name": "step2-agent",
+                    "model": "mock-model",
                     "max_iterations": 2
                 }
             }

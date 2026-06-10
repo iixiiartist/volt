@@ -13,6 +13,10 @@ pub struct AgentBlueprint {
     pub scaffolding: ScaffoldingConfig,
     pub tools: ToolSelection,
     pub prompts: PromptOverrides,
+    /// Keywords for task routing. When a user prompt contains these
+    /// keywords, this blueprint is considered a candidate match.
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,8 +78,8 @@ pub enum ModelQuirk {
     /// Limit tool retrieval to 10 max (models with small context windows)
     #[serde(rename = "SchemaLimitTen")]
     SchemaLimitTen,
-    /// Model tends to skip the final_answer call; inject a forced-final system message
-    #[serde(rename = "MissingFinalAnswer")]
+    /// Deprecated: final_answer tool was removed
+    #[serde(skip_deserializing, rename = "MissingFinalAnswer")]
     MissingFinalAnswer,
     /// Model does NOT support tool calling on this provider
     #[serde(rename = "NoToolCalling")]

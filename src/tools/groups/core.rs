@@ -1,4 +1,4 @@
-// Core built-in tools (read, write, edit, bash, glob, grep, final_answer)
+// Core built-in tools (read, write, edit, bash, glob, grep)
 use crate::attenuation::TrustLevel;
 use crate::models::PermissionLevel;
 use crate::register_tool;
@@ -140,22 +140,19 @@ pub async fn register_core_tools(registry: &Arc<ToolRegistry>) {
 
     register_tool!(
         registry,
-        "final_answer",
-        "Submit your final answer and terminate. Call this when you have determined the answer to the user's question.",
+        "sleep_until",
+        "Sleep (pause execution) until a specific target time. Use for scheduling, monitoring, or delaying the next operation. The target time is parsed as an RFC 3339 / ISO 8601 timestamp.",
         serde_json::json!({
             "type": "object",
             "properties": {
-                "answer": {
-                    "type": "string",
-                    "description": "The final answer to the question"
-                }
+                "target_time": { "type": "string", "description": "RFC 3339 timestamp to sleep until, e.g. '2026-06-09T15:30:00Z' or '2026-06-09T10:30:00-05:00'" }
             },
-            "required": ["answer"]
+            "required": ["target_time"]
         }),
-        "builtin",
+        "utilities",
         |args: Value| async move {
-            let answer = args["answer"].as_str().unwrap_or("");
-            crate::tools::final_answer::final_answer(answer).await
+            let target = args["target_time"].as_str().unwrap_or("");
+            crate::tools::time_utils::sleep_until(target).await
         }
     );
 }

@@ -108,6 +108,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         embedder.clone(),
         tools.clone(),
         settings.sandbox_policy.clone(),
+        None,
     ));
 
     if let Ok(pool) = db::connect(&settings.database_url).await {

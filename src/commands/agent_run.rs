@@ -125,7 +125,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
                 "[router] routing task across {} blueprint(s)...",
                 blueprints.len()
             );
-            match crate::agent::router::route_task(&input, &blueprints, &*provider).await {
+            match crate::agent::router::route_task(&input, &blueprints).await {
                 Some(bp) => {
                     chat!("[router] selected blueprint: {} ({})", bp.id, bp.name);
                     let paths = crate::agent::router::discover_blueprints();
@@ -193,6 +193,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         std::env::current_dir().unwrap_or_default()
     };
 
+    let ws_path = workspace_root.clone();
     let mut agent = Agent::new(config, provider, tools_for_agent)
         .await
         .with_workspace(workspace_root)
@@ -282,7 +283,8 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         let store = ContextStore::new_with_db(p.clone());
         match store.hydrate_from_db(2000).await {
             Ok(n) if n > 0 => chat!("[context] hydrated {} entries from DB", n),
-            _ => {}
+            Ok(_) => chat!("[context] hydrate: no entries found (fresh DB)"),
+            Err(e) => tracing::error!("[context] hydrate_from_db failed: {:#}", e),
         }
         store
     } else {
@@ -318,6 +320,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         embedder.clone(),
         tools_for_seed.clone(),
         settings.sandbox_policy.clone(),
+        Some(ws_path),
     ));
 
     chat!(

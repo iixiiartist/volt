@@ -4,8 +4,17 @@ use anyhow::Context;
 use providers::ProviderConfig;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
 
-const EMBEDDING_DIMENSIONS: usize = 1024;
+pub fn embedding_dimension() -> usize {
+    static DIM: OnceLock<usize> = OnceLock::new();
+    *DIM.get_or_init(|| {
+        std::env::var("EMBEDDING_DIMENSION")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024)
+    })
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EmbeddingProvider {
@@ -366,10 +375,11 @@ impl EmbeddingClient {
 }
 
 fn normalize_dims(mut coords: Vec<f32>) -> Vec<f32> {
-    if coords.len() < EMBEDDING_DIMENSIONS {
-        coords.resize(EMBEDDING_DIMENSIONS, 0.0);
-    } else if coords.len() > EMBEDDING_DIMENSIONS {
-        coords.truncate(EMBEDDING_DIMENSIONS);
+    let dim = embedding_dimension();
+    if coords.len() < dim {
+        coords.resize(dim, 0.0);
+    } else if coords.len() > dim {
+        coords.truncate(dim);
     }
     coords
 }
@@ -387,13 +397,14 @@ fn truncate_description(description: &str) -> &str {
 }
 
 pub fn deterministic_placeholder_embedding(input: &str) -> Vec<f32> {
-    let mut out = Vec::with_capacity(EMBEDDING_DIMENSIONS);
+    let dim = embedding_dimension();
+    let mut out = Vec::with_capacity(dim);
     let mut seed = Sha256::digest(input.as_bytes()).to_vec();
 
-    while out.len() < EMBEDDING_DIMENSIONS {
+    while out.len() < dim {
         let digest = Sha256::digest(&seed);
         for chunk in digest.chunks(4) {
-            if out.len() == EMBEDDING_DIMENSIONS {
+            if out.len() == dim {
                 break;
             }
             let mut bytes = [0u8; 4];
@@ -438,7 +449,7 @@ mod tests {
     #[test]
     fn test_deterministic_dimensions() {
         let emb = deterministic_placeholder_embedding("test");
-        assert_eq!(emb.len(), EMBEDDING_DIMENSIONS);
+        assert_eq!(emb.len(), embedding_dimension());
     }
 
     #[test]
@@ -472,7 +483,7 @@ mod tests {
             .embed_description("test")
             .await
             .expect("must return embedding");
-        assert_eq!(result.len(), EMBEDDING_DIMENSIONS);
+        assert_eq!(result.len(), embedding_dimension());
     }
 
     #[tokio::test]
@@ -494,11 +505,11 @@ mod tests {
             .embed_description("test")
             .await
             .expect("must return embedding");
-        assert_eq!(result.len(), EMBEDDING_DIMENSIONS);
+        assert_eq!(result.len(), embedding_dimension());
     }
 
     #[tokio::test]
-    async fn test_embed_with_valid_provider_bypasses_fallback() {
+    async fn test_embed_falls_back_when_remote_provider_fails() {
         let client = EmbeddingClient::with_provider(
             Some("sk-real-key-12345".to_string()),
             "text-embedding-3-small".to_string(),
@@ -508,7 +519,7 @@ mod tests {
         let result = client
             .embed_description("test")
             .await
-            .expect("must return embedding on fallback");
-        assert_eq!(result.len(), EMBEDDING_DIMENSIONS);
+            .expect("must return embedding via fallback");
+        assert_eq!(result.len(), embedding_dimension());
     }
 }

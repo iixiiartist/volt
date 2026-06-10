@@ -196,6 +196,10 @@ pub struct Runtime {
     active_session: Arc<Mutex<Option<Uuid>>>,
     /// Capability manager from the agent. Used by `execute_gated`.
     capability_manager: Arc<crate::capability::CapabilityManager>,
+    /// Shared context store for the 3-kind vector store (Tool, Memory, Conversation).
+    /// Held on the Runtime so the doctor report and context store panel can
+    /// query entry counts without going through the agent.
+    context_store: Option<Arc<crate::context::ContextStore>>,
 }
 
 impl Runtime {
@@ -263,6 +267,64 @@ impl Runtime {
         let embedder = crate::embedding::EmbeddingClient::new_smart().await;
         let tools =
             crate::tools::setup_tools(Some(&embedder), config.database_url.as_deref()).await;
+
+        // 5b) Wire the ContextStore + AutoSeedWorker (ref: commands/agent_run.rs:280-320).
+        let context_store = if let Some(ref p) = pg_pool {
+            let store: Arc<crate::context::ContextStore> = crate::context::ContextStore::new_with_db(PgPool::clone(p));
+            match store.hydrate_from_db(2000).await {
+                Ok(n) if n > 0 => tracing::info!("[webui] hydrated {} context entries from DB", n),
+                Ok(_) => tracing::debug!("[webui] hydrate_from_db: no entries found (fresh DB)"),
+                Err(e) => tracing::error!("[webui] hydrate_from_db failed: {:#}", e),
+            }
+            store
+        } else {
+            crate::context::ContextStore::new()
+        };
+        let (seed_channel, seed_rx) = crate::worker::create_seed_channel();
+        let cancel_for_seed = CancelToken::new();
+        crate::worker::AutoSeedWorker::new(
+            context_store.clone(),
+            embedder.clone(),
+            cancel_for_seed,
+        )
+        .spawn(seed_rx);
+        tokio::spawn(crate::worker::seed_background(
+            context_store.clone(),
+            embedder.clone(),
+            tools.clone(),
+            crate::models::SandboxPolicy {
+                timeout_ms: 5000,
+                max_stdout_bytes: 262144,
+                working_dir: None,
+            },
+            None,
+        ));
+
+        // 5c) Start optional metrics server on VOLT_METRICS_PORT (default 9100).
+        //     Exposes Prometheus-formatted `/metrics` for monitoring.
+        //     Disabled when VOLT_METRICS_PORT is set to "0" or empty.
+        let metrics_port = std::env::var("VOLT_METRICS_PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(9100);
+        if metrics_port > 0 {
+            tokio::spawn(async move {
+                let app = axum::Router::new()
+                    .route("/metrics", axum::routing::get(|| async {
+                        axum::response::IntoResponse::into_response(
+                            crate::metrics::render_prometheus(),
+                        )
+                    }));
+                let addr = format!("0.0.0.0:{}", metrics_port);
+                match tokio::net::TcpListener::bind(&addr).await {
+                    Ok(listener) => {
+                        tracing::info!("[metrics] serving Prometheus metrics on {}", addr);
+                        let _ = axum::serve(listener, app).await;
+                    }
+                    Err(e) => tracing::warn!("[metrics] failed to bind {}: {}", addr, e),
+                }
+            });
+        }
 
         // 6) Resolve an LLM provider. We use `build_provider` (not
         //    `try_build_provider`) here on purpose: the WebUI must
@@ -421,7 +483,9 @@ impl Runtime {
             .with_cancel(cancel_token.clone())
             .with_event_bus(event_bus.clone())
             .with_approval(approval_fn)
-            .with_stream(on_token);
+            .with_stream(on_token)
+            .with_context(context_store.clone())
+            .with_seed_channel(seed_channel);
         // Bind the SQLite pool once at startup so messages can be
         // persisted on every chat. The session_id itself is bound
         // lazily per chat (via `set_session_id` in `handle_chat`),
@@ -446,6 +510,7 @@ impl Runtime {
             event_bus,
             active_session: Arc::new(Mutex::new(None)),
             capability_manager,
+            context_store: Some(context_store),
         };
         let runtime = Arc::new(runtime);
 
@@ -990,18 +1055,12 @@ impl Runtime {
 
     async fn handle_list_models(&self) {
         let mut models: Vec<ModelInfo> = Vec::new();
-        for provider in crate::agent::router::get_active_providers() {
-            let has_key = match provider.as_str() {
-                "groq" => std::env::var("GROQ_API_KEY").is_ok(),
-                "nvidia" => std::env::var("NVIDIA_API_KEY").is_ok(),
-                "openai" => std::env::var("OPENAI_API_KEY").is_ok(),
-                "anthropic" => std::env::var("ANTHROPIC_API_KEY").is_ok(),
-                "ollama" => {
-                    std::env::var("OLLAMA_HOST").is_ok() || std::env::var("OLLAMA_API_KEY").is_ok()
-                }
-                _ => true,
-            };
-            let (display_name, supports_tools, supports_vision) = match provider.as_str() {
+        let inventory = crate::llm::provider_detector::detect();
+        for provider in inventory.providers.iter().filter(|p| p.is_active) {
+            let slug = provider.slug.as_str();
+            let has_key = !provider.env_var.is_empty()
+                && std::env::var(provider.env_var).is_ok();
+            let (display_name, supports_tools, supports_vision) = match slug {
                 "groq" => ("llama-3.1-8b-instant", true, false),
                 "nvidia" => ("meta/llama-3.1-70b-instruct", true, false),
                 "openai" => ("gpt-4o", true, true),
@@ -1009,11 +1068,11 @@ impl Runtime {
                 "ollama" => ("phi4-mini:3.8b", false, false),
                 "llamacpp" => ("llama-3-8b-local", false, false),
                 "litertlm" => ("gemma-4-e2b", false, false),
-                _ => (provider.as_str(), true, false),
+                _ => (slug, true, false),
             };
             models.push(ModelInfo {
                 id: display_name.to_string(),
-                provider: provider.clone(),
+                provider: slug.to_string(),
                 display_name: display_name.to_string(),
                 context_window: 8192,
                 supports_tools,
@@ -1054,6 +1113,10 @@ impl Runtime {
 
     async fn handle_run_doctor(&self) {
         let mut report = build_doctor_report();
+        // Populate context store entry counts from the Runtime's store.
+        if let Some(ref cs) = self.context_store {
+            report.context_entries = Some(cs.kind_counts().await);
+        }
         // Live-probe Postgres with a 2-second timeout so the doctor
         // report reflects whether the pool is actually responsive,
         // not just whether DATABASE_URL is set.
@@ -1398,6 +1461,10 @@ impl Runtime {
             );
             return;
         };
+        if let Err(e) = crate::routines::validate_action_prompt(&action_prompt) {
+            self.emit_error("create_routine", anyhow::anyhow!("{}", e));
+            return;
+        }
         let new_id = Uuid::new_v4();
         let trigger = trigger_type.unwrap_or_else(|| "cron".to_string());
         let res = sqlx::query(
@@ -1827,7 +1894,7 @@ impl Runtime {
 
     /// Append an entry to the audit log and emit it to the tracing
     /// subscriber. The log is bounded — oldest entries are evicted
-    /// FIFO.
+    /// FIFO. Also persists to PostgreSQL (append-only) when available.
     fn log_audit(&self, entry: AuditEntry) {
         tracing::info!(
             target: "webui.audit",
@@ -1838,11 +1905,33 @@ impl Runtime {
             entry.result
         );
         if let Ok(mut log) = self.audit_log.lock() {
-            log.push(entry);
+            log.push(entry.clone());
             if log.len() > AUDIT_LOG_CAPACITY {
                 let excess = log.len() - AUDIT_LOG_CAPACITY;
                 log.drain(0..excess);
             }
+        }
+        // Persist to PostgreSQL (append-only, fire-and-forget).
+        if let Some(pg) = self.pg_pool.clone() {
+            let e = entry;
+            tokio::spawn(async move {
+                if let Err(err) = sqlx::query(
+                    "INSERT INTO audit_log (id, timestamp, actor, action, target, result, detail, session_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                )
+                .bind(e.id)
+                .bind(e.timestamp)
+                .bind(e.actor.to_string())
+                .bind(e.action.to_string())
+                .bind(e.target)
+                .bind(e.result.to_string())
+                .bind(e.detail)
+                .bind(e.session_id)
+                .execute(&*pg)
+                .await
+                {
+                    tracing::warn!("[webui] failed to persist audit entry: {}", err);
+                }
+            });
         }
     }
 }
@@ -2019,6 +2108,7 @@ fn build_doctor_report() -> DoctorReport {
         permissions_default: "Prompt".into(),
         recent_failures: 0,
         workspace_files,
+        context_entries: None,
     }
 }
 

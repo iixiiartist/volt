@@ -43,6 +43,9 @@ pub struct AgentSpec {
     pub allow_all: bool,
     /// Context profile mode. None = default (all 12 kinds).
     pub mode: Option<crate::commands::AgentMode>,
+    /// Whether to run the synthesizer LLM after all workers complete.
+    /// Default false — worker outputs are concatenated directly.
+    pub use_synthesizer: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -752,6 +755,7 @@ impl Orchestrator {
         let task = task.to_string();
         let cap_mgr = self.cap_mgr.clone();
         let tools = self.tools.clone();
+        let use_synth = worker_specs.iter().any(|s| s.use_synthesizer);
 
         // Spawn all workers in parallel — each is given the task plus the list
         // of peer workers (so it can include context in its output if useful).
@@ -799,68 +803,85 @@ impl Orchestrator {
             worker_steps.push(step);
         }
 
-        // Synthesizer: a single LLM call that takes the supervisor task plus all
-        // worker outputs and produces a final consolidated response.
-        let synthesizer_prompt = format!(
-            "You are a supervisor agent coordinating worker agents.\n\n\
-             Available workers and their outputs:\n{}\n\n\
-             Synthesize a final consolidated response to the user's original task: {}\n\n\
-             Use the [Worker Output] sections above as your evidence. Be concise.",
-            worker_steps
-                .iter()
-                .map(|s| format!(
-                    "[Worker: {}]\n{}{}",
-                    s.agent_name,
-                    s.output,
-                    s.error
-                        .as_ref()
-                        .map(|e| format!("\n(worker error: {})", e))
-                        .unwrap_or_default()
-                ))
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-            task
-        );
+        // Synthesizer is opt-in. When disabled, concatenate worker outputs directly.
+        let (final_output, synth_step): (String, Option<StepResult>) = if use_synth {
+            let synthesizer_prompt = format!(
+                "You are a supervisor agent coordinating worker agents.\n\n\
+                 Available workers and their outputs:\n{}\n\n\
+                 Synthesize a final consolidated response to the user's original task: {}\n\n\
+                 Use the [Worker Output] sections above as your evidence. Be concise.",
+                worker_steps
+                    .iter()
+                    .map(|s| format!(
+                        "[Worker: {}]\n{}{}",
+                        s.agent_name,
+                        s.output,
+                        s.error
+                            .as_ref()
+                            .map(|e| format!("\n(worker error: {})", e))
+                            .unwrap_or_default()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+                task
+            );
 
-        let synthesizer_spec = AgentSpec {
-            name: "supervisor-synthesizer".into(),
-            model: supervisor_model,
-            system_prompt: None,
-            max_iterations: 1,
-            temperature: 0.2,
-            allow_all: false,
-            mode: None,
-        };
-        let synthesizer = create_agent(synthesizer_spec, tools, Some(cap_mgr)).await;
-        let synth_started = Instant::now();
-        let synth_result = synthesizer.run(&synthesizer_prompt).await;
-        let synth_state = synthesizer.state().lock().await;
-        let synth_step = match synth_result {
-            Ok(out) => StepResult {
-                agent_name: "supervisor-synthesizer".into(),
-                output: out.clone(),
-                duration_ms: synth_started.elapsed().as_millis(),
-                success: true,
-                prompt_tokens: synth_state.total_prompt_tokens,
-                completion_tokens: synth_state.total_completion_tokens,
-                error: None,
-            },
-            Err(e) => StepResult {
-                agent_name: "supervisor-synthesizer".into(),
-                output: format!("synthesizer error: {}", e),
-                duration_ms: synth_started.elapsed().as_millis(),
-                success: false,
-                prompt_tokens: synth_state.total_prompt_tokens,
-                completion_tokens: synth_state.total_completion_tokens,
-                error: Some(e.to_string()),
-            },
+            let synthesizer_spec = AgentSpec {
+                name: "supervisor-synthesizer".into(),
+                model: supervisor_model,
+                system_prompt: None,
+                max_iterations: 1,
+                temperature: 0.2,
+                allow_all: false,
+                mode: None,
+                use_synthesizer: true,
+            };
+            let synthesizer = create_agent(synthesizer_spec, tools, Some(cap_mgr)).await;
+            let synth_started = Instant::now();
+            let synth_result = synthesizer.run(&synthesizer_prompt).await;
+            let synth_state = synthesizer.state().lock().await;
+            match synth_result {
+                Ok(out) => {
+                    let step = StepResult {
+                        agent_name: "supervisor-synthesizer".into(),
+                        output: out.clone(),
+                        duration_ms: synth_started.elapsed().as_millis(),
+                        success: true,
+                        prompt_tokens: synth_state.total_prompt_tokens,
+                        completion_tokens: synth_state.total_completion_tokens,
+                        error: None,
+                    };
+                    (out, Some(step))
+                }
+                Err(e) => {
+                    let step = StepResult {
+                        agent_name: "supervisor-synthesizer".into(),
+                        output: format!("synthesizer error: {}", e),
+                        duration_ms: synth_started.elapsed().as_millis(),
+                        success: false,
+                        prompt_tokens: synth_state.total_prompt_tokens,
+                        completion_tokens: synth_state.total_completion_tokens,
+                        error: Some(e.to_string()),
+                    };
+                    (format!("synthesizer error: {}", e), Some(step))
+                }
+            }
+        } else {
+            let output = worker_steps
+                .iter()
+                .map(|s| format!("[{}]\n{}", s.agent_name, s.output))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            (output, None)
         };
 
         let mut steps = worker_steps;
-        steps.push(synth_step.clone());
+        if let Some(s) = synth_step {
+            steps.push(s);
+        }
 
         Ok(WorkflowResult {
-            final_output: synth_step.output,
+            final_output,
             steps,
             total_duration_ms: started.elapsed().as_millis(),
         })
@@ -897,6 +918,7 @@ pub fn parse_agent_specs(json: &str) -> anyhow::Result<Vec<AgentSpec>> {
                 mode: v["mode"]
                     .as_str()
                     .and_then(|s| s.parse::<crate::commands::AgentMode>().ok()),
+                use_synthesizer: v["use_synthesizer"].as_bool().unwrap_or(false),
             })
         })
         .collect()

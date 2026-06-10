@@ -79,12 +79,9 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
     // ── Phase 1: Core tools (always registered) ──────────────────────────
     crate::tools::groups::core::register_core_tools(&registry).await;
     crate::tools::groups::web::register_web_tools(&registry).await;
-    crate::tools::groups::memory::register_memory_tools(&registry).await;
     crate::tools::groups::data::register_csv_tools(&registry).await;
     crate::tools::groups::data::register_archive_tools(&registry).await;
     crate::tools::groups::git::register_git_tools(&registry).await;
-    crate::tools::groups::time_sequential::register_time_tools(&registry).await;
-    crate::tools::groups::time_sequential::register_sequential_tools(&registry).await;
     crate::tools::groups::llm::register_llm_tools(&registry).await;
 
     // ── Phase 2: Dynamic tools (require registry capture) ──────────────────

@@ -22,6 +22,7 @@ pub mod leak_detector;
 pub mod llm;
 pub mod local_embed;
 pub mod mcp;
+pub mod metrics;
 pub mod models;
 pub mod network_policy;
 pub mod orchestrator;

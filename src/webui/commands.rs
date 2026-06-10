@@ -601,6 +601,10 @@ pub struct DoctorReport {
     pub permissions_default: String,
     pub recent_failures: u32,
     pub workspace_files: Vec<WorkspaceFileStatus>,
+    /// Per-kind context entry counts (Tool, Memory, Conversation).
+    /// `None` when the context store is not wired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_entries: Option<std::collections::HashMap<String, usize>>,
 }
 
 /// Status of a single API key in the environment.

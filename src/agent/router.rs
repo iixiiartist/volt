@@ -1,51 +1,5 @@
-use super::blueprint::{load_blueprint, AgentBlueprint};
-use crate::llm::LLMProvider;
-use crate::models::{LLMMessage, LLMRequest};
+use super::blueprint::{AgentBlueprint, load_blueprint};
 use std::path::PathBuf;
-use std::sync::Arc;
-
-/// Detect which model providers have active API keys or local availability.
-/// Filters out providers whose credentials are not present, to avoid
-/// selecting a blueprint that would fail at execution time.
-pub fn get_active_providers() -> Vec<String> {
-    let mut providers = Vec::new();
-
-    if std::env::var("GROQ_API_KEY").is_ok() {
-        providers.push("groq".to_string());
-    }
-    if std::env::var("NVIDIA_API_KEY").is_ok() {
-        providers.push("nvidia".to_string());
-    }
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        providers.push("openai".to_string());
-    }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        providers.push("anthropic".to_string());
-    }
-
-    // Ollama: local (OLLAMA_HOST) or cloud (OLLAMA_API_KEY)
-    if std::env::var("OLLAMA_HOST").is_ok() || std::env::var("OLLAMA_API_KEY").is_ok() {
-        providers.push("ollama".to_string());
-    }
-    if std::env::var("LLAMA_CPP_HOST").is_ok() {
-        providers.push("llamacpp".to_string());
-    }
-    if std::env::var("LITERTLM_HOST").is_ok() {
-        providers.push("litertlm".to_string());
-    }
-
-    // If no remote provider keys are present, add local fallbacks automatically
-    let has_remote = providers
-        .iter()
-        .any(|p| matches!(p.as_str(), "groq" | "nvidia" | "openai" | "anthropic"));
-    if !has_remote {
-        providers.push("ollama".to_string());
-        providers.push("llamacpp".to_string());
-        providers.push("litertlm".to_string());
-    }
-
-    providers
-}
 
 /// Filter blueprints to only those whose provider is in the active set.
 pub fn filter_blueprints<'a>(
@@ -58,127 +12,47 @@ pub fn filter_blueprints<'a>(
         .collect()
 }
 
-/// Route a user prompt to the best-fit AgentBlueprint using the LLM.
+/// Route a user prompt to the best-fit AgentBlueprint using keyword matching.
 ///
-/// Filters the blueprint list to match the user's active provider credentials,
-/// then asks the LLM to select the best match.
+/// Scores each blueprint by counting how many of its keywords appear in
+/// the user prompt (case-insensitive). Ties are broken by the first match.
+/// Returns None if no blueprints are provided.
 pub async fn route_task(
     user_prompt: &str,
     blueprints: &[AgentBlueprint],
-    llm_client: &dyn LLMProvider,
 ) -> Option<AgentBlueprint> {
-    let active = get_active_providers();
-    let filtered = filter_blueprints(blueprints, &active);
+    let prompt_lower = user_prompt.to_lowercase();
 
-    if filtered.is_empty() {
-        tracing::warn!(
-            "[router] no blueprints match active providers ({:?}); falling back to full list",
-            active
-        );
-        // Fall through with full list rather than returning None
-    }
-
-    let candidates: Vec<&AgentBlueprint> = if filtered.is_empty() {
-        blueprints.iter().collect()
-    } else {
-        filtered
-    };
-
-    let bp_list: String = candidates
+    let scored: Vec<(&AgentBlueprint, usize)> = blueprints
         .iter()
         .map(|bp| {
-            format!(
-                "  - id: \"{}\"\n    name: \"{}\"\n    description: \"{}\"",
-                bp.id, bp.name, bp.description
-            )
+            let score = bp
+                .keywords
+                .iter()
+                .filter(|k| prompt_lower.contains(&k.to_lowercase()))
+                .count();
+            (bp, score)
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
 
-    let sys_prompt = format!(
-        r#"You are the Volt Routing Orchestrator. The following blueprints have been filtered to match the user's currently active API keys and local hardware. Select the single best-fitting blueprint for the task.
-
-Available blueprints:
-{}
-
-Respond with ONLY a JSON object: {{"blueprint_id": "<id>"}}
-
-Do NOT include any other text, explanation, or markdown."#,
-        bp_list
-    );
-
-    let messages = vec![
-        LLMMessage {
-            role: "system".into(),
-            content: Arc::new(sys_prompt),
-            tool_calls: None,
-            tool_call_id: None,
-        },
-        LLMMessage {
-            role: "user".into(),
-            content: Arc::new(user_prompt.to_string()),
-            tool_calls: None,
-            tool_call_id: None,
-        },
-    ];
-
-    let request = LLMRequest {
-        model: "llama-3.1-8b-instant".into(),
-        messages,
-        temperature: Some(0.1),
-        max_tokens: Some(128),
-        stop: None,
-        tools: None,
-        stream: false,
-        ..Default::default()
-    };
-
-    let response = match llm_client.complete(&request).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("[router] LLM call failed: {}", e);
-            return None;
-        }
-    };
-
-    let text = response.content.trim();
-
-    // Extract JSON from the response (handle possible markdown fences or preamble)
-    let json_str = if let Some(start) = text.find('{') {
-        if let Some(end) = text[start..].rfind('}') {
-            &text[start..=start + end]
-        } else {
-            text
-        }
+    let best = scored.into_iter().max_by_key(|(_, score)| *score)?;
+    if best.1 > 0 {
+        Some(best.0.clone())
     } else {
-        text
-    };
-
-    let parsed: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(
-                "[router] failed to parse LLM response as JSON: {} — raw: {}",
-                e,
-                text
-            );
-            return None;
-        }
-    };
-
-    let bp_id = match parsed.get("blueprint_id").and_then(|v| v.as_str()) {
-        Some(id) => id,
-        None => {
-            tracing::warn!(
-                "[router] LLM response missing 'blueprint_id' field: {}",
-                text
-            );
-            return None;
-        }
-    };
-
-    // Match against the candidate blueprints (filtered list)
-    candidates.into_iter().find(|bp| bp.id == bp_id).cloned()
+        // No keyword matched — fall back to first blueprint with matching name/desc
+        let prompt_words: Vec<&str> = prompt_lower.split_whitespace().collect();
+        blueprints
+            .iter()
+            .max_by_key(|bp| {
+                let name_lower = bp.name.to_lowercase();
+                let desc_lower = bp.description.to_lowercase();
+                prompt_words
+                    .iter()
+                    .filter(|w| name_lower.contains(*w) || desc_lower.contains(*w))
+                    .count()
+            })
+            .cloned()
+    }
 }
 
 /// Discover blueprint TOML files from standard directories.
@@ -218,22 +92,9 @@ mod tests {
     use crate::agent::blueprint::*;
     use std::sync::{LazyLock, Mutex};
 
-    /// Serialize env-var-dependent tests to avoid race conditions from parallel execution.
     static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-    fn reset_env() {
-        unsafe {
-            std::env::remove_var("GROQ_API_KEY");
-            std::env::remove_var("NVIDIA_API_KEY");
-            std::env::remove_var("OPENAI_API_KEY");
-            std::env::remove_var("ANTHROPIC_API_KEY");
-            std::env::remove_var("OLLAMA_HOST");
-            std::env::remove_var("LLAMA_CPP_HOST");
-            std::env::remove_var("LITERTLM_HOST");
-        }
-    }
-
-    fn make_bp(id: &str, provider: &str) -> AgentBlueprint {
+    fn make_bp(id: &str, provider: &str, keywords: Vec<&str>) -> AgentBlueprint {
         AgentBlueprint {
             id: id.to_string(),
             name: format!("Test {}", id),
@@ -255,60 +116,48 @@ mod tests {
             prompts: PromptOverrides {
                 system_prompt_override: None,
             },
+            keywords: keywords.into_iter().map(|s| s.to_string()).collect(),
         }
-    }
-
-    #[test]
-    fn test_get_active_providers_groq_only() {
-        let _lock = ENV_MUTEX
-            .lock()
-            .expect("ENV_MUTEX poisoned; this is a test-only lock");
-        reset_env();
-        unsafe {
-            std::env::set_var("GROQ_API_KEY", "test-key");
-        }
-
-        let active = get_active_providers();
-        assert!(active.contains(&"groq".to_string()));
-        assert!(!active.contains(&"nvidia".to_string()));
-        assert!(!active.contains(&"openai".to_string()));
-        assert!(!active.contains(&"anthropic".to_string()));
-        assert!(!active.contains(&"ollama".to_string()));
-    }
-
-    #[test]
-    fn test_get_active_providers_no_remote_adds_local() {
-        let _lock = ENV_MUTEX
-            .lock()
-            .expect("ENV_MUTEX poisoned; this is a test-only lock");
-        reset_env();
-
-        let active = get_active_providers();
-        assert!(active.contains(&"ollama".to_string()));
-        assert!(active.contains(&"llamacpp".to_string()));
-        assert!(!active.contains(&"groq".to_string()));
     }
 
     #[test]
     fn test_filter_blueprints_by_providers() {
-        let groq_bp = make_bp("groq_test", "groq");
-        let nvidia_bp = make_bp("nvidia_test", "nvidia");
-        let openai_bp = make_bp("openai_test", "openai");
+        let groq_bp = make_bp("groq_test", "groq", vec![]);
+        let nvidia_bp = make_bp("nvidia_test", "nvidia", vec![]);
+        let openai_bp = make_bp("openai_test", "openai", vec![]);
         let blueprints = vec![groq_bp, nvidia_bp, openai_bp];
 
         let active = vec!["groq".to_string()];
         let filtered = filter_blueprints(&blueprints, &active);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "groq_test");
+    }
 
-        let active = vec!["nvidia".to_string(), "openai".to_string()];
-        let filtered = filter_blueprints(&blueprints, &active);
-        assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().any(|bp| bp.id == "nvidia_test"));
-        assert!(filtered.iter().any(|bp| bp.id == "openai_test"));
-
-        let active = vec!["anthropic".to_string()];
-        let filtered = filter_blueprints(&blueprints, &active);
+    #[test]
+    fn test_filter_blueprints_empty_active_falls_through() {
+        let bp = make_bp("test", "groq", vec![]);
+        let blueprints = vec![bp];
+        let filtered = filter_blueprints(&blueprints, &[]);
         assert_eq!(filtered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_route_task_keyword_match() {
+        let coding_bp = make_bp("coder", "groq", vec!["code", "programming", "rust", "python"]);
+        let writing_bp = make_bp("writer", "nvidia", vec!["write", "essay", "documentation"]);
+        let blueprints = vec![coding_bp, writing_bp];
+
+        let result = route_task("write some rust code", &blueprints).await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "coder");
+    }
+
+    #[tokio::test]
+    async fn test_route_task_fallback_to_name_desc() {
+        let bp = make_bp("default", "groq", vec![]);
+        let blueprints = vec![bp];
+
+        let result = route_task("something random", &blueprints).await;
+        assert!(result.is_some());
     }
 }

@@ -393,7 +393,25 @@ impl AutoSeedWorker {
 // ── Auto-seed pre-warm: all context fields ─────────────────────────────────
 
 pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &EmbeddingClient) {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    seed_from_workspace_at(store, embedder, None).await
+}
+
+/// Like `seed_from_workspace` but with an explicit workspace directory.
+/// When `workspace` is `None`, the current working directory is used.
+/// Seeding is silently skipped when the workspace directory does not exist.
+pub async fn seed_from_workspace_at(
+    store: &Arc<ContextStore>,
+    embedder: &EmbeddingClient,
+    workspace: Option<&std::path::Path>,
+) {
+    let cwd = workspace
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+
+    if workspace.map_or(false, |p| !p.exists()) {
+        tracing::info!("[worker] workspace path {:?} does not exist — skipping workspace seed", workspace.unwrap());
+        return;
+    }
 
     let seed_files = [
         ("SOUL.md", ContextKind::SystemPrompt),
@@ -401,26 +419,47 @@ pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &Embedding
         ("AGENTS.md", ContextKind::Policy),
     ];
 
+    let leak_detector = crate::leak_detector::LeakDetector::new();
     let mut entries: Vec<ContextEntry> = Vec::new();
+    let mut leaks_found = 0usize;
 
     for (filename, kind) in &seed_files {
         let path = cwd.join(filename);
         if path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                entries.push(ContextEntry {
-                    id: uuid::Uuid::new_v4(),
-                    kind: *kind,
-                    content,
-                    embedding: None,
-                    metadata: serde_json::json!({"source": filename}),
-                    frequency: 0,
-                    success_rate: 1.0,
-                    usage_count: 0,
-                    last_used_at: chrono::Utc::now(),
-                    created_at: chrono::Utc::now(),
-                });
+                let scan = leak_detector.scan(&content);
+                if scan.found.is_empty() {
+                    entries.push(ContextEntry {
+                        id: uuid::Uuid::new_v4(),
+                        kind: *kind,
+                        content,
+                        embedding: None,
+                        metadata: serde_json::json!({"source": filename}),
+                        frequency: 0,
+                        success_rate: 1.0,
+                        usage_count: 0,
+                        last_used_at: chrono::Utc::now(),
+                        created_at: chrono::Utc::now(),
+                    });
+                } else {
+                    leaks_found += scan.found.len();
+                    tracing::warn!(
+                        "[worker] skipped seeding {} due to {} leaks (categories: {:?})",
+                        filename,
+                        scan.found.len(),
+                        scan.found.iter().map(|m| &m.category).collect::<Vec<_>>()
+                    );
+                }
             }
         }
+    }
+
+    if leaks_found > 0 {
+        tracing::warn!(
+            "[worker] workspace seed skipped {} files containing {} potential secret leaks",
+            leaks_found,
+            leaks_found
+        );
     }
 
     if !entries.is_empty() {
@@ -434,13 +473,16 @@ pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &Embedding
 }
 
 /// Spawn background seeding: workspace, tool intents, permissions, security.
+/// `workspace` is an optional path to the workspace directory. When `None`,
+/// the current directory is used.
 pub async fn seed_background(
     store: Arc<ContextStore>,
     embedder: EmbeddingClient,
     tools: Arc<ToolRegistry>,
     sandbox: SandboxPolicy,
+    workspace: Option<std::path::PathBuf>,
 ) {
-    seed_from_workspace(&store, &embedder).await;
+    seed_from_workspace_at(&store, &embedder, workspace.as_deref()).await;
     seed_tool_intents(&store, &tools, &embedder).await;
     seed_permissions(&store, &tools, &embedder).await;
     seed_security_policy(&store, &sandbox, &embedder).await;

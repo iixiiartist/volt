@@ -472,7 +472,7 @@ pub fn tool_required_scope(tool_name: &str) -> CapabilityScope {
         | "copy_file" => CapabilityScope::FsWrite,
         "bash" | "sh" | "powershell" | "cmd" | "run" | "execute" | "run_command" | "run_shell"
         | "spawn_process" => CapabilityScope::System,
-        "web_search" | "web_fetch" | "browser_navigate" | "browser_extract" | "web_scrape"
+        "web_search" | "web_fetch" | "browser_navigate" | "browser_extract"
         | "you_research" | "you_contents" | "http_get" | "http_post" => CapabilityScope::Network,
         "db_query" | "sql" | "database" | "pg_query" => CapabilityScope::Database,
         "memory_read" | "memory_write" | "memory_search" | "memory_save" => CapabilityScope::Memory,
@@ -574,7 +574,6 @@ mod tests {
         assert_eq!(tool_required_scope("web_search"), CapabilityScope::Network);
         assert_eq!(tool_required_scope("db_query"), CapabilityScope::Database);
         assert_eq!(tool_required_scope("memory_read"), CapabilityScope::Memory);
-        assert_eq!(tool_required_scope("final_answer"), CapabilityScope::System);
         assert!(matches!(
             tool_required_scope("api_foo"),
             CapabilityScope::Api(_)

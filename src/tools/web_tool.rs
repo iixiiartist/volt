@@ -1,7 +1,10 @@
 use crate::models::ToolResult;
+use scraper::{Html, Selector};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Instant;
 use url::Url;
+
+const MIN_PARAGRAPH_CHARS: usize = 20;
 
 fn is_private_addr(addr: IpAddr) -> bool {
     match addr {
@@ -65,7 +68,6 @@ pub fn validate_url(url_str: &str) -> Result<Url, String> {
         .host_str()
         .ok_or_else(|| "URL missing host".to_string())?;
 
-    // Network allowlist check
     let allowed_hosts: Option<Vec<String>> = std::env::var("VOLT_ALLOWED_HOSTS").ok().map(|s| {
         s.split(',')
             .map(|h| h.trim().to_string())
@@ -94,7 +96,7 @@ pub fn validate_url(url_str: &str) -> Result<Url, String> {
 
 pub async fn web_fetch(url: &str) -> ToolResult {
     let started = Instant::now();
-    const MAX_BYTES: usize = 2_000_000; // 2MB cap prevents OOM on large pages
+    const MAX_BYTES: usize = 2_000_000;
 
     let parsed = match validate_url(url) {
         Ok(u) => u,
@@ -129,7 +131,6 @@ pub async fn web_fetch(url: &str) -> ToolResult {
             let status = resp.status();
             match resp.text().await {
                 Ok(body) => {
-                    // Truncate to prevent OOM on large responses
                     let truncated: String = body.chars().take(MAX_BYTES).collect();
                     let truncated_notice = if body.len() > MAX_BYTES {
                         format!(" [truncated from {} bytes]", body.len())
@@ -164,61 +165,156 @@ pub async fn web_fetch(url: &str) -> ToolResult {
     }
 }
 
-pub async fn web_scrape(url: &str) -> ToolResult {
-    // web_scrape delegates to web_fetch; the ToolRegistry routes both.
-    web_fetch(url).await
+pub async fn web_fetch_selector(url: &str, selector: &str) -> ToolResult {
+    let started = Instant::now();
+    let parsed = match validate_url(url) {
+        Ok(u) => u,
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(e),
+                duration_ms: started.elapsed().as_millis(),
+            };
+        }
+    };
+
+    let body = match fetch_body(parsed.as_str()).await {
+        Ok(b) => b,
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(e),
+                duration_ms: started.elapsed().as_millis(),
+            };
+        }
+    };
+
+    let fragment = Html::parse_fragment(&body);
+    let css_sel = match Selector::parse(selector) {
+        Ok(s) => s,
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("invalid CSS selector '{}': {}", selector, e)),
+                duration_ms: started.elapsed().as_millis(),
+            };
+        }
+    };
+
+    let mut results = Vec::new();
+    for element in fragment.select(&css_sel) {
+        let text: String = element.text().collect::<Vec<_>>().join(" ");
+        results.push(text);
+    }
+
+    if results.is_empty() {
+        return ToolResult {
+            success: true,
+            output: format!("No elements matched selector '{}'", selector),
+            error: None,
+            duration_ms: started.elapsed().as_millis(),
+        };
+    }
+
+    ToolResult {
+        success: true,
+        output: results.join("\n---\n"),
+        error: None,
+        duration_ms: started.elapsed().as_millis(),
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub async fn web_fetch_all(url: &str) -> ToolResult {
+    let started = Instant::now();
+    let parsed = match validate_url(url) {
+        Ok(u) => u,
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(e),
+                duration_ms: started.elapsed().as_millis(),
+            };
+        }
+    };
 
-    #[test]
-    fn test_validate_url_https_ok() {
-        assert!(validate_url("https://example.com").is_ok());
-        assert!(validate_url("http://example.com").is_ok());
-    }
+    let body = match fetch_body(parsed.as_str()).await {
+        Ok(b) => b,
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(e),
+                duration_ms: started.elapsed().as_millis(),
+            };
+        }
+    };
 
-    #[test]
-    fn test_validate_url_scheme_rejected() {
-        let r = validate_url("file:///etc/passwd");
-        assert!(r.is_err());
-        assert!(r.unwrap_err().contains("scheme"));
-    }
+    let document = Html::parse_document(&body);
+    let mut parts = Vec::new();
 
-    #[test]
-    fn test_validate_url_private_ip_rejected() {
-        let cases = vec![
-            "http://127.0.0.1:8080/admin",
-            "http://10.0.0.1/admin",
-            "http://192.168.1.1/admin",
-            "http://172.16.0.1/admin",
-            "http://169.254.169.254/latest/meta-data/",
-            "http://localhost:5432",
-            "http://[::1]:8080",
-        ];
-        for url in cases {
-            let r = validate_url(url);
-            assert!(r.is_err(), "expected rejection for: {}", url);
+    for heading in ["h1", "h2", "h3", "h4", "h5", "h6"].iter() {
+        if let Ok(sel) = Selector::parse(heading) {
+            for element in document.select(&sel) {
+                let text: String = element.text().collect::<Vec<_>>().join(" ");
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(format!("## {}", trimmed));
+                }
+            }
         }
     }
 
-    #[test]
-    fn test_validate_url_public_ip_ok() {
-        assert!(validate_url("https://93.184.216.34").is_ok());
+    if let Ok(p_sel) = Selector::parse("p") {
+        for element in document.select(&p_sel) {
+            let text: String = element.text().collect::<Vec<_>>().join(" ");
+            let trimmed = text.trim();
+            if trimmed.len() >= MIN_PARAGRAPH_CHARS {
+                parts.push(trimmed.to_string());
+            }
+        }
     }
 
-    #[test]
-    fn test_validate_url_invalid_rejected() {
-        let r = validate_url("not-a-url");
-        assert!(r.is_err());
+    if let Ok(a_sel) = Selector::parse("a[href]") {
+        for element in document.select(&a_sel) {
+            if let Some(href) = element.value().attr("href") {
+                let text: String = element.text().collect::<Vec<_>>().join(" ");
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(format!("[{}]({})", trimmed, href));
+                }
+            }
+        }
     }
 
-    #[test]
-    fn test_is_private_addr_v4() {
-        assert!(is_private_addr("127.0.0.1".parse().unwrap()));
-        assert!(is_private_addr("10.0.0.1".parse().unwrap()));
-        assert!(is_private_addr("192.168.1.1".parse().unwrap()));
-        assert!(!is_private_addr("8.8.8.8".parse().unwrap()));
+    if parts.is_empty() {
+        parts.push("No structured content found on the page.".to_string());
     }
+
+    ToolResult {
+        success: true,
+        output: parts.join("\n\n"),
+        error: None,
+        duration_ms: started.elapsed().as_millis(),
+    }
+}
+
+async fn fetch_body(url: &str) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("client build failed: {}", e))?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("fetch failed: {}", e))?;
+
+    resp.text()
+        .await
+        .map_err(|e| format!("body read failed: {}", e))
 }

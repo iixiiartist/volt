@@ -96,15 +96,11 @@ async fn register_all_tools() -> Arc<ToolRegistry> {
     registry.register("glob","Find files matching a glob pattern",serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"base":{"type":"string"}},"required":["pattern"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["pattern"].as_str().unwrap_or("*"); let b=args["base"].as_str().unwrap_or("."); volt::tools::glob_tool::glob_files(p,b).await }))).await;
     registry.register("grep","Search file contents with regex",serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["pattern"].as_str().unwrap_or(""); let path=args["path"].as_str().unwrap_or("."); volt::tools::grep_tool::grep_files(p,path).await }))).await;
     registry.register_with_permission("web_fetch","Fetch a URL and return its content",serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); volt::tools::web_tool::web_fetch(u).await })),PermissionLevel::Prompt, TrustLevel::Builtin).await;
-    registry.register("memory_append","Append to persistent memory file",serde_json::json!({"type":"object","properties":{"kind":{"type":"string"},"content":{"type":"string"}},"required":["kind","content"]}),"builtin",Arc::new(|args| Box::pin(async move { let k=args["kind"].as_str().unwrap_or("note"); let c=args["content"].as_str().unwrap_or(""); volt::tools::memory_tool::memory_append(k,c).await }))).await;
-    registry.register("todo_add","Add a task to the todo list",serde_json::json!({"type":"object","properties":{"task":{"type":"string"}},"required":["task"]}),"builtin",Arc::new(|args| Box::pin(async move { let t=args["task"].as_str().unwrap_or(""); volt::tools::todo_tool::todo_add(t).await }))).await;
+
     let dt = registry.clone();
     registry.register_with_permission("delegate","Delegate a sub-task to a sub-agent",serde_json::json!({"type":"object","properties":{"task":{"type":"string"},"context":{"type":"string"}},"required":["task"]}),"builtin",Arc::new(move |args| { let dt=dt.clone(); Box::pin(async move { let t=args["task"].as_str().unwrap_or(""); let c=args["context"].as_str().unwrap_or(""); volt::tools::delegate::delegate_task(t,c,dt).await }) }),PermissionLevel::Prompt, TrustLevel::Builtin).await;
-    registry.register_with_permission("web_scrape","Extract structured content from a URL using a CSS selector",serde_json::json!({"type":"object","properties":{"url":{"type":"string"},"selector":{"type":"string"}},"required":["url","selector"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); let s=args["selector"].as_str().unwrap_or(""); volt::tools::scrape_tool::web_scrape(u,s).await })),PermissionLevel::Prompt, TrustLevel::Builtin).await;
-    registry.register_with_permission("web_scrape_all","Fetch a URL and extract all human-readable content",serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),"builtin",Arc::new(|args| Box::pin(async move { let u=args["url"].as_str().unwrap_or(""); volt::tools::scrape_tool::web_scrape_all(u).await })),PermissionLevel::Prompt, TrustLevel::Builtin).await;
-    registry.register("json_validate","Validate JSON string and return its type",serde_json::json!({"type":"object","properties":{"data":{"type":"string"}},"required":["data"]}),"builtin",Arc::new(|args| Box::pin(async move { let d=args["data"].as_str().unwrap_or(""); volt::tools::json_tool::json_validate(d).await }))).await;
-    registry.register("json_prettify","Format JSON with custom indentation",serde_json::json!({"type":"object","properties":{"data":{"type":"string"},"indent":{"type":"integer"}},"required":["data"]}),"builtin",Arc::new(|args| Box::pin(async move { let d=args["data"].as_str().unwrap_or(""); let i=args["indent"].as_u64().unwrap_or(2)as u8; volt::tools::json_tool::json_prettify(d,i).await }))).await;
-    registry.register("json_query","Extract a value from JSON using dot-separated path",serde_json::json!({"type":"object","properties":{"data":{"type":"string"},"path":{"type":"string"}},"required":["data","path"]}),"builtin",Arc::new(|args| Box::pin(async move { let d=args["data"].as_str().unwrap_or(""); let p=args["path"].as_str().unwrap_or(""); volt::tools::json_tool::json_query(d,p).await }))).await;
+
+
     registry.register("csv_read","Read a CSV file",serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"has_header":{"type":"boolean"}},"required":["path"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["path"].as_str().unwrap_or(""); let h=args["has_header"].as_bool().unwrap_or(true); volt::tools::csv_tool::csv_read(p,h).await }))).await;
     registry.register("csv_write","Write data to a CSV file",serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"data":{"type":"string"},"has_header":{"type":"boolean"}},"required":["path","data"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["path"].as_str().unwrap_or(""); let d=args["data"].as_str().unwrap_or(""); let h=args["has_header"].as_bool().unwrap_or(true); volt::tools::csv_tool::csv_write(p,d,h).await }))).await;
     registry.register("archive_extract","Extract an archive file",serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"dest":{"type":"string"}},"required":["path","dest"]}),"builtin",Arc::new(|args| Box::pin(async move { let p=args["path"].as_str().unwrap_or(""); let d=args["dest"].as_str().unwrap_or(""); volt::tools::archive_tool::archive_extract(p,d).await }))).await;
@@ -193,41 +189,7 @@ async fn test_all_tools_direct_benchmarks() {
         res.output.len(),
     ));
 
-    // ── 8. json_validate tool ──
-    let started = Instant::now();
-    let res = volt::tools::json_tool::json_validate(r#"{"name":"volt","version":"0.1.0"}"#).await;
-    results.push((
-        "json_validate".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        0,
-    ));
-
-    // ── 9. json_prettify tool ──
-    let started = Instant::now();
-    let res = volt::tools::json_tool::json_prettify(r#"{"a":1,"b":{"c":2}}"#, 2).await;
-    results.push((
-        "json_prettify".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        res.output.len(),
-    ));
-
-    // ── 10. json_query tool ──
-    let started = Instant::now();
-    let res = volt::tools::json_tool::json_query(
-        r#"{"store":{"book":[{"title":"Rust Book"}]}}"#,
-        "store.book[0].title",
-    )
-    .await;
-    results.push((
-        "json_query".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        res.output.len(),
-    ));
-
-    // ── 11. csv_write + csv_read ──
+    // ── 8. csv_write + csv_read ──
     let started = Instant::now();
     let csv_data = "name,role,model\nagent1,fs,gpt-4\nagent2,data,claude-3\nagent3,system,groq-llama\nagent4,web,gpt-4o\nagent5,memory,groq-mixtral";
     let w = volt::tools::csv_tool::csv_write("_bench_agents.csv", csv_data, true).await;
@@ -239,7 +201,7 @@ async fn test_all_tools_direct_benchmarks() {
         r.output.len(),
     ));
 
-    // ── 12. archive_create + archive_extract ──
+    // ── 9. archive_create + archive_extract ──
     let started = Instant::now();
     let arc = volt::tools::archive_tool::archive_create(
         "_bench_archive.tar.gz",
@@ -255,50 +217,6 @@ async fn test_all_tools_direct_benchmarks() {
         started.elapsed().as_millis(),
         arc.success && ext.success,
         0,
-    ));
-
-    // ── 13. memory_append ──
-    let started = Instant::now();
-    let res = volt::tools::memory_tool::memory_append(
-        "benchmark",
-        "tool benchmark completed successfully",
-    )
-    .await;
-    results.push((
-        "memory_append".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        0,
-    ));
-
-    // ── 14. todo_add ──
-    let started = Instant::now();
-    let res = volt::tools::todo_tool::todo_add("Run comprehensive tool benchmarks").await;
-    results.push((
-        "todo_add".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        0,
-    ));
-
-    // ── 15. web_scrape (targeting a simple page) ──
-    let started = Instant::now();
-    let res = volt::tools::scrape_tool::web_scrape("https://httpbin.org/html", "h1").await;
-    results.push((
-        "web_scrape".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        res.output.len(),
-    ));
-
-    // ── 16. web_scrape_all ──
-    let started = Instant::now();
-    let res = volt::tools::scrape_tool::web_scrape_all("https://httpbin.org/html").await;
-    results.push((
-        "web_scrape_all".to_string(),
-        started.elapsed().as_millis(),
-        res.success,
-        res.output.len(),
     ));
 
     // ── Print results ──

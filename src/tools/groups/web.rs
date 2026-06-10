@@ -1,4 +1,3 @@
-// Web tools (web_fetch, web_scrape, web_search, you.com tools)
 use crate::attenuation::TrustLevel;
 use crate::models::PermissionLevel;
 use crate::register_tool;
@@ -13,60 +12,23 @@ pub async fn register_web_tools(registry: &Arc<ToolRegistry>) {
     register_tool_with_permission!(
         registry,
         "web_fetch",
-        "Fetch a URL and return its content. Use ONLY when the user asks for information from a specific URL or when web_search results point to a page you need to read. Do NOT use for general questions you can answer from your training data.",
+        "Fetch a URL and return its content. Optionally pass a CSS selector to extract specific elements. Use ONLY when the user asks for information from a specific URL or when web_search results point to a page you need to read.",
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": { "type": "string", "description": "URL to fetch" }
+                "url": { "type": "string", "description": "URL to fetch" },
+                "selector": { "type": "string", "description": "Optional CSS selector to extract specific elements (e.g. 'h1', '.content', '#main'). If omitted, returns full page content." }
             },
             "required": ["url"]
         }),
         "builtin",
         |args: Value| async move {
             let url = args["url"].as_str().unwrap_or("");
-            crate::tools::web_tool::web_fetch(url).await
-        },
-        PermissionLevel::Prompt,
-        TrustLevel::Builtin
-    );
-
-    register_tool_with_permission!(
-        registry,
-        "web_scrape",
-        "Extract structured content from a URL using a CSS selector. Returns text content of all matching elements.",
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": { "type": "string", "description": "URL to scrape" },
-                "selector": { "type": "string", "description": "CSS selector to match elements" }
-            },
-            "required": ["url", "selector"]
-        }),
-        "builtin",
-        |args: Value| async move {
-            let url = args["url"].as_str().unwrap_or("");
-            let selector = args["selector"].as_str().unwrap_or("");
-            crate::tools::scrape_tool::web_scrape(url, selector).await
-        },
-        PermissionLevel::Prompt,
-        TrustLevel::Builtin
-    );
-
-    register_tool_with_permission!(
-        registry,
-        "web_scrape_all",
-        "Fetch a URL and extract all human-readable content (headings, paragraphs, links). General-purpose page reading without needing a CSS selector.",
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": { "type": "string", "description": "URL to fetch and extract" }
-            },
-            "required": ["url"]
-        }),
-        "builtin",
-        |args: Value| async move {
-            let url = args["url"].as_str().unwrap_or("");
-            crate::tools::scrape_tool::web_scrape_all(url).await
+            let selector = args["selector"].as_str();
+            match selector {
+                Some(s) if !s.is_empty() => crate::tools::web_tool::web_fetch_selector(url, s).await,
+                _ => crate::tools::web_tool::web_fetch(url).await,
+            }
         },
         PermissionLevel::Prompt,
         TrustLevel::Builtin

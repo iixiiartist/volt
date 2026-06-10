@@ -277,7 +277,6 @@ impl Agent {
                 // ── max_tools_per_turn enforcement ─────────────────────
                 if let Some(max) = self.config.max_tools_per_turn {
                     if tool_calls.len() > max
-                        && !tool_calls.iter().any(|tc| tc.name == "final_answer")
                     {
                         let overflow: Vec<_> = tool_calls
                             .iter()
@@ -347,67 +346,6 @@ impl Agent {
                     }
                 }
 
-                if let Some(final_call) = tool_calls.iter().find(|tc| tc.name == "final_answer") {
-                    let arg_answer = final_call
-                        .arguments
-                        .get("answer")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    // Multi-stage fallback for empty `answer`:
-                    //   1. Model's natural-language content in this turn.
-                    //   2. Any non-empty string field in the tool-call JSON.
-                    //   3. The most recent non-empty assistant message in
-                    //      the conversation history. Some models emit the
-                    //      answer in a prior turn and then "confirm" with
-                    //      a redundant final_answer({}) call.
-                    //   4. The most recent non-empty tool message (last
-                    //      resort for models that put the answer in tool
-                    //      output rather than final_answer).
-                    let answer = if arg_answer.trim().is_empty() {
-                        let fallback = response.content.as_str().trim().to_string();
-                        if !fallback.is_empty() {
-                            fallback
-                        } else {
-                            final_call
-                                .arguments
-                                .as_object()
-                                .and_then(|obj| {
-                                    obj.values()
-                                        .find_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                                })
-                                .filter(|s| !s.is_empty())
-                                .unwrap_or_else(|| {
-                                    state
-                                        .messages
-                                        .iter()
-                                        .rev()
-                                        .find(|m| m.role == "assistant" && !m.content.trim().is_empty())
-                                        .map(|m| m.content.as_str().trim().to_string())
-                                        .unwrap_or_default()
-                                })
-                        }
-                    } else {
-                        arg_answer
-                    };
-                    tracing::warn!(
-                        "[agent] final_answer received: arg_len={} content_len={} recovered_len={}",
-                        final_call
-                            .arguments
-                            .get("answer")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.len())
-                            .unwrap_or(0),
-                        response.content.len(),
-                        answer.len()
-                    );
-                    self.push_assistant_message(&mut state, &response, Some(tool_calls))
-                        .await;
-                    drop(state);
-                    self.save_session_messages_delta().await;
-                    return Ok(answer);
-                }
-
                 self.push_assistant_message(&mut state, &response, Some(tool_calls))
                     .await;
                 let allow_session = state.allow_session;
@@ -425,8 +363,6 @@ impl Agent {
                         tool_name.as_str(),
                         "web_search"
                             | "web_fetch"
-                            | "web_scrape"
-                            | "web_scrape_all"
                             | "you_research"
                             | "you_contents"
                             | "bash"
@@ -488,30 +424,6 @@ impl Agent {
                     });
                 }
             } else {
-                // ── MissingFinalAnswer quirk ──────────────────────────
-                let content = response.content.as_str();
-                if self
-                    .config
-                    .quirks
-                    .contains(&crate::agent::blueprint::ModelQuirk::MissingFinalAnswer)
-                    && !content.trim().is_empty()
-                {
-                    tracing::warn!(
-                        "MissingFinalAnswer quirk triggered: wrapping text as final_answer"
-                    );
-                    let answer = content.trim().to_string();
-                    let synthetic = ToolCall {
-                        id: Uuid::new_v4().to_string(),
-                        name: "final_answer".into(),
-                        arguments: serde_json::json!({"answer": answer}),
-                    };
-                    self.push_assistant_message(&mut state, &response, Some(&vec![synthetic]))
-                        .await;
-                    drop(state);
-                    self.save_session_messages_delta().await;
-                    return Ok(answer);
-                }
-
                 // ── Normal text-only return ──────────────────────────
                 self.push_assistant_message(&mut state, &response, None)
                     .await;
@@ -547,8 +459,7 @@ impl Agent {
         // Prefer the latest non-empty assistant message, then fall back
         // to the latest non-empty tool message. Some models (notably the
         // small 8B) emit the answer as the *content* of an assistant
-        // message but ALSO call final_answer with empty arguments. We
-        // want that content.
+        // message. We want that content.
         let last_answer = state
             .messages
             .iter()

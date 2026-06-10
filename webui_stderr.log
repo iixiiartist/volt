@@ -1,4 +1,0 @@
-[otel] stdout exporter (set OTEL_EXPORTER_OTLP_ENDPOINT for OTLP)
-[tui logs] C:\Users\iixii\AppData\Roaming\volt\logs\webui.log
-[1;31m2026-06-08 12:04:57.7859187 [E:onnxruntime:default, provider_bridge_ort.cc:2305 onnxruntime::OpenVINOProviderFactoryCreator::Create] D:\a\ort-artifacts\ort-artifacts\onnxruntime\onnxruntime\core\session\provider_bridge_ort.cc:1952 onnxruntime::ProviderLibrary::Get [ONNXRuntimeError] : 1 : FAIL : Error loading "C:\Users\iixii\volt\target\debug\onnxruntime_providers_openvino.dll" which is missing. (Error 126: "The specified module could not be found.")
-[m

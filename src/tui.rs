@@ -1062,7 +1062,6 @@ fn color_for_tool(name: &str) -> Color {
     if n.contains("delegate")
         || n.contains("workflow")
         || n.contains("agent")
-        || n.contains("final_answer")
     {
         return Color::Cyan;
     }
@@ -1292,7 +1291,6 @@ mod tests {
     fn color_for_tool_buckets_agent_cyan() {
         assert_eq!(color_for_tool("delegate"), Color::Cyan);
         assert_eq!(color_for_tool("run_workflow"), Color::Cyan);
-        assert_eq!(color_for_tool("final_answer"), Color::Cyan);
     }
 
     #[test]
@@ -1339,13 +1337,13 @@ mod tests {
         let item = build_item_enhanced(
             "tool",
             r#"{"rows": 3, "status": "ok"}"#,
-            Some("json_query"),
+            Some("read"),
             80,
         );
         // JSON highlighting produces a wider item than a plain string
         // because the JSON content has key/string/number/punctuation
         // categories broken out into separate spans.
-        let plain = build_item_enhanced("tool", "short", Some("json_query"), 80);
+        let plain = build_item_enhanced("tool", "short", Some("read"), 80);
         assert!(item.width() >= plain.width());
     }
 

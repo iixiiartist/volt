@@ -294,6 +294,24 @@ enum JobsSubcommand {
 #[derive(Subcommand, Debug)]
 enum RoutinesSubcommand {
     List,
+    Create {
+        name: String,
+        action_prompt: String,
+        #[arg(long)]
+        cron: Option<String>,
+    },
+    Edit {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        action_prompt: Option<String>,
+        #[arg(long)]
+        cron: Option<String>,
+    },
+    Delete {
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -808,12 +826,58 @@ async fn main() -> anyhow::Result<()> {
             let jobs = manager.list_jobs(None).await?;
             println!("{}", serde_json::to_string_pretty(&jobs)?);
         }
-        Commands::Routines {
-            subcommand: RoutinesSubcommand::List,
-        } => {
-            let pool = volt::db::connect(&settings.database_url).await?;
-            let routines = volt::db::list_routines(&pool).await?;
-            println!("{}", serde_json::to_string_pretty(&routines)?);
+        Commands::Routines { subcommand } => match subcommand {
+            RoutinesSubcommand::List => {
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let routines = volt::db::list_routines(&pool).await?;
+                println!("{}", serde_json::to_string_pretty(&routines)?);
+            }
+            RoutinesSubcommand::Create { name, action_prompt, cron } => {
+                volt::routines::validate_action_prompt(&action_prompt)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let id = uuid::Uuid::new_v4();
+                let trigger_type = if cron.is_some() { "cron" } else { "manual" };
+                sqlx::query(
+                    "INSERT INTO routines (id, name, action_prompt, enabled, trigger_type, cron) VALUES ($1, $2, $3, true, $4, $5)"
+                )
+                .bind(id)
+                .bind(&name)
+                .bind(&action_prompt)
+                .bind(trigger_type)
+                .bind(cron.as_deref())
+                .execute(&pool)
+                .await?;
+                println!("Created routine {} ({})", name, id);
+            }
+            RoutinesSubcommand::Edit { id, name, action_prompt, cron } => {
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let uuid: uuid::Uuid = id.parse().map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+                if let Some(ref p) = action_prompt {
+                    volt::routines::validate_action_prompt(p)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                }
+                if let Some(n) = &name {
+                    sqlx::query("UPDATE routines SET name = $1 WHERE id = $2")
+                        .bind(n).bind(uuid).execute(&pool).await?;
+                }
+                if let Some(p) = &action_prompt {
+                    sqlx::query("UPDATE routines SET action_prompt = $1 WHERE id = $2")
+                        .bind(p).bind(uuid).execute(&pool).await?;
+                }
+                if let Some(c) = &cron {
+                    sqlx::query("UPDATE routines SET cron = $1 WHERE id = $2")
+                        .bind(c).bind(uuid).execute(&pool).await?;
+                }
+                println!("Updated routine {}", uuid);
+            }
+            RoutinesSubcommand::Delete { id } => {
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let uuid: uuid::Uuid = id.parse().map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+                sqlx::query("DELETE FROM routines WHERE id = $1")
+                    .bind(uuid).execute(&pool).await?;
+                println!("Deleted routine {}", uuid);
+            }
         }
         Commands::AgentChat { .. } => {
             eprintln!("AgentChat is deprecated — use AgentRun or AgentTui");

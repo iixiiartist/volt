@@ -39,9 +39,8 @@ async fn test_agent_returns_text_response() {
     let agent = Agent::new(agent_config(), provider, tools).await;
 
     let result = agent.run("Say hello").await;
-    assert!(result.is_ok());
-    let output = result.unwrap();
-    assert!(output.contains("mock") || output.contains("Hello"));
+    let output = result.expect("agent should return text response");
+    assert!(output.contains("Hello"), "output should contain mock LLM text, got: {output}");
 }
 
 #[tokio::test]
@@ -60,7 +59,8 @@ async fn test_agent_runs_tool_and_uses_result() {
     let agent = Agent::new(agent_config(), provider, tools).await;
 
     let result = agent.run("Use the echo tool").await;
-    assert!(result.is_ok());
+    let output = result.expect("agent should complete after one tool call");
+    assert!(output.contains("Tool result"), "output should reference tool result, got: {output}");
 }
 
 #[tokio::test]
@@ -83,9 +83,13 @@ async fn test_agent_respects_max_iterations() {
     let agent = Agent::new(agent_config(), provider, tools).await;
 
     let result = agent.run("Loop forever").await;
-    // With max_iterations=5 and tool calls causing loops, agent returns last content
-    // instead of erroring (fallback fix: returns last non-empty result)
-    assert!(result.is_ok());
+    // With max_iterations=5 and tool calls causing loops, agent falls back to the
+    // last non-empty tool message content instead of erroring
+    let output = result.expect("agent should fall back to last content on max iterations");
+    assert!(
+        output.contains("echo done"),
+        "fallback should return the last tool result, got: {output}"
+    );
 }
 
 #[tokio::test]

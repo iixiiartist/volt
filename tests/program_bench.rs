@@ -19,14 +19,13 @@ fn build_tools() -> Arc<ToolRegistry> {
     ToolRegistry::new()
 }
 
-fn build_provider() -> Box<dyn volt::llm::LLMProvider> {
-    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant")
-        .expect("program_bench: configure an LLM provider (e.g. GROQ_API_KEY) to run this test");
-    Box::new(volt::llm::openai::OpenAIProvider::new(
+fn build_provider() -> Option<Box<dyn volt::llm::LLMProvider>> {
+    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant").ok()?;
+    Some(Box::new(volt::llm::openai::OpenAIProvider::new(
         route.api_key,
         route.base_url,
         "program-bench".into(),
-    ))
+    )))
 }
 
 #[tokio::test]
@@ -44,7 +43,10 @@ async fn test_program_bench() {
         }
     }
 
-    let provider = build_provider();
+    let Some(provider) = build_provider() else {
+        eprintln!("program_bench: SKIPPED — no LLM provider configured (set GROQ_API_KEY or other)");
+        return;
+    };
     let tools = build_tools();
     let config = AgentConfig {
         name: "program-bench".into(),
@@ -129,14 +131,8 @@ async fn test_program_bench() {
     println!("{}", "=".repeat(70));
 
     assert!(
-        total > 0,
-        "program_bench: PROBLEMS list is empty, cannot run"
+        correct > 0,
+        "program_bench: agent got 0/{} correct — must solve at least 1 problem",
+        total
     );
-    if std::env::var("VOLT_PROGRAM_BENCH_REQUIRE_PASS").as_deref() == Ok("1") {
-        assert!(
-            correct > 0,
-            "program_bench: agent got 0/{} correct (require at least 1)",
-            total
-        );
-    }
 }

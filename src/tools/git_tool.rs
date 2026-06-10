@@ -37,56 +37,12 @@ async fn git(args: &[&str], repo_path: &str) -> ToolResult {
     }
 }
 
-pub async fn git_status(repo_path: &str) -> ToolResult {
-    git(&["status", "--porcelain"], repo_path).await
-}
-
-pub async fn git_diff_unstaged(repo_path: &str) -> ToolResult {
-    git(&["diff"], repo_path).await
-}
-
-pub async fn git_diff_staged(repo_path: &str) -> ToolResult {
-    git(&["diff", "--cached"], repo_path).await
-}
-
-pub async fn git_diff(repo_path: &str, target: &str) -> ToolResult {
-    git(&["diff", target], repo_path).await
-}
-
-pub async fn git_commit(repo_path: &str, message: &str) -> ToolResult {
-    git(&["commit", "-m", message], repo_path).await
-}
-
-pub async fn git_add(repo_path: &str, files: &[String]) -> ToolResult {
-    let mut args = vec!["add"];
-    args.extend(files.iter().map(|s| s.as_str()));
+pub async fn git_query(repo_path: &str, command: &str) -> ToolResult {
+    let args: Vec<&str> = command.split_whitespace().collect();
     git(&args, repo_path).await
 }
 
-pub async fn git_reset(repo_path: &str) -> ToolResult {
-    git(&["reset"], repo_path).await
-}
-
-pub async fn git_log(repo_path: &str, max_count: u32) -> ToolResult {
-    git(&["log", "--oneline", &format!("-{}", max_count)], repo_path).await
-}
-
-pub async fn git_create_branch(repo_path: &str, branch: &str, base: Option<&str>) -> ToolResult {
-    let mut args = vec!["branch", branch];
-    if let Some(b) = base {
-        args.push(b);
-    }
+pub async fn git_mutate(repo_path: &str, command: &str) -> ToolResult {
+    let args: Vec<&str> = command.split_whitespace().collect();
     git(&args, repo_path).await
-}
-
-pub async fn git_checkout(repo_path: &str, branch: &str) -> ToolResult {
-    git(&["checkout", branch], repo_path).await
-}
-
-pub async fn git_show(repo_path: &str, revision: &str) -> ToolResult {
-    git(&["show", revision], repo_path).await
-}
-
-pub async fn git_branch(repo_path: &str) -> ToolResult {
-    git(&["branch"], repo_path).await
 }

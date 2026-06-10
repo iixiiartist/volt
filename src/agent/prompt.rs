@@ -84,10 +84,18 @@ pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> St
             .enabled_context_kinds
             .contains(&ContextKind::Artifact)
     {
-        return "You are an AI agent. Use the available tools to answer questions. Call the appropriate function for each question.".into();
+        return format!(
+            "Current time: {}\n\nYou are an AI agent. Use the available tools to answer questions. Call the appropriate function for each question.",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        );
     }
 
     let mut parts = Vec::new();
+
+    parts.push(format!(
+        "Current time: {}",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    ));
 
     if let Some(ref sp) = config.system_prompt {
         parts.push(sp.clone());
