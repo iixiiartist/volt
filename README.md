@@ -1,4 +1,4 @@
-# Volt — Enterprise multi-agent, multi-model runtime for local AI
+# Volt — Virtual Orchestrator for Local Tasks
 
 > **Volt** is a Rust-native AI agent middleware built for enterprises that need to run LLM workflows on their own infrastructure. Default inference is **vLLM** (the production-grade open-source serving stack); the same workflow can route to different models for different roles via `volt.models.toml`. Cloud providers (Groq, OpenAI, Anthropic, NVIDIA NIM, Ollama Cloud) are an explicit opt-in for development. Workflows tagged `environment: "prod"` are enforced to use only allowlisted providers — your data never leaves the box.
 
