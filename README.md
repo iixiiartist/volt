@@ -1,20 +1,32 @@
-# VOLT — Virtual Operations for Local Tasks
+# Volt — Enterprise multi-agent, multi-model runtime for local AI
 
-> **VOLT (Virtual Operations for Local Tasks) is a Rust-native AI agent middleware with a 3-kind context store (Tool, Memory, Conversation), ~20 built-in tools, auto-detecting provider router (Groq, Ollama, NVIDIA NIM, OpenAI, Anthropic, local ONNX), DAG-based multi-agent orchestration, and PostgreSQL persistence. No hardcoded defaults, no paid tiers, no telemetry — runs self-hosted with append-only audit logging for EU AI Act Art. 12 compliance.**
+> **Volt** is a Rust-native AI agent middleware built for enterprises that need to run LLM workflows on their own infrastructure. Default inference is **vLLM** (the production-grade open-source serving stack); the same workflow can route to different models for different roles via `volt.models.toml`. Cloud providers (Groq, OpenAI, Anthropic, NVIDIA NIM, Ollama Cloud) are an explicit opt-in for development. Workflows tagged `environment: "prod"` are enforced to use only allowlisted providers — your data never leaves the box.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Rust](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org) [![Pipeline Status](https://gitlab.com/iixiiartist-volt/volt/badges/main/pipeline.svg)](https://gitlab.com/iixiiartist-volt/volt/-/commits/main)
 
-## Why VOLT?
+## Why Volt?
 
-**Virtual Operations for Local Tasks** — VOLT is built for agents that run *here*, not "somewhere in the cloud." Most agent frameworks hardcode their provider choice and inject every available tool into every LLM call. VOLT does neither:
+Most agent frameworks either hardcode their provider choice (you use OpenAI) or hand you a generic "BYO LLM" abstraction without any enterprise guardrails. Volt does neither:
 
-- **Provider-agnostic**: Auto-detects whatever LLM or embedding provider you have configured (Groq, Ollama, NVIDIA NIM, OpenAI, Anthropic, HuggingFace, local ONNX) — no hardcoded defaults, no silent fallbacks.
-- **~20 curated tools** (not 50+): Read, write, edit, glob, grep, bash, web_fetch, web_search, git operations, CSV, PDF, charts, desktop/browser automation, and multi-agent DAG workflows. Tools are gated by env vars — unconfigured tools are simply not registered.
-- **3-kind context store** (not 12): Tool schemas, conversation history, and long-term memory — the three signal sources that matter for tool selection. Other kinds (skills, policies, permissions) are still stored and queryable but excluded from the default context window.
+- **vLLM-first**: Auto-detects a local vLLM server (`http://localhost:8000`) and makes it the default inference backend. The same vLLM process can serve multiple model roles (supervisor / classifier / coder / embedder) — one HTTP endpoint, many models.
+- **Role-based model routing**: A workflow declares a *role* (`role: "supervisor"`); `volt.models.toml` maps role → model ID. Switch models by editing the TOML, not the workflow.
+- **Per-environment provider allowlist**: A workflow tagged `environment: "prod"` cannot route to a non-allowlisted provider, even if the env var is set. Cloud providers are opt-in via `VOLT_ENABLE_CLOUD_PROVIDERS=1`; the gate defaults to off.
+- **~20 curated tools** (not 50+): Read, write, edit, glob, grep, bash, web_fetch, web_search, git operations, CSV, PDF, charts, desktop/browser automation, DAG workflows. Unconfigured tools are not registered.
+- **3-kind context store** (not 12): Tool schemas, conversation history, long-term memory — the three signal sources that matter for tool selection.
 - **Keyword routing over LLM routing**: Task-to-agent dispatch uses keyword table matching (~100µs) instead of an LLM call.
+- **DAG-based multi-agent orchestration**: Parallel, pipeline, supervisor, and arbitrary DAG patterns with `{input}` / `{node_id}` templating.
+- **MCP protocol server**: Expose tools to external clients (Claude Desktop, Cline, Goose) over stdio or HTTP with permission-gated execution.
+- **PostgreSQL persistence**: pgvector with HNSW indexes, append-only audit log (EU AI Act Art. 12).
+- **Single executable**: No Python, Node.js, or Java runtime required.
 
-**Verified results (BFCL V4, 400 cases, argument-aware evaluation):**
-- **95.0% accuracy** on llama-3.1-8b-instant (380/400) — all failures are Groq API schema validation errors (boolean/integer types passed as strings)
+## vLLM integration status
+
+The vLLM provider is **structurally complete but not yet validated against a live vLLM endpoint**. The request body, response parsing, and streaming chunk format follow the OpenAI spec that vLLM commits to. The `vllm` provider passes all unit tests (request shape, response parsing, error handling) and is registered in the provider detector. **An integration test gated on `VLLM_INTEGRATION_URL` is the next step** — see [`docs/vllm-deployment.md`](docs/vllm-deployment.md) for the deployment runbook and test plan.
+
+Treat vLLM-tagged workflows as `environment: dev|staging` until a vLLM deployment is available for validation. Cloud providers (Groq etc.) remain the testing path in the interim.
+
+**Verified results (BFCL v4, 400 cases, argument-aware evaluation):**
+- **95.0% accuracy** on llama-3.1-8b-instant (380/400) — all failures are Groq API schema validation errors
 - **Flat tool-count scaling curve** — accuracy invariant from 1 to 200+ tools
 - **74% token savings** vs static injection (470 cases, ~$0.37 total)
 - **qwen3-32b scores 100%** on simple_python tool selection (3/3 cases)
@@ -35,15 +47,40 @@ Key design decisions:
 
 ## Quick Start
 
-### Option A: Download binary (easiest)
+### Option A: Run against vLLM (production target)
 
-```powershell
+```bash
+# 1. Start vLLM (single-model, single-GPU; see docs/vllm-deployment.md for multi-model)
+pip install vllm
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+    --enable-auto-tool-choice \
+    --tool-call-parser llama3_json
+
+# 2. Download volt.exe from https://github.com/iixiiartist/volt/releases
+# 3. Tell volt where vLLM is:
+export VLLM_HOST=http://localhost:8000
+
+# 4. Run — schema auto-migrates on first connect, no manual init needed:
+volt webui
+```
+
+The first time volt starts, it creates `~/.volt/volt.models.toml` with sensible
+defaults mapping `supervisor` / `classifier` / `coder` / `summarizer` roles to
+specific model IDs. Edit that file to match the models served by your vLLM
+instance.
+
+### Option B: Run against a cloud provider (development)
+
+```bash
 # 1. Download volt.exe from https://github.com/iixiiartist/volt/releases
 # 2. (Optional) Run PostgreSQL with pgvector for persistence:
 docker compose -f docker-compose.db.yml up -d
 
-# 3. Set your preferred provider's API key:
+# 3. Set your preferred provider's API key. Cloud providers require
+#    VOLT_ENABLE_CLOUD_PROVIDERS=1 to be active (off by default — local
+#    vLLM/Ollama is the enterprise path).
 set GROQ_API_KEY=gsk_your_key_here
+set VOLT_ENABLE_CLOUD_PROVIDERS=1
 
 # 4. Run — schema auto-migrates on first connect, no manual init needed:
 volt.exe webui
@@ -51,6 +88,7 @@ volt.exe webui
 
 > **No PostgreSQL?** Volt runs without it (SQLite used for sessions). `DATABASE_URL` is optional.
 > **No API key?** The WebUI shows a setup wizard where you can enter keys interactively, or run `volt config wizard`.
+> **Workflows tagged `environment: "prod"`** are enforced to use only providers in `VOLT_PROD_PROVIDER_ALLOWLIST` (default: `vllm,ollama_local`). A prod workflow cannot route to Groq even if `GROQ_API_KEY` is set.
 
 ### Option A+: Install with desktop shortcut (Windows)
 

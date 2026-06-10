@@ -116,7 +116,30 @@ impl ProviderInventory {
                 return Some(p);
             }
         }
-        // 2. Ollama-style colon tag with no slug prefix. Routes to a
+        // 2. vLLM-explicit routing. Models with vendor prefixes common
+        //    in the open-source catalog (meta-llama, Qwen, Mistral,
+        //    DeepSeek, google, microsoft, etc.) default to vLLM when
+        //    it's active. vLLM is the enterprise target; routing
+        //    Llama to Groq when vLLM is reachable would be a policy
+        //    violation.
+        if let Some(p) = self.active().find(|p| p.slug == "vllm") {
+            let m_lower = m.to_lowercase();
+            if m_lower.starts_with("meta-llama/")
+                || m_lower.starts_with("qwen/")
+                || m_lower.starts_with("mistral")
+                || m_lower.starts_with("deepseek-")
+                || m_lower.starts_with("google/")
+                || m_lower.starts_with("microsoft/")
+                || m_lower.starts_with("minimax")
+                || m_lower.starts_with("baai/")
+                || m_lower.contains("/llama-")
+                || m_lower.contains("qwen2")
+                || m_lower.contains("qwen3")
+            {
+                return Some(p);
+            }
+        }
+        // 3. Ollama-style colon tag with no slug prefix. Routes to a
         //    local Ollama server first, then Ollama Cloud.
         if m.contains(':') {
             if let Some(p) = self
@@ -126,7 +149,7 @@ impl ProviderInventory {
                 return Some(p);
             }
         }
-        // 3. Native model-name hints (Claude/GPT) only match if the
+        // 4. Native model-name hints (Claude/GPT) only match if the
         //    matching provider is actually active. We never silently
         //    substitute.
         if m.contains("claude") {
@@ -150,7 +173,7 @@ impl ProviderInventory {
                 .active()
                 .find(|p| p.slug == "nvidia" || p.slug == "moonshot");
         }
-        // 4. Default: first active provider. Caller is expected to
+        // 5. Default: first active provider. Caller is expected to
         //    surface a clear error if this returns None.
         self.active().next()
     }
@@ -326,7 +349,16 @@ pub fn detect_uncached() -> ProviderInventory {
             .as_deref()
             .map(|v| !v.trim().is_empty() && is_placeholder_key(v))
             .unwrap_or(false);
-        let (is_active, status) = if key_present {
+        // Cloud providers are inactive-by-default unless
+        // VOLT_ENABLE_CLOUD_PROVIDERS=1 is set in the environment.
+        // This is a *display* gate: the provider still shows up in the
+        // inventory as inactive (so the UI can show "set GROQ_API_KEY
+        // to enable Groq"), but it is filtered out of `active()` so
+        // the orchestrator's model router cannot pick it.
+        let cloud_enabled = cloud_providers_enabled();
+        let (is_active, status) = if !cloud_enabled {
+            (false, ProviderStatus::InactiveNoKey)
+        } else if key_present {
             (true, ProviderStatus::ActiveKey)
         } else if is_placeholder {
             (false, ProviderStatus::InactivePlaceholderKey)
@@ -352,8 +384,13 @@ pub fn detect_uncached() -> ProviderInventory {
 
     // ── 3. Local servers — probed via TCP connect ──────────────
     let probe_timeout = Duration::from_millis(500);
+    // vLLM is listed FIRST in the local array so it appears first in
+    // the inventory and wins "default provider" ties against Ollama
+    // local. Production deployments should run vLLM as the primary
+    // inference server; Ollama is a developer-laptop convenience.
     let local: &[(&str, &str, &str, &str)] = &[
         // (slug, display, default_host:port, env_var_to_override)
+        ("vllm", "vLLM (local)", "127.0.0.1:8000", "VLLM_HOST"),
         ("ollama_local", "Ollama (local)", "127.0.0.1:11434", "OLLAMA_HOST"),
         (
             "llamacpp",
@@ -433,6 +470,27 @@ pub fn summarize(inv: &ProviderInventory) -> String {
     s
 }
 
+/// True when cloud providers (Groq, OpenAI, Anthropic, NVIDIA NIM, Ollama
+/// Cloud, Moonshot) should appear in the active inventory. Default:
+/// `false` — local vLLM/Ollama is the enterprise path. Operators opt
+/// in by setting `VOLT_ENABLE_CLOUD_PROVIDERS=1` (or `true`/`yes`).
+///
+/// This is a *display gate*: even when `false`, the cloud provider
+/// entries still appear in the inventory (so the UI can show "set
+/// GROQ_API_KEY to enable"), but they are filtered out of `active()`
+/// and the orchestrator's `route()` function. A workflow that names
+/// a cloud model is not silently routed to the cloud; it surfaces
+/// the "no active provider" error so the developer fixes the env.
+pub fn cloud_providers_enabled() -> bool {
+    matches!(
+        std::env::var("VOLT_ENABLE_CLOUD_PROVIDERS")
+            .ok()
+            .map(|v| v.to_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,11 +545,22 @@ mod tests {
             "OLLAMA_HOST",
             "LLAMA_CPP_HOST",
             "LITERTLM_HOST",
+            "VLLM_HOST",
+            "VOLT_ENABLE_CLOUD_PROVIDERS",
         ] {
             std::env::remove_var(k);
         }
         // Tests must also invalidate the detector cache so the next
         // call sees the freshly-cleared env.
+        super::invalidate_cache();
+    }
+
+    /// Enable the cloud-provider gate for tests that exercise Groq /
+    /// OpenAI / NIM / etc. The gate is off by default (the
+    /// enterprise posture); the existing tests that depend on a
+    /// cloud provider being detected set this via `enable_cloud_for_test()`.
+    fn enable_cloud_for_test() {
+        std::env::set_var("VOLT_ENABLE_CLOUD_PROVIDERS", "1");
         super::invalidate_cache();
     }
 
@@ -523,6 +592,7 @@ mod tests {
     fn groq_key_makes_groq_active() {
         let _g = EnvGuard::new();
         clear_llm_env();
+        enable_cloud_for_test();
         std::env::set_var("GROQ_API_KEY", "gsk_real-looking-key-1234");
         let inv = detect_uncached();
         let active: Vec<&str> = inv.active_slugs();
@@ -541,6 +611,7 @@ mod tests {
     fn placeholder_key_does_not_activate_provider() {
         let _g = EnvGuard::new();
         clear_llm_env();
+        enable_cloud_for_test();
         std::env::set_var("GROQ_API_KEY", "your_groq_api_key_here");
         let inv = detect_uncached();
         let groq = inv.providers.iter().find(|p| p.slug == "groq").unwrap();
@@ -552,6 +623,7 @@ mod tests {
     fn llm_base_url_override_activates_oai_override() {
         let _g = EnvGuard::new();
         clear_llm_env();
+        enable_cloud_for_test();
         std::env::set_var("LLM_BASE_URL", "http://localhost:1234/v1");
         std::env::set_var("LLM_API_KEY", "real-key");
         let inv = detect_uncached();
@@ -580,6 +652,7 @@ mod tests {
     fn route_picks_active_provider() {
         let _g = EnvGuard::new();
         clear_llm_env();
+        enable_cloud_for_test();
         std::env::set_var("OPENAI_API_KEY", "sk-test");
         let inv = detect_uncached();
         // Native GPT prefix matches the active OpenAI provider.
@@ -600,10 +673,54 @@ mod tests {
     fn route_respects_vendor_prefixed_active_providers() {
         let _g = EnvGuard::new();
         clear_llm_env();
+        enable_cloud_for_test();
         std::env::set_var("NVIDIA_API_KEY", "nvapi-test");
         let inv = detect_uncached();
         // DeepSeek (a NIM vendor) routes to NIM when active.
         let p = inv.route("deepseek-ai/deepseek-v3.2").unwrap();
         assert!(p.slug == "nvidia" || p.slug == "moonshot");
+    }
+
+    #[test]
+    fn cloud_gate_off_by_default() {
+        // Even with GROQ_API_KEY set, groq is not active unless the
+        // cloud-provider gate is explicitly enabled. This is the
+        // enterprise posture: local vLLM/Ollama is the default, cloud
+        // is opt-in.
+        let _g = EnvGuard::new();
+        clear_llm_env();
+        std::env::set_var("GROQ_API_KEY", "gsk_real-looking-key-1234");
+        let inv = detect_uncached();
+        let groq = inv.providers.iter().find(|p| p.slug == "groq").unwrap();
+        assert!(!groq.is_active, "groq should be inactive without VOLT_ENABLE_CLOUD_PROVIDERS");
+        assert_eq!(groq.status, ProviderStatus::InactiveNoKey);
+    }
+
+    #[test]
+    fn cloud_gate_on_via_env_var() {
+        let _g = EnvGuard::new();
+        clear_llm_env();
+        std::env::set_var("VOLT_ENABLE_CLOUD_PROVIDERS", "1");
+        std::env::set_var("GROQ_API_KEY", "gsk_real-looking-key-1234");
+        let inv = detect_uncached();
+        let groq = inv.providers.iter().find(|p| p.slug == "groq").unwrap();
+        assert!(groq.is_active);
+        assert_eq!(groq.status, ProviderStatus::ActiveKey);
+    }
+
+    #[test]
+    fn vllm_appears_in_inventory() {
+        // vLLM is always listed, even when no server is reachable —
+        // it shows up as `InactiveLocalNotConfigured`. The provider
+        // list is the user-facing "what's available" view.
+        let _g = EnvGuard::new();
+        clear_llm_env();
+        let inv = detect_uncached();
+        let vllm = inv.providers.iter().find(|p| p.slug == "vllm");
+        assert!(vllm.is_some(), "vllm should appear in the inventory");
+        let vllm = vllm.unwrap();
+        assert_eq!(vllm.kind, ProviderKind::OpenAI);
+        assert_eq!(vllm.base_url, "http://127.0.0.1:8000/v1");
+        assert_eq!(vllm.env_var, "VLLM_HOST");
     }
 }
