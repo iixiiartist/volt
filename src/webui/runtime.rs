@@ -196,6 +196,10 @@ pub struct Runtime {
     active_session: Arc<Mutex<Option<Uuid>>>,
     /// Capability manager from the agent. Used by `execute_gated`.
     capability_manager: Arc<crate::capability::CapabilityManager>,
+    /// Shared context store for the 3-kind vector store (Tool, Memory, Conversation).
+    /// Held on the Runtime so the doctor report and context store panel can
+    /// query entry counts without going through the agent.
+    context_store: Option<Arc<crate::context::ContextStore>>,
 }
 
 impl Runtime {
@@ -207,7 +211,7 @@ impl Runtime {
     /// builds the tool registry + embedder, instantiates the agent with
     /// streaming and approval callbacks wired in, and spawns the
     /// command-processing task. Returns a clonable handle for the UI.
-    pub async fn start() -> anyhow::Result<RuntimeHandle> {
+    pub async fn start() -> anyhow::Result<RuntimeStartResult> {
         // 1) Tracing  ~/.volt/logs/webui.log
         // `init_otel_for_tui` uses `try_init` under the hood and is
         // safe to call repeatedly; we still log file IO errors.
@@ -264,11 +268,128 @@ impl Runtime {
         let tools =
             crate::tools::setup_tools(Some(&embedder), config.database_url.as_deref()).await;
 
-        // 6) Resolve an LLM provider. `build_provider` falls back to a
-        //    generic LLM_API_KEY if the model is unknown, so this is
-        //    safe even with no env vars.
+        // 5b) Wire the ContextStore + AutoSeedWorker (ref: commands/agent_run.rs:280-320).
+        let context_store = if let Some(ref p) = pg_pool {
+            let store: Arc<crate::context::ContextStore> =
+                crate::context::ContextStore::new_with_db(PgPool::clone(p));
+            match store.hydrate_from_db(2000).await {
+                Ok(n) if n > 0 => tracing::info!("[webui] hydrated {} context entries from DB", n),
+                Ok(_) => tracing::debug!("[webui] hydrate_from_db: no entries found (fresh DB)"),
+                Err(e) => tracing::error!("[webui] hydrate_from_db failed: {:#}", e),
+            }
+            store
+        } else {
+            crate::context::ContextStore::new()
+        };
+        let (seed_channel, seed_rx) = crate::worker::create_seed_channel();
+        let cancel_for_seed = CancelToken::new();
+        crate::worker::AutoSeedWorker::new(
+            context_store.clone(),
+            embedder.clone(),
+            cancel_for_seed,
+        )
+        .spawn(seed_rx);
+        tokio::spawn(crate::worker::seed_background(
+            context_store.clone(),
+            embedder.clone(),
+            tools.clone(),
+            crate::models::SandboxPolicy {
+                timeout_ms: 5000,
+                max_stdout_bytes: 262144,
+                working_dir: None,
+            },
+            None,
+        ));
+
+        // 5c) Start optional metrics server on VOLT_METRICS_PORT (default 9100).
+        //     Exposes Prometheus-formatted `/metrics` for monitoring.
+        //     Disabled when VOLT_METRICS_PORT is set to "0" or empty.
+        let metrics_port = std::env::var("VOLT_METRICS_PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(9100);
+        if metrics_port > 0 {
+            tokio::spawn(async move {
+                let app = axum::Router::new().route(
+                    "/metrics",
+                    axum::routing::get(|| async {
+                        axum::response::IntoResponse::into_response(
+                            crate::metrics::render_prometheus(),
+                        )
+                    }),
+                );
+                let addr = format!("0.0.0.0:{}", metrics_port);
+                match tokio::net::TcpListener::bind(&addr).await {
+                    Ok(listener) => {
+                        tracing::info!("[metrics] serving Prometheus metrics on {}", addr);
+                        let _ = axum::serve(listener, app).await;
+                    }
+                    Err(e) => tracing::warn!("[metrics] failed to bind {}: {}", addr, e),
+                }
+            });
+        }
+
+        // 6) Resolve an LLM provider. We use `build_provider` (not
+        //    `try_build_provider`) here on purpose: the WebUI must
+        //    boot even with no API key so the user can enter one via
+        //    the setup wizard. `build_provider` returns a no-key
+        //    Groq provider on error; the first chat attempt will 401
+        //    and the wizard will surface. `SubmitApiKey` rebuilds
+        //    the provider once a key is entered.
         let model = config.default_model.clone();
         let (provider, _provider_kind) = crate::orchestrator::build_provider(&model, "volt-webui");
+
+        // 6b) Detect missing API key so the UI can show the setup wizard.
+        //     We still build a default provider so the runtime is fully
+        //     wired (it just won't successfully chat). The
+        //     `SubmitApiKey` command hot-swaps the provider once the
+        //     user enters a key — no app restart needed.
+        let setup_providers: Vec<crate::webui::commands::ProviderInfo> =
+            if !crate::config::has_any_llm_key() {
+                tracing::warn!("[webui] no LLM API key found — setup wizard will be shown");
+                let ollama_label = if std::env::var("OLLAMA_HOST").is_ok() {
+                    "Ollama — running locally on this machine"
+                } else {
+                    "Ollama — local models (no key needed if running locally) or cloud (needs OLLAMA_API_KEY)"
+                };
+                let ollama_env = crate::config::provider_env_var("ollama").map(String::from);
+                vec![
+                    crate::webui::commands::ProviderInfo {
+                        slug: "groq".into(),
+                        label: "Groq — fast cloud inference (free tier)".into(),
+                        env_var: crate::config::provider_env_var("groq").map(String::from),
+                        default_model: crate::config::default_model_for_provider("groq").into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "openai".into(),
+                        label: "OpenAI — GPT-4o, GPT-4o-mini".into(),
+                        env_var: crate::config::provider_env_var("openai").map(String::from),
+                        default_model: crate::config::default_model_for_provider("openai").into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "anthropic".into(),
+                        label: "Anthropic — Claude Sonnet 4.5".into(),
+                        env_var: crate::config::provider_env_var("anthropic").map(String::from),
+                        default_model: crate::config::default_model_for_provider("anthropic")
+                            .into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "nvidia".into(),
+                        label: "NVIDIA NIM — hosted open models".into(),
+                        env_var: crate::config::provider_env_var("nvidia").map(String::from),
+                        default_model: crate::config::default_model_for_provider("nvidia").into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "ollama".into(),
+                        label: ollama_label.into(),
+                        env_var: ollama_env,
+                        default_model: crate::config::default_model_for_provider("ollama").into(),
+                    },
+                ]
+            } else {
+                tracing::info!("[webui] LLM key present — no setup wizard needed");
+                Vec::new()
+            };
 
         // 7) Channels
         let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(CMD_CHANNEL_CAPACITY);
@@ -367,7 +488,9 @@ impl Runtime {
             .with_cancel(cancel_token.clone())
             .with_event_bus(event_bus.clone())
             .with_approval(approval_fn)
-            .with_stream(on_token);
+            .with_stream(on_token)
+            .with_context(context_store.clone())
+            .with_seed_channel(seed_channel);
         // Bind the SQLite pool once at startup so messages can be
         // persisted on every chat. The session_id itself is bound
         // lazily per chat (via `set_session_id` in `handle_chat`),
@@ -392,6 +515,7 @@ impl Runtime {
             event_bus,
             active_session: Arc::new(Mutex::new(None)),
             capability_manager,
+            context_store: Some(context_store),
         };
         let runtime = Arc::new(runtime);
 
@@ -402,8 +526,16 @@ impl Runtime {
             Self::command_loop(runtime_for_task, cmd_rx).await;
         });
 
+        // The UI gets the provider list via `RuntimeStartResult`
+        // (set in `state.setup_providers` synchronously in
+        // `app::Bootstrap`). No late SetupNeeded broadcast needed —
+        // it would just cause a second toast.
+
         tracing::info!("[webui] runtime started");
-        Ok(RuntimeHandle::new(runtime, cmd_tx))
+        Ok(RuntimeStartResult {
+            handle: RuntimeHandle::new(runtime, cmd_tx),
+            setup_providers,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -479,6 +611,15 @@ impl Runtime {
                 self.handle_run_workflow(pattern, agents, tasks, allow)
                     .await
             }
+            UiCommand::ListCanvasWorkflows => self.handle_list_canvas_workflows().await,
+            UiCommand::LoadCanvasWorkflow { name } => self.handle_load_canvas_workflow(name).await,
+            UiCommand::SaveCanvasWorkflow { name, graph_json } => {
+                self.handle_save_canvas_workflow(name, graph_json).await
+            }
+            UiCommand::DeleteCanvasWorkflow { name } => {
+                self.handle_delete_canvas_workflow(name).await
+            }
+            UiCommand::NewCanvasWorkflow { name } => self.handle_new_canvas_workflow(name).await,
             UiCommand::ListJobs => self.handle_list_jobs().await,
             UiCommand::CreateJob { description } => self.handle_create_job(description).await,
             UiCommand::StartJob { id, worker_id } => self.handle_start_job(id, worker_id).await,
@@ -524,6 +665,11 @@ impl Runtime {
                 self.handle_approval_response(request_id, allow, allow_session)
                     .await
             }
+            UiCommand::SubmitApiKey {
+                provider,
+                api_key,
+                model,
+            } => self.handle_submit_api_key(provider, api_key, model).await,
         }
     }
 
@@ -584,6 +730,14 @@ impl Runtime {
                         state.messages.push(m);
                     }
                 }
+            } else {
+                // DB load failed — proceed with empty history but
+                // surface a warning so the user knows prior context
+                // is missing.
+                self.emit(UiEvent::Error {
+                    source: "load_session".into(),
+                    message: "Could not load prior chat history for this session.".into(),
+                });
             }
             drop(agent);
         }
@@ -625,8 +779,13 @@ impl Runtime {
             session_id: Some(session_id),
         });
 
-        // Reset cancellation flag for this turn.
+        // Reset cancellation flag for this turn. Both flags must
+        // be cleared: the AtomicBool and the CancelToken. The token
+        // is shared with the agent and `handle_cancel_chat`
+        // permanently flips it; without this reset every chat
+        // after the first cancel would be pre-cancelled.
         self.cancel.store(false, Ordering::SeqCst);
+        self.cancel_token.reset();
 
         // Run the agent. The on_token callback (set in start()) already
         // streams `ChatChunk` events into the internal channel.
@@ -645,11 +804,34 @@ impl Runtime {
 
         match result {
             Ok(final_text) => {
-                self.emit(UiEvent::ChatComplete {
-                    final_text,
+                let len = final_text.len();
+                tracing::warn!(
+                    "[webui] ChatComplete: final_text_len={} tokens={} duration_ms={}",
+                    len,
                     tokens_used,
-                    duration_ms,
-                });
+                    duration_ms
+                );
+                // If the model returned empty content but spent tokens
+                // (i.e. it errored silently or hit context limits),
+                // surface that as a user-visible error so the empty
+                // bubble is at least explained.
+                if len == 0 && tokens_used > 0 {
+                    let detail = if tokens_used > 50_000 {
+                        format!(
+                            "The model returned an empty response — the conversation history is too long ({} tokens). Start a new session to continue.",
+                            tokens_used
+                        )
+                    } else {
+                        "The model returned an empty response. Try a different model or shorter message.".to_string()
+                    };
+                    self.emit(UiEvent::ChatError { message: detail });
+                } else {
+                    self.emit(UiEvent::ChatComplete {
+                        final_text,
+                        tokens_used,
+                        duration_ms,
+                    });
+                }
                 self.log_audit(AuditEntry {
                     id: Uuid::new_v4(),
                     timestamp: chrono::Utc::now(),
@@ -721,10 +903,17 @@ impl Runtime {
                     "output": r.output,
                     "success": r.success,
                     "duration_ms": r.duration_ms,
+                    "error": r.error,
                 }),
                 r.error,
             ),
-            Err(e) => (json!({}), Some(e.to_string())),
+            Err(e) => (
+                json!({
+                    "success": false,
+                    "error": e.to_string(),
+                }),
+                Some(e.to_string()),
+            ),
         };
         self.emit(UiEvent::ToolCallEnd {
             id: Uuid::new_v4().to_string(),
@@ -878,18 +1067,11 @@ impl Runtime {
 
     async fn handle_list_models(&self) {
         let mut models: Vec<ModelInfo> = Vec::new();
-        for provider in crate::agent::router::get_active_providers() {
-            let has_key = match provider.as_str() {
-                "groq" => std::env::var("GROQ_API_KEY").is_ok(),
-                "nvidia" => std::env::var("NVIDIA_API_KEY").is_ok(),
-                "openai" => std::env::var("OPENAI_API_KEY").is_ok(),
-                "anthropic" => std::env::var("ANTHROPIC_API_KEY").is_ok(),
-                "ollama" => {
-                    std::env::var("OLLAMA_HOST").is_ok() || std::env::var("OLLAMA_API_KEY").is_ok()
-                }
-                _ => true,
-            };
-            let (display_name, supports_tools, supports_vision) = match provider.as_str() {
+        let inventory = crate::llm::provider_detector::detect();
+        for provider in inventory.providers.iter().filter(|p| p.is_active) {
+            let slug = provider.slug.as_str();
+            let has_key = !provider.env_var.is_empty() && std::env::var(provider.env_var).is_ok();
+            let (display_name, supports_tools, supports_vision) = match slug {
                 "groq" => ("llama-3.1-8b-instant", true, false),
                 "nvidia" => ("meta/llama-3.1-70b-instruct", true, false),
                 "openai" => ("gpt-4o", true, true),
@@ -897,11 +1079,11 @@ impl Runtime {
                 "ollama" => ("phi4-mini:3.8b", false, false),
                 "llamacpp" => ("llama-3-8b-local", false, false),
                 "litertlm" => ("gemma-4-e2b", false, false),
-                _ => (provider.as_str(), true, false),
+                _ => (slug, true, false),
             };
             models.push(ModelInfo {
                 id: display_name.to_string(),
-                provider: provider.clone(),
+                provider: slug.to_string(),
                 display_name: display_name.to_string(),
                 context_window: 8192,
                 supports_tools,
@@ -942,6 +1124,10 @@ impl Runtime {
 
     async fn handle_run_doctor(&self) {
         let mut report = build_doctor_report();
+        // Populate context store entry counts from the Runtime's store.
+        if let Some(ref cs) = self.context_store {
+            report.context_entries = Some(cs.kind_counts().await);
+        }
         // Live-probe Postgres with a 2-second timeout so the doctor
         // report reflects whether the pool is actually responsive,
         // not just whether DATABASE_URL is set.
@@ -1063,18 +1249,135 @@ impl Runtime {
             pattern: pattern.clone(),
             run_id: run_id.clone(),
         });
-        match crate::commands::workflow::run(pattern.clone(), agents, tasks, None, None, allow)
-            .await
-        {
-            Ok(()) => self.emit(UiEvent::WorkflowCompleted { pattern, run_id }),
-            Err(e) => {
-                self.emit(UiEvent::WorkflowFailed {
-                    pattern,
-                    run_id,
-                    error: e.to_string(),
-                });
-                self.emit_error("run_workflow", e);
+        // Run the workflow in a background task so this handler
+        // returns immediately. The command_loop stays free to
+        // process other commands (e.g. cancel, list jobs) while
+        // the workflow runs. The run_id is the join handle's
+        // return — we ignore it here; status comes through
+        // WorkflowCompleted/WorkflowFailed events emitted by the
+        // workflow itself.
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            match crate::commands::workflow::run(pattern.clone(), agents, tasks, None, None, allow)
+                .await
+            {
+                Ok(()) => {
+                    let _ = tx.send(UiEvent::WorkflowCompleted { pattern, run_id });
+                }
+                Err(e) => {
+                    let _ = tx.send(UiEvent::WorkflowFailed {
+                        pattern,
+                        run_id,
+                        error: e.to_string(),
+                    });
+                }
             }
+        });
+    }
+
+    async fn handle_list_canvas_workflows(&self) {
+        let paths = match crate::workflow::list_all() {
+            Ok(p) => p,
+            Err(e) => {
+                self.emit_error("list_canvas_workflows", e);
+                return;
+            }
+        };
+        let mut out = Vec::new();
+        for p in paths {
+            match crate::workflow::load(&p) {
+                Ok(g) => out.push(CanvasWorkflowInfo {
+                    name: g.name.clone(),
+                    path: p.display().to_string(),
+                    node_count: g.nodes.len() as u32,
+                    edge_count: g.edges.len() as u32,
+                }),
+                Err(e) => {
+                    tracing::warn!("[webui] skipping unreadable workflow file {:?}: {}", p, e);
+                }
+            }
+        }
+        self.emit(UiEvent::CanvasWorkflowsListed { workflows: out });
+    }
+
+    async fn handle_load_canvas_workflow(&self, name: String) {
+        let dir = match crate::workflow::ensure_workflows_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.emit_error("load_canvas_workflow", e);
+                return;
+            }
+        };
+        let path = dir.join(format!("{}.workflow.json", name));
+        match crate::workflow::load(&path) {
+            Ok(g) => match g.to_pretty_json() {
+                Ok(json) => {
+                    self.emit(UiEvent::CanvasWorkflowLoaded {
+                        name,
+                        graph_json: json,
+                    });
+                }
+                Err(e) => self.emit_error("load_canvas_workflow", e),
+            },
+            Err(e) => self.emit_error("load_canvas_workflow", e),
+        }
+    }
+
+    async fn handle_save_canvas_workflow(&self, name: String, graph_json: String) {
+        let graph = match crate::workflow::WorkflowGraph::from_json(&graph_json) {
+            Ok(g) => g,
+            Err(e) => {
+                self.emit_error("save_canvas_workflow", e);
+                return;
+            }
+        };
+        // Use the requested name (so renames work) but otherwise keep
+        // the parsed structure intact.
+        let mut to_save = graph;
+        to_save.name = name.clone();
+        to_save.version = crate::workflow::WORKFLOW_FILE_VERSION;
+        to_save.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        match crate::workflow::save(&to_save) {
+            Ok(path) => {
+                self.emit(UiEvent::CanvasWorkflowSaved {
+                    name,
+                    path: path.display().to_string(),
+                });
+                // Refresh the file list so the sidebar updates.
+                let _ = self.handle_list_canvas_workflows().await;
+            }
+            Err(e) => self.emit_error("save_canvas_workflow", e),
+        }
+    }
+
+    async fn handle_delete_canvas_workflow(&self, name: String) {
+        let dir = match crate::workflow::ensure_workflows_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.emit_error("delete_canvas_workflow", e);
+                return;
+            }
+        };
+        let path = dir.join(format!("{}.workflow.json", name));
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.emit(UiEvent::CanvasWorkflowDeleted { name });
+                let _ = self.handle_list_canvas_workflows().await;
+            }
+            Err(e) => self.emit_error("delete_canvas_workflow", anyhow::anyhow!(e)),
+        }
+    }
+
+    async fn handle_new_canvas_workflow(&self, name: String) {
+        let graph = crate::workflow::WorkflowGraph::new(name.clone());
+        match graph.to_pretty_json() {
+            Ok(json) => {
+                self.emit(UiEvent::CanvasWorkflowLoaded {
+                    name,
+                    graph_json: json,
+                });
+            }
+            Err(e) => self.emit_error("new_canvas_workflow", e),
         }
     }
 
@@ -1275,6 +1578,10 @@ impl Runtime {
             );
             return;
         };
+        if let Err(e) = crate::routines::validate_action_prompt(&action_prompt) {
+            self.emit_error("create_routine", anyhow::anyhow!("{}", e));
+            return;
+        }
         let new_id = Uuid::new_v4();
         let trigger = trigger_type.unwrap_or_else(|| "cron".to_string());
         let res = sqlx::query(
@@ -1601,7 +1908,11 @@ impl Runtime {
                     actor: AuditActor::User,
                     action: AuditAction::Approval,
                     target: request_id.to_string(),
-                    result: if allow { AuditResult::Ok } else { AuditResult::Denied },
+                    result: if allow {
+                        AuditResult::Ok
+                    } else {
+                        AuditResult::Denied
+                    },
                     detail: json!({ "allow_session": allow_session }),
                     session_id: None,
                 });
@@ -1613,6 +1924,62 @@ impl Runtime {
                 );
             }
         }
+    }
+
+    /// Persist a new API key, rebuild the LLM provider, and announce
+    /// `SetupReady` so the UI can close its wizard. Returns an error
+    /// event if persistence or provider construction fails — the UI
+    /// surfaces the error and keeps the wizard open.
+    async fn handle_submit_api_key(&self, provider_slug: String, api_key: String, model: String) {
+        tracing::info!(
+            "[webui] submit_api_key: provider={} model={}",
+            provider_slug,
+            model
+        );
+
+        // 0) Reject placeholder values. The CLI does this in
+        //    `volt config set`; the WebUI must mirror that behavior.
+        if crate::llm::provider_detector::is_placeholder_key(&api_key) {
+            self.emit(UiEvent::Error {
+                source: "setup".into(),
+                message: format!(
+                    "API key for `{}` looks like a placeholder (e.g. `your_*_here`). \
+                     Paste a real key from the provider's dashboard.",
+                    provider_slug
+                ),
+            });
+            return;
+        }
+
+        // 1) Persist to volt_home()/.env and set the process env.
+        if let Err(e) = crate::config::save_api_key(&provider_slug, &api_key) {
+            tracing::error!("[webui] save_api_key failed: {}", e);
+            self.emit(UiEvent::Error {
+                source: "setup".into(),
+                message: format!("Failed to save API key: {}", e),
+            });
+            return;
+        }
+
+        // 2) Build the new provider and swap it into the agent.
+        let (new_provider, _kind) = crate::orchestrator::build_provider(&model, "volt-webui");
+        {
+            let mut agent = self.agent.lock().await;
+            agent.replace_provider(new_provider);
+        }
+
+        // 3) Update the UI's notion of the model so the header shows
+        //    the right thing.
+        {
+            if let Ok(mut cfg) = self.config.write() {
+                cfg.default_model = model.clone();
+            }
+        }
+
+        self.emit(UiEvent::SetupReady {
+            provider: provider_slug,
+            model,
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -1642,7 +2009,7 @@ impl Runtime {
 
     /// Append an entry to the audit log and emit it to the tracing
     /// subscriber. The log is bounded — oldest entries are evicted
-    /// FIFO.
+    /// FIFO. Also persists to PostgreSQL (append-only) when available.
     fn log_audit(&self, entry: AuditEntry) {
         tracing::info!(
             target: "webui.audit",
@@ -1653,13 +2020,52 @@ impl Runtime {
             entry.result
         );
         if let Ok(mut log) = self.audit_log.lock() {
-            log.push(entry);
+            log.push(entry.clone());
             if log.len() > AUDIT_LOG_CAPACITY {
                 let excess = log.len() - AUDIT_LOG_CAPACITY;
                 log.drain(0..excess);
             }
         }
+        // Persist to PostgreSQL (append-only, fire-and-forget).
+        if let Some(pg) = self.pg_pool.clone() {
+            let e = entry;
+            tokio::spawn(async move {
+                if let Err(err) = sqlx::query(
+                    "INSERT INTO audit_log (id, timestamp, actor, action, target, result, detail, session_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                )
+                .bind(e.id)
+                .bind(e.timestamp)
+                .bind(e.actor.to_string())
+                .bind(e.action.to_string())
+                .bind(e.target)
+                .bind(e.result.to_string())
+                .bind(e.detail)
+                .bind(e.session_id)
+                .execute(&*pg)
+                .await
+                {
+                    tracing::warn!("[webui] failed to persist audit entry: {}", err);
+                }
+            });
+        }
     }
+}
+
+// =============================================================================
+// RuntimeStartResult
+// =============================================================================
+
+/// Returned by [`Runtime::start`]. Bundles the clonable handle with
+/// any setup state the UI should display immediately — currently the
+/// provider list for the first-run wizard. We return this directly
+/// instead of relying on the broadcast channel so the UI can render
+/// without a race against the `subscribe()` call.
+pub struct RuntimeStartResult {
+    pub handle: RuntimeHandle,
+    /// Empty when an LLM key is already configured; populated when
+    /// the runtime started without one and the user needs to be
+    /// prompted via the setup wizard.
+    pub setup_providers: Vec<crate::webui::commands::ProviderInfo>,
 }
 
 // =============================================================================
@@ -1817,17 +2223,27 @@ fn build_doctor_report() -> DoctorReport {
         permissions_default: "Prompt".into(),
         recent_failures: 0,
         workspace_files,
+        context_entries: None,
     }
+}
+
+/// Build a `WorktreeManager` rooted at the current directory. Returns `None` if
+/// the current directory is not inside a git repository, so callers can return a
+/// safe default without having to repeat the canonicalize dance.
+async fn worktree_manager_or_none() -> Option<crate::commands::worktree::WorktreeManager> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
+        .await
+        .ok()
+        .flatten()?;
+    Some(crate::commands::worktree::WorktreeManager::new(repo_root))
 }
 
 /// Worktree helpers — wrap `WorktreeManager` so handlers stay terse.
 async fn worktree_list() -> Vec<WorktreeInfo> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = match crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd).await {
-        Ok(Some(r)) => r,
-        _ => return Vec::new(),
+    let Some(mgr) = worktree_manager_or_none().await else {
+        return Vec::new();
     };
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
     match mgr.list().await {
         Ok(items) => items
             .into_iter()
@@ -1844,49 +2260,33 @@ async fn worktree_list() -> Vec<WorktreeInfo> {
 }
 
 async fn worktree_diff_summary(branch: &str) -> anyhow::Result<String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    mgr.diff_summary(branch)
+    let mgr = worktree_manager_or_none()
         .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+    mgr.diff_summary(branch).await.map_err(anyhow::Error::from)
 }
 
 async fn worktree_merge_back(branch: &str) -> anyhow::Result<String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    mgr.merge_back(branch)
+    let mgr = worktree_manager_or_none()
         .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+    mgr.merge_back(branch).await.map_err(anyhow::Error::from)
 }
 
 async fn worktree_remove(branch: &str) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let repo_root = crate::commands::worktree::WorktreeManager::detect_repo_root(&cwd)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-    let mgr = crate::commands::worktree::WorktreeManager::new(repo_root);
-    let infos = mgr
-        .list()
+    let mgr = worktree_manager_or_none()
         .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        .ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+    let infos = mgr.list().await.map_err(anyhow::Error::from)?;
     let path = infos
         .iter()
         .find(|w| w.branch == branch)
         .map(|w| w.path.clone())
         .ok_or_else(|| anyhow::anyhow!("worktree branch {} not found", branch))?;
-    mgr.remove(&path, true)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+    mgr.remove(&path, true).await.map_err(anyhow::Error::from)
 }
 
 /// Path to the user's MCP-server config JSON file (`~/.volt/mcp_servers.json`).
 fn mcp_servers_path() -> std::path::PathBuf {
     crate::config::volt_home().join("mcp_servers.json")
 }
-

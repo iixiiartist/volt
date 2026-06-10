@@ -709,8 +709,26 @@ fn parse_stdout(event: &str, stdout: &str) -> HookResult {
                         return HookResult::Block(reason);
                     }
                     "modify" => {
-                        if let Some(args) = obj.get("args") {
-                            return HookResult::Modify(args.clone());
+                        // "modify" without an "args" field is malformed.
+                        // Before this fix, the parser silently fell
+                        // through and returned `Allow`, which is
+                        // dangerous: a hook that *intended* to modify
+                        // tool args would be ignored, and the
+                        // unmodified (potentially unsafe) args would
+                        // pass through. Treat malformed modify as a
+                        // hard error so the caller knows the hook is
+                        // broken.
+                        match obj.get("args") {
+                            Some(args) => return HookResult::Modify(args.clone()),
+                            None => {
+                                warn!(
+                                    "[hook] PreToolUse hook emitted decision=\"modify\" \
+                                     without an \"args\" object; treating as hard error"
+                                );
+                                return HookResult::Block(
+                                    "hook emitted decision=modify without args".to_string(),
+                                );
+                            }
                         }
                     }
                     "allow" => return HookResult::Allow,
@@ -1203,7 +1221,6 @@ fn count_atom_matches(inner: &Token, ci: usize, chars: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[allow(dead_code)]
     fn make_registry(defs: Vec<HookDefinition>, event: HookEvent) -> HookRegistry {
@@ -1268,18 +1285,38 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn pre_tool_use_modifies_args_via_json_stdout() {
-        let r = make_registry(
-            vec![cmd(
-                r#"echo '{"decision":"modify","args":{"command":"echo safe"}}"'"#,
-            )],
-            HookEvent::PreToolUse,
+        // Diagnostic note: if this test fails on a future CI run,
+        // the only signal we'd otherwise get is "expected ModifyArgs,
+        // got Allow" with no indication of what stdout the parser
+        // actually saw. A hook that says "modify" but the JSON
+        // parse failed, the shell mangled the output, or the parser
+        // encountered an unexpected shape would all surface as the
+        // same opaque error. To make future failures debuggable
+        // without touching the test again, we tee the hook's
+        // stdout to a tempfile and include the contents in the
+        // panic message.
+        let tmp =
+            std::env::temp_dir().join(format!("volt-hook-test-modify-{}.out", std::process::id()));
+        let tmp_str = tmp.display().to_string();
+        let _ = std::fs::remove_file(&tmp);
+        // Wrap the hook command so its stdout is both delivered to
+        // the parser (via `tee`) and captured for diagnostics.
+        let wrapped = format!(
+            r#"echo '{{"decision":"modify","args":{{"command":"echo safe"}}}}' | tee {}"#,
+            tmp_str
         );
+        let r = make_registry(vec![cmd(&wrapped)], HookEvent::PreToolUse);
         let d = r.run_pre_tool_use("bash", &serde_json::json!({})).await;
+        let captured = std::fs::read_to_string(&tmp).unwrap_or_default();
+        let _ = std::fs::remove_file(&tmp);
         match d {
             PreToolDecision::ModifyArgs { args } => {
                 assert_eq!(args["command"], "echo safe");
             }
-            other => panic!("expected ModifyArgs, got {:?}", other),
+            other => panic!(
+                "expected ModifyArgs, got {:?}; hook stdout was: {:?}",
+                other, captured
+            ),
         }
     }
 
@@ -1422,6 +1459,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_stdout_modify_without_args_blocks() {
+        // Regression: a hook that emits decision="modify" without an
+        // "args" field is malformed. Before the fix, the parser
+        // silently fell through and returned Allow, which would let
+        // the unmodified (potentially unsafe) tool args pass
+        // through. The fix: treat it as a Block with a clear
+        // diagnostic, so the operator sees the broken hook in the
+        // logs and the tool call is refused.
+        let result = parse_stdout("PreToolUse", r#"{"decision":"modify"}"#);
+        match result {
+            HookResult::Block(reason) => {
+                assert!(
+                    reason.contains("modify without args"),
+                    "expected diagnostic in reason, got: {reason}"
+                );
+            }
+            other => panic!("expected Block for malformed modify, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_config_from_toml() {
         let toml = r#"
 [pre_tool_use]
@@ -1553,10 +1611,5 @@ command = "echo a"
     }
 
     // Smoke test for the merge override behaviour with mixed project/user
-    // entries. (HashMap isn't actually used by HookConfig but is included
-    // to keep the test module compiling when other tests reference it.)
-    #[allow(dead_code)]
-    fn _unused_hashmap_import() -> HashMap<String, String> {
-        HashMap::new()
-    }
+    // entries.
 }

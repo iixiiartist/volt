@@ -47,7 +47,8 @@ pub async fn cmd_run_interactive(worktree: bool) -> anyhow::Result<()> {
     let idx = if idx > 0 { idx - 1 } else { 0 };
     let (name, _) = presets.get(idx).unwrap_or(&presets[0]).clone();
 
-    let (_, p) = preset::load_preset(&name).unwrap();
+    let (_, p) = preset::load_preset(&name)
+        .ok_or_else(|| anyhow::anyhow!("preset '{}' failed to load", name))?;
     let model_s = p
         .agent
         .as_ref()

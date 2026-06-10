@@ -8,11 +8,11 @@ This document lists every environment variable that Volt reads at runtime, organ
 
 | Variable | Description | Default | Example | Used In |
 |---|---|---|---|---|
-| `LLM_MODEL` | Model ID passed to the active provider. | `qwen/qwen3-32b` (interactive) or `llama-3.1-8b-instant` (benchmark) | `llama-3.3-70b-versatile` | `src/orchestrator.rs`, `src/commands/agent_run.rs` |
+ | `LLM_MODEL` | Model ID passed to the active provider. | *(none — app prompts or reads from .env)* | `llama-3.3-70b-versatile` | `src/orchestrator.rs`, `src/commands/agent_run.rs` |
 | `LLM_API_KEY` | Fallback API key used when a provider-specific key is not set. | *(none)* | `gsk_xxxxxxxxxxxx` | `src/orchestrator.rs`, `src/config.rs` |
 | `LLM_BASE_URL` | Override the inference endpoint (Ollama, vLLM, LM Studio, etc.). | *(none)* | `http://localhost:11434/v1` | `src/orchestrator.rs`, `src/config.rs` |
 | `LLM_MODEL_ROUTES` | JSON array of custom routing rules. Each object can contain `model`, `provider`, `base_url`, and `api_key_env`. | *(none)* | `[{"model":"custom","provider":"openai","base_url":"..."}]` | `src/orchestrator.rs` |
-| `LLM_DEFAULT_PROVIDER` | Provider slug to use when no other route matches. | `groq` | `ollama`, `nvidia`, `anthropic` | `src/orchestrator.rs` |
+| `LLM_DEFAULT_PROVIDER` | Provider slug to use when no other route matches. | *(none — ProviderDetector auto-discovers)* | `ollama`, `nvidia`, `anthropic` | `src/orchestrator.rs` |
 | `OLLAMA_HOST` | Base URL for a local Ollama instance (no API key required). | *(none)* | `http://localhost:11434` | `src/agent/router.rs` |
 | `LLAMA_CPP_HOST` | Base URL for a local llama.cpp server. | *(none)* | `http://localhost:8080` | `src/agent/router.rs` |
 | `LITERTLM_HOST` | Base URL for a local LiteRT-LM server. | *(none)* | `http://localhost:8080` | `src/agent/router.rs` |
@@ -38,12 +38,13 @@ This document lists every environment variable that Volt reads at runtime, organ
 
 | Variable | Description | Default | Example | Used In |
 |---|---|---|---|---|
-| `EMBEDDING_PROVIDER` | Backend for text embeddings. | `nvidia` | `ollama`, `openai`, `huggingface`, `moonshot`, `llamacpp` | `src/config.rs`, `src/embedding/mod.rs` |
-| `EMBEDDING_MODEL` | Model name/id for the embedding provider. | `nvidia/llama-nemotron-embed-1b-v2` | `mxbai-embed-large`, `Xenova/bge-large-en-v1.5` | `src/config.rs`, `src/embedding/providers.rs`, `src/local_embed.rs` |
-| `EMBEDDING_ENDPOINT` | Custom endpoint URL for the embedding provider. | `https://integrate.api.nvidia.com/v1/embeddings` | `http://localhost:11434/v1` | `src/config.rs`, `src/embedding/providers.rs` |
+| `EMBEDDING_PROVIDER` | Backend for text embeddings. | `local` (ONNX Runtime) | `nvidia`, `ollama`, `openai`, `huggingface` | `src/config.rs`, `src/embedding/mod.rs` |
+| `EMBEDDING_MODEL` | Model name/id for the embedding provider. | `Xenova/bge-large-en-v1.5` | `nvidia/llama-nemotron-embed-1b-v2`, `mxbai-embed-large` | `src/config.rs`, `src/embedding/providers.rs`, `src/local_embed.rs` |
+| `EMBEDDING_DIMENSION` | Vector dimension for context embeddings. Parametrizes DB schema at init. | `1024` | `384`, `768`, `1536` | `src/db/mod.rs`, `src/embedding/mod.rs` |
+| `EMBEDDING_ENDPOINT` | Custom endpoint URL for the embedding provider. | *(none — local ONNX used by default)* | `http://localhost:11434/v1` | `src/config.rs`, `src/embedding/providers.rs` |
 | `EMBEDDING_API_KEY` | API key for the embedding endpoint (fallback if provider-specific key missing). | *(none)* | `nvapi-xxxxxxxxxxxx` | `src/config.rs`, `src/embedding/providers.rs` |
-| `VOLT_ONNX_MODEL_DIR` | Local directory containing `model.onnx` + `tokenizer.json` for local ONNX embedding inference. | *(none)* | `C:\models\bge-large-en-v1.5` | `src/local_embed.rs` |
-| `HF_TOKEN` | HuggingFace token for downloading ONNX models or using the HF embedding API. | *(none)* | `hf_xxxxxxxxxxxx` | `src/embedding/providers.rs`, `src/main.rs` |
+| `VOLT_ONNX_MODEL_DIR` | Local directory containing `model.onnx` + `tokenizer.json` for local ONNX embedding inference. | *(none — uses default HF model)* | `C:\models\bge-large-en-v1.5` | `src/local_embed.rs` |
+| `HF_TOKEN` | HuggingFace token for downloading ONNX models. | *(none)* | `hf_xxxxxxxxxxxx` | `src/embedding/providers.rs`, `src/main.rs` |
 | `HUGGINGFACE_TOKEN` | Alias for `HF_TOKEN`. | *(none)* | `hf_xxxxxxxxxxxx` | `src/embedding/providers.rs` |
 
 ---
@@ -89,6 +90,7 @@ These variables are **opt-in**. Tools are only registered when the corresponding
 
 | Variable | Description | Default | Example | Used In |
 |---|---|---|---|---|
+| `VOLT_METRICS_PORT` | Port for the Prometheus metrics HTTP endpoint (set to `0` to disable). | `9100` | `9090` | `src/metrics.rs` |
 | `VOLT_REGISTRY_BASE_URL` | Base URL for the Volt agent-registry service. | `https://registry.voltagents.com/v1` | `http://localhost:8080/v1` | `src/config.rs` |
 | `VOLT_REGISTRY_TOKEN` | Bearer token for authenticated registry requests. | *(none)* | `volt_xxxxxxxxxxxx` | `src/config.rs` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for OpenTelemetry trace export. If unset, traces go to stdout. | *(none)* | `http://localhost:4317` | `src/telemetry.rs` |
@@ -102,7 +104,7 @@ These variables control agent loop features and are overridden by `.volt/config.
 | Variable | Description | Default | Example | Used In |
 |---|---|---|---|---|
 | `VOLT_USE_MTP` | Enable Multi-Token Prediction (MTP) draft model acceleration. | `false` | `true` | `src/config.rs` |
-| `VOLT_USE_COT` | Enable Chain-of-Thought prompting mode. | `false` | `true` | `src/config.rs` |
+| `VOLT_USE_COT` | Enable Chain-of-Thought prompting mode. **Deprecated — field retained for backward compat but unused.** | `false` | `true` | `src/config.rs` |
 | `VOLT_ALLOW_WRITE` | Allow the agent to use the `write` tool without prompting. | `false` | `true` | `src/config.rs` |
 | `VOLT_FRAMEWORK` | Optional agent framework identifier (e.g. `react`, `reflexion`). | *(none)* | `react` | `src/config.rs` |
 | `VOLT_MODEL_VARIANT` | Optional model variant tag (e.g. `instruct`, `chat`). | *(none)* | `instruct` | `src/config.rs` |
@@ -125,4 +127,4 @@ These variables control agent loop features and are overridden by `.volt/config.
 
 | Variable | Description | Default | Example | Used In |
 |---|---|---|---|---|
-| `DATABASE_URL` | PostgreSQL 16+ connection string with pgvector extension. **Required.** | *(none)* | `postgres://volt:volt@localhost:5432/volt` | `src/config.rs`, `src/main.rs`, tests |
+| `DATABASE_URL` | PostgreSQL 16+ connection string with pgvector extension. Schema auto-migrates on first connect — no manual `init-db`. If unset, Volt runs without persistence (sessions use SQLite). | *(none)* | `postgres://volt:volt@localhost:5432/volt` | `src/config.rs`, `src/main.rs`, tests |

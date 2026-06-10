@@ -13,6 +13,11 @@ pub use skills::*;
 pub use tools::*;
 
 use anyhow::Context;
+
+const SERIALIZATION_RETRY_MAX_ATTEMPTS: u32 = 3;
+const SERIALIZATION_RETRY_BASE_DELAY_MS: u64 = 50;
+const SERIALIZATION_RETRY_JITTER_MS: u64 = 20;
+const SQLSTATE_SERIALIZATION_FAILURE: &str = "40001";
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +37,18 @@ pub async fn build_shared_pg_pool(database_url: &str) -> anyhow::Result<Arc<PgPo
 
 pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
     let arc = build_shared_pg_pool(database_url).await?;
-    Ok(Arc::unwrap_or_clone(arc))
+    let pool = Arc::unwrap_or_clone(arc);
+    // Auto-migrate on first connect. Migrations are idempotent
+    // (CREATE INDEX IF NOT EXISTS, etc.) so re-running them is safe
+    // and fast (~5ms when no work is needed). This removes the
+    // "did you run `volt init-db`?" failure mode for first-time users.
+    if let Err(e) = init_schema(&pool).await {
+        tracing::warn!(
+            "[db] auto-migrate failed (non-fatal): {}. Run `volt migrate` to retry.",
+            e
+        );
+    }
+    Ok(pool)
 }
 
 pub async fn execute_with_serialization_retry<F, Fut, T>(mut f: F) -> anyhow::Result<T>
@@ -40,7 +56,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
 {
-    let max_attempts = 3;
+    let max_attempts = SERIALIZATION_RETRY_MAX_ATTEMPTS;
     for attempt in 0..max_attempts {
         match f().await {
             Ok(val) => return Ok(val),
@@ -48,10 +64,11 @@ where
                 let should_retry = e
                     .as_database_error()
                     .and_then(|pg_err| pg_err.code())
-                    .map(|code| code.as_ref() == "40001")
+                    .map(|code| code.as_ref() == SQLSTATE_SERIALIZATION_FAILURE)
                     .unwrap_or(false);
                 if should_retry && attempt + 1 < max_attempts {
-                    let delay_ms = 50 * (attempt as u64 + 1) + (rand::random::<u64>() % 20);
+                    let delay_ms = SERIALIZATION_RETRY_BASE_DELAY_MS * (attempt as u64 + 1)
+                        + (rand::random::<u64>() % SERIALIZATION_RETRY_JITTER_MS);
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     continue;
                 }
@@ -63,8 +80,10 @@ where
 }
 
 pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
-    let sql = include_str!("../../migrations/0001_core.sql");
-    for statement in split_sql_statements(sql) {
+    let dim = crate::embedding::embedding_dimension();
+    let sql = include_str!("../../migrations/0001_core.sql")
+        .replace("vector(1024)", &format!("vector({})", dim));
+    for statement in split_sql_statements(&sql) {
         let statement = statement.trim();
         if !statement.is_empty() {
             sqlx::query(statement).execute(pool).await?;
@@ -79,6 +98,13 @@ pub async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
     }
     let sql3 = include_str!("../../migrations/0003_storage_optimizations.sql");
     for statement in split_sql_statements(sql3) {
+        let statement = statement.trim();
+        if !statement.is_empty() {
+            sqlx::query(statement).execute(pool).await?;
+        }
+    }
+    let sql4 = include_str!("../../migrations/0004_audit_log.sql");
+    for statement in split_sql_statements(sql4) {
         let statement = statement.trim();
         if !statement.is_empty() {
             sqlx::query(statement).execute(pool).await?;

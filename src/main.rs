@@ -243,6 +243,42 @@ enum Commands {
     },
     JobsMonitor,
     RoutinesEngine,
+    /// Manage LLM provider API keys, base URLs, and on-disk config.
+    /// Replaces the previous requirement to hand-edit `.env`.
+    ///
+    ///   volt config list                    # show all providers and their status
+    ///   volt config set <slug> <key>        # write a key to .env + process env
+    ///   volt config get <slug>              # show one provider's masked key + base URL
+    ///   volt config unset <slug>            # remove a key from .env
+    ///   volt config doctor                  # provider-focused diagnostics
+    ///   volt config wizard                  # interactive setup
+    Config {
+        #[command(subcommand)]
+        subcommand: ConfigCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCmd {
+    /// List all known providers and their active/inactive status.
+    List,
+    /// Show one provider's masked key and base URL.
+    Get {
+        /// Provider slug, e.g. `groq`, `nvidia`, `openai`, `anthropic`,
+        /// `ollama`, `moonshot`, `ollama_local`, `llamacpp`, `litertlm`.
+        provider: String,
+    },
+    /// Set an API key. Writes to `volt_home()/.env` and the process env.
+    Set { provider: String, key: String },
+    /// Remove an API key from `volt_home()/.env`.
+    Unset { provider: String },
+    /// Provider-focused diagnostics. Surfaces the active set, lists
+    /// missing keys with the env var name, and explains how to enable
+    /// each provider.
+    Doctor,
+    /// Interactive first-time setup. Walks the user through choosing a
+    /// provider and pasting their key.
+    Wizard,
 }
 
 #[derive(Subcommand, Debug)]
@@ -253,6 +289,24 @@ enum JobsSubcommand {
 #[derive(Subcommand, Debug)]
 enum RoutinesSubcommand {
     List,
+    Create {
+        name: String,
+        action_prompt: String,
+        #[arg(long)]
+        cron: Option<String>,
+    },
+    Edit {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        action_prompt: Option<String>,
+        #[arg(long)]
+        cron: Option<String>,
+    },
+    Delete {
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -614,9 +668,17 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 let settings = volt::config::Settings::from_env()?;
+                let resolved_model =
+                    commands::agent_run::AgentRunOptions::model_or_default(model_name.clone());
+                if resolved_model.is_empty() {
+                    anyhow::bail!(
+                        "no model configured. Pass --model, set LLM_MODEL in .env, \
+                         or run `volt config` to choose a provider and model."
+                    );
+                }
                 commands::agent_run::run(commands::agent_run::AgentRunOptions {
                     input,
-                    model: model_name.unwrap_or_else(|| "gemma4:e4b".into()),
+                    model: resolved_model,
                     allow,
                     load_tools: None,
                     context_kinds: Vec::new(),
@@ -735,6 +797,18 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init { force, only } => {
             commands::init::run(force, only.as_deref()).await?;
         }
+        Commands::Config { subcommand } => {
+            use commands::config::ConfigSubcommand;
+            let sub = match subcommand {
+                ConfigCmd::List => ConfigSubcommand::List,
+                ConfigCmd::Get { provider } => ConfigSubcommand::Get { provider },
+                ConfigCmd::Set { provider, key } => ConfigSubcommand::Set { provider, key },
+                ConfigCmd::Unset { provider } => ConfigSubcommand::Unset { provider },
+                ConfigCmd::Doctor => ConfigSubcommand::Doctor,
+                ConfigCmd::Wizard => ConfigSubcommand::Wizard,
+            };
+            commands::config::run(sub).await?;
+        }
         Commands::Worktree { subcommand } => {
             handle_worktree_subcommand(subcommand).await?;
         }
@@ -746,13 +820,83 @@ async fn main() -> anyhow::Result<()> {
             let jobs = manager.list_jobs(None).await?;
             println!("{}", serde_json::to_string_pretty(&jobs)?);
         }
-        Commands::Routines {
-            subcommand: RoutinesSubcommand::List,
-        } => {
-            let pool = volt::db::connect(&settings.database_url).await?;
-            let routines = volt::db::list_routines(&pool).await?;
-            println!("{}", serde_json::to_string_pretty(&routines)?);
-        }
+        Commands::Routines { subcommand } => match subcommand {
+            RoutinesSubcommand::List => {
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let routines = volt::db::list_routines(&pool).await?;
+                println!("{}", serde_json::to_string_pretty(&routines)?);
+            }
+            RoutinesSubcommand::Create {
+                name,
+                action_prompt,
+                cron,
+            } => {
+                volt::routines::validate_action_prompt(&action_prompt)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let id = uuid::Uuid::new_v4();
+                let trigger_type = if cron.is_some() { "cron" } else { "manual" };
+                sqlx::query(
+                    "INSERT INTO routines (id, name, action_prompt, enabled, trigger_type, cron) VALUES ($1, $2, $3, true, $4, $5)"
+                )
+                .bind(id)
+                .bind(&name)
+                .bind(&action_prompt)
+                .bind(trigger_type)
+                .bind(cron.as_deref())
+                .execute(&pool)
+                .await?;
+                println!("Created routine {} ({})", name, id);
+            }
+            RoutinesSubcommand::Edit {
+                id,
+                name,
+                action_prompt,
+                cron,
+            } => {
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let uuid: uuid::Uuid = id
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+                if let Some(ref p) = action_prompt {
+                    volt::routines::validate_action_prompt(p)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                }
+                if let Some(n) = &name {
+                    sqlx::query("UPDATE routines SET name = $1 WHERE id = $2")
+                        .bind(n)
+                        .bind(uuid)
+                        .execute(&pool)
+                        .await?;
+                }
+                if let Some(p) = &action_prompt {
+                    sqlx::query("UPDATE routines SET action_prompt = $1 WHERE id = $2")
+                        .bind(p)
+                        .bind(uuid)
+                        .execute(&pool)
+                        .await?;
+                }
+                if let Some(c) = &cron {
+                    sqlx::query("UPDATE routines SET cron = $1 WHERE id = $2")
+                        .bind(c)
+                        .bind(uuid)
+                        .execute(&pool)
+                        .await?;
+                }
+                println!("Updated routine {}", uuid);
+            }
+            RoutinesSubcommand::Delete { id } => {
+                let pool = volt::db::connect(&settings.database_url).await?;
+                let uuid: uuid::Uuid = id
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+                sqlx::query("DELETE FROM routines WHERE id = $1")
+                    .bind(uuid)
+                    .execute(&pool)
+                    .await?;
+                println!("Deleted routine {}", uuid);
+            }
+        },
         Commands::AgentChat { .. } => {
             eprintln!("AgentChat is deprecated — use AgentRun or AgentTui");
         }

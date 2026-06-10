@@ -1,10 +1,19 @@
 pub mod anthropic;
 pub mod ollama;
 pub mod openai;
+pub mod poll_async;
 pub mod provider;
+pub mod provider_detector;
 pub mod riva;
+pub mod role_registry;
+pub mod vllm;
 pub use anthropic::AnthropicProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAIProvider;
-pub use provider::LLMProvider;
+pub use provider::{LLMProvider, ProviderKind};
+pub use provider_detector::{
+    detect as detect_providers, DetectedProvider, ProviderInventory, ProviderStatus,
+};
 pub use riva::RivaProvider;
+pub use role_registry::{ResolutionSource, RoleRegistry, RoleResolution};
+pub use vllm::VllmProvider;

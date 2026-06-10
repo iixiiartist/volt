@@ -196,6 +196,15 @@ impl ContextStore {
         }
     }
 
+    pub async fn kind_counts(&self) -> std::collections::HashMap<String, usize> {
+        let entries = self.entries.read().await;
+        let mut counts = std::collections::HashMap::new();
+        for s in entries.iter() {
+            *counts.entry(s.entry.kind.as_str().to_string()).or_default() += 1;
+        }
+        counts
+    }
+
     pub async fn len(&self) -> usize {
         self.entries.read().await.len()
     }

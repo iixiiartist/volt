@@ -63,7 +63,11 @@ pub async fn setup_tools(
         }
     }
     if let Some(emb) = embedder {
-        registry.compute_embeddings(emb).await;
+        if std::env::var("VOLT_SKIP_TOOL_EMBEDDINGS").is_ok() {
+            tracing::info!("[tools] skipping compute_embeddings (VOLT_SKIP_TOOL_EMBEDDINGS=1)");
+        } else {
+            registry.compute_embeddings(emb).await;
+        }
     }
     registry
 }
@@ -75,12 +79,9 @@ pub async fn register_all_tools() -> Arc<ToolRegistry> {
     // ── Phase 1: Core tools (always registered) ──────────────────────────
     crate::tools::groups::core::register_core_tools(&registry).await;
     crate::tools::groups::web::register_web_tools(&registry).await;
-    crate::tools::groups::memory::register_memory_tools(&registry).await;
     crate::tools::groups::data::register_csv_tools(&registry).await;
     crate::tools::groups::data::register_archive_tools(&registry).await;
     crate::tools::groups::git::register_git_tools(&registry).await;
-    crate::tools::groups::time_sequential::register_time_tools(&registry).await;
-    crate::tools::groups::time_sequential::register_sequential_tools(&registry).await;
     crate::tools::groups::llm::register_llm_tools(&registry).await;
 
     // ── Phase 2: Dynamic tools (require registry capture) ──────────────────
@@ -134,7 +135,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cli_exec_gated_without_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
 
         let registry = register_all_tools().await;
@@ -147,7 +150,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cli_query_gated_without_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
 
         let registry = register_all_tools().await;
@@ -160,7 +165,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cli_tools_available_with_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
         unsafe { std::env::set_var("VOLT_ENABLE_CLI_TOOLS", "1") }
 
@@ -177,7 +184,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_llm_tools_gated_without_env() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
 
         let registry = register_all_tools().await;
@@ -197,7 +206,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_llm_tools_available_with_env_and_binaries() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -229,7 +240,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_minimal_mode_excludes_extended_tools() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX
+            .lock()
+            .expect("ENV_MUTEX poisoned; this is a test-only lock");
         reset_env();
         unsafe { std::env::set_var("VOLT_MINIMAL_TOOLS", "1") }
 

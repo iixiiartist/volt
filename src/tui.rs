@@ -665,173 +665,8 @@ impl TuiChat {
                 }
                 SlashResult::Handled
             }
-            "/resume" => {
-                let n: Option<usize> = args.first().and_then(|s| s.parse().ok());
-                match (n, sessions_pool) {
-                    (Some(idx), Some(pool)) => {
-                        if idx < 1 {
-                            self.add_message(
-                                "system",
-                                "session numbers start at 1 — try /sessions",
-                            );
-                        } else {
-                            let pool = pool.clone();
-                            match sessions::list_sessions(&pool, idx as i64).await {
-                                Ok(items) => {
-                                    if let Some(sess) = items.into_iter().nth(idx - 1) {
-                                        match sessions::load_messages(&pool, sess.id).await {
-                                            Ok(messages) => {
-                                                let count = messages.len();
-                                                self.messages.clear();
-                                                for m in messages {
-                                                    self.messages.push(ChatMessage {
-                                                        role: m.role,
-                                                        content: m.content.as_str().to_string(),
-                                                        tool_name: m.tool_name,
-                                                        id: None,
-                                                    });
-                                                }
-                                                // Update agent's session id to the
-                                                // resumed session so subsequent turns
-                                                // append to the right row.
-                                                {
-                                                    let mut state = self.agent.state().lock().await;
-                                                    state.session_id = sess.id;
-                                                }
-                                                self.add_message(
-                                                    "system",
-                                                    &format!(
-                                                        "resumed session {} ({} messages loaded)",
-                                                        sess.id, count
-                                                    ),
-                                                );
-                                            }
-                                            Err(e) => {
-                                                self.add_message(
-                                                    "system",
-                                                    &format!("failed to load messages: {}", e),
-                                                );
-                                            }
-                                        }
-                                    } else {
-                                        self.add_message(
-                                            "system",
-                                            &format!("session {} not found — try /sessions", idx),
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    self.add_message(
-                                        "system",
-                                        &format!("failed to list sessions: {}", e),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    (Some(_), &None) => {
-                        self.add_message(
-                            "system",
-                            "sessions pool not available — run from a working directory",
-                        );
-                    }
-                    (None, _) => {
-                        self.add_message(
-                            "system",
-                            "usage: /resume <n>  (run /sessions to see the list)",
-                        );
-                    }
-                }
-                SlashResult::Handled
-            }
-            "/fork" => {
-                // `/fork [n]` — copy the first N messages of the current
-                // session into a brand-new session and switch to it.
-                // The original session is left untouched. Default: N
-                // equals the current visible message count, i.e. fork
-                // the whole conversation so far.
-                let n: Option<usize> = args.first().and_then(|s| s.parse().ok());
-                let max = self.messages.len();
-                let up_to = match n {
-                    Some(0) => {
-                        self.add_message(
-                            "system",
-                            "fork point must be 1 or greater (1-based, inclusive)",
-                        );
-                        return SlashResult::Handled;
-                    }
-                    Some(n) if n > max => {
-                        self.add_message(
-                            "system",
-                            &format!(
-                                "only {} messages available; use /fork {} (or omit n for all)",
-                                max, max
-                            ),
-                        );
-                        return SlashResult::Handled;
-                    }
-                    Some(n) => n,
-                    None => max,
-                };
-                let pool = match sessions_pool {
-                    Some(p) => p.clone(),
-                    None => {
-                        self.add_message(
-                            "system",
-                            "sessions pool not available — run from a working directory",
-                        );
-                        return SlashResult::Handled;
-                    }
-                };
-                let current_session = {
-                    let state = self.agent.state().lock().await;
-                    state.session_id
-                };
-                // Snapshot the in-memory messages first (cheap; we
-                // need them after the persist either way, and the
-                // persist below may swap `self.messages` if it fails).
-                let snapshot: Vec<ChatMessage> =
-                    self.messages.iter().take(up_to).cloned().collect();
-
-                // Persist current in-memory messages to the existing
-                // session first, so the fork reads consistent data from
-                // the database (not whatever the TUI happens to have
-                // buffered right now).
-                if let Err(e) = persist_tui_messages(&pool, current_session, &self.agent).await {
-                    self.add_message(
-                        "system",
-                        &format!("fork aborted: failed to save current session: {}", e),
-                    );
-                    return SlashResult::Handled;
-                }
-                match sessions::fork_session(&pool, current_session, up_to, None).await {
-                    Ok(new_id) => {
-                        // Switch the agent's session id to the new one
-                        // so subsequent turns append to the fork.
-                        {
-                            let mut state = self.agent.state().lock().await;
-                            state.session_id = new_id;
-                        }
-                        // Replace the visible messages with just the
-                        // forked subset (preserves their order/content).
-                        self.messages = snapshot;
-                        self.add_message(
-                            "system",
-                            &format!(
-                                "forked into new session {} ({} messages copied from {}; original session {} left intact)",
-                                new_id,
-                                up_to,
-                                current_session,
-                                current_session
-                            ),
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message("system", &format!("fork failed: {}", e));
-                    }
-                }
-                SlashResult::Handled
-            }
+            "/resume" => self.cmd_resume(&args, sessions_pool).await,
+            "/fork" => self.cmd_fork(&args, sessions_pool).await,
             "/tools" => {
                 self.add_message(
                     "system",
@@ -953,6 +788,154 @@ impl TuiChat {
         }
     }
 
+    async fn cmd_fork(
+        &mut self,
+        args: &[&str],
+        sessions_pool: &Option<sqlx::SqlitePool>,
+    ) -> SlashResult {
+        let n: Option<usize> = args.first().and_then(|s| s.parse().ok());
+        let max = self.messages.len();
+        let up_to = match n {
+            Some(0) => {
+                self.add_message(
+                    "system",
+                    "fork point must be 1 or greater (1-based, inclusive)",
+                );
+                return SlashResult::Handled;
+            }
+            Some(n) if n > max => {
+                self.add_message(
+                    "system",
+                    &format!(
+                        "only {} messages available; use /fork {} (or omit n for all)",
+                        max, max
+                    ),
+                );
+                return SlashResult::Handled;
+            }
+            Some(n) => n,
+            None => max,
+        };
+        let pool = match sessions_pool {
+            Some(p) => p.clone(),
+            None => {
+                self.add_message(
+                    "system",
+                    "sessions pool not available — run from a working directory",
+                );
+                return SlashResult::Handled;
+            }
+        };
+        let current_session = {
+            let state = self.agent.state().lock().await;
+            state.session_id
+        };
+        let snapshot: Vec<ChatMessage> = self.messages.iter().take(up_to).cloned().collect();
+
+        if let Err(e) = persist_tui_messages(&pool, current_session, &self.agent).await {
+            self.add_message(
+                "system",
+                &format!("fork aborted: failed to save current session: {}", e),
+            );
+            return SlashResult::Handled;
+        }
+        match sessions::fork_session(&pool, current_session, up_to, None).await {
+            Ok(new_id) => {
+                {
+                    let mut state = self.agent.state().lock().await;
+                    state.session_id = new_id;
+                }
+                self.messages = snapshot;
+                self.add_message(
+                    "system",
+                    &format!(
+                        "forked into new session {} ({} messages copied from {}; original session {} left intact)",
+                        new_id, up_to, current_session, current_session
+                    ),
+                );
+            }
+            Err(e) => {
+                self.add_message("system", &format!("fork failed: {}", e));
+            }
+        }
+        SlashResult::Handled
+    }
+
+    async fn cmd_resume(
+        &mut self,
+        args: &[&str],
+        sessions_pool: &Option<sqlx::SqlitePool>,
+    ) -> SlashResult {
+        let n: Option<usize> = args.first().and_then(|s| s.parse().ok());
+        match (n, sessions_pool) {
+            (Some(idx), Some(pool)) => {
+                if idx < 1 {
+                    self.add_message("system", "session numbers start at 1 — try /sessions");
+                } else {
+                    let pool = pool.clone();
+                    match sessions::list_sessions(&pool, idx as i64).await {
+                        Ok(items) => {
+                            if let Some(sess) = items.into_iter().nth(idx - 1) {
+                                match sessions::load_messages(&pool, sess.id).await {
+                                    Ok(messages) => {
+                                        let count = messages.len();
+                                        self.messages.clear();
+                                        for m in messages {
+                                            self.messages.push(ChatMessage {
+                                                role: m.role,
+                                                content: m.content.as_str().to_string(),
+                                                tool_name: m.tool_name,
+                                                id: None,
+                                            });
+                                        }
+                                        {
+                                            let mut state = self.agent.state().lock().await;
+                                            state.session_id = sess.id;
+                                        }
+                                        self.add_message(
+                                            "system",
+                                            &format!(
+                                                "resumed session {} ({} messages loaded)",
+                                                sess.id, count
+                                            ),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        self.add_message(
+                                            "system",
+                                            &format!("failed to load messages: {}", e),
+                                        );
+                                    }
+                                }
+                            } else {
+                                self.add_message(
+                                    "system",
+                                    &format!("session {} not found — try /sessions", idx),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            self.add_message("system", &format!("failed to list sessions: {}", e));
+                        }
+                    }
+                }
+            }
+            (Some(_), &None) => {
+                self.add_message(
+                    "system",
+                    "sessions pool not available — run from a working directory",
+                );
+            }
+            (None, _) => {
+                self.add_message(
+                    "system",
+                    "usage: /resume <n>  (run /sessions to see the list)",
+                );
+            }
+        }
+        SlashResult::Handled
+    }
+
     fn render_messages(&self, f: &mut Frame, area: Rect) {
         let max_width = area.width.saturating_sub(4) as usize;
         let items: Vec<ListItem> = self
@@ -1072,11 +1055,7 @@ fn color_for_tool(name: &str) -> Color {
         return Color::Magenta;
     }
     // agent orchestration
-    if n.contains("delegate")
-        || n.contains("workflow")
-        || n.contains("agent")
-        || n.contains("final_answer")
-    {
+    if n.contains("delegate") || n.contains("workflow") || n.contains("agent") {
         return Color::Cyan;
     }
     // data / query
@@ -1305,7 +1284,6 @@ mod tests {
     fn color_for_tool_buckets_agent_cyan() {
         assert_eq!(color_for_tool("delegate"), Color::Cyan);
         assert_eq!(color_for_tool("run_workflow"), Color::Cyan);
-        assert_eq!(color_for_tool("final_answer"), Color::Cyan);
     }
 
     #[test]
@@ -1349,16 +1327,11 @@ mod tests {
 
     #[test]
     fn build_item_enhanced_tool_highlights_json_result() {
-        let item = build_item_enhanced(
-            "tool",
-            r#"{"rows": 3, "status": "ok"}"#,
-            Some("json_query"),
-            80,
-        );
+        let item = build_item_enhanced("tool", r#"{"rows": 3, "status": "ok"}"#, Some("read"), 80);
         // JSON highlighting produces a wider item than a plain string
         // because the JSON content has key/string/number/punctuation
         // categories broken out into separate spans.
-        let plain = build_item_enhanced("tool", "short", Some("json_query"), 80);
+        let plain = build_item_enhanced("tool", "short", Some("read"), 80);
         assert!(item.width() >= plain.width());
     }
 

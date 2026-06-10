@@ -43,9 +43,45 @@ pub async fn delegate_task_with_cap_mgr(
     let safe_task = sanitize_prompt_input(task, MAX_TASK_CHARS);
     let safe_context = sanitize_prompt_input(context, MAX_CONTEXT_CHARS);
 
-    // Use parent agent's model; fall back to LLM_MODEL env var or Groq default
-    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into());
-    let route = resolve_provider(&model);
+    // Use parent agent's model; fall back to LLM_MODEL env var or the
+    // first active provider's default. We no longer hardcode
+    // `llama-3.1-8b-instant`; if no model resolves, we return a clear
+    // error ToolResult to the calling agent.
+    let model = std::env::var("LLM_MODEL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let inv = crate::llm::detect_providers();
+            let defaults: Vec<String> = inv
+                .active()
+                .filter_map(|p| p.default_model.map(|m| m.to_string()))
+                .collect();
+            defaults.into_iter().next()
+        });
+    let model =
+        match model {
+            Some(m) => m,
+            None => return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(
+                    "delegate has no model to use. Set LLM_MODEL in .env, or run `volt config`."
+                        .into(),
+                ),
+                duration_ms: started.elapsed().as_millis(),
+            },
+        };
+    let route = match resolve_provider(&model) {
+        Ok(r) => r,
+        Err(e) => {
+            return ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("{}", e)),
+                duration_ms: started.elapsed().as_millis(),
+            }
+        }
+    };
     let provider: Box<dyn crate::llm::LLMProvider> = match route.kind {
         ProviderKind::Anthropic => Box::new(AnthropicProvider::new(
             route.api_key,
@@ -103,7 +139,7 @@ pub async fn delegate_task_with_cap_mgr(
     }
 
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(300),
         sub_agent.run(&safe_task),
     )
     .await;

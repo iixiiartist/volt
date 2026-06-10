@@ -19,6 +19,13 @@ impl Agent {
     pub fn state(&self) -> &Arc<Mutex<AgentState>> {
         &self.state
     }
+
+    /// Swap the LLM provider. Used by the webui's setup wizard when the
+    /// user enters an API key — we rebuild the provider with the new
+    /// credentials so subsequent chats work without restarting the app.
+    pub fn replace_provider(&mut self, provider: Box<dyn LLMProvider>) {
+        self.provider = provider;
+    }
 }
 
 impl Agent {

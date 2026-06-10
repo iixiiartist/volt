@@ -4,7 +4,7 @@
 //! 2. **Multi-Agent Orchestration** — Parallel, Pipeline, Supervisor patterns
 //! 3. **Tool Registry Intelligence** — Semantic search, GraphRAG augmentation, permission levels
 //! 4. **Context Store** — Composite scoring, semantic dedup, quota eviction
-//! 5. **Agent Loop** — System prompt injection, final_answer termination, mode-aware behavior
+//! 5. **Agent Loop** — System prompt injection, iteration limits, mode-aware behavior
 //! 6. **Per-Agent Mode Assignment** — Each agent in a workflow runs its own context profile
 //!
 //! All tests use mock providers — no API keys or network calls required.
@@ -179,33 +179,15 @@ fn autonomous_config() -> AgentConfig {
 }
 
 #[tokio::test]
-async fn test_final_answer_terminates_agent_loop_and_returns_answer() {
-    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_calls(
-        vec![ToolCall {
-            id: "call_1".into(),
-            name: "final_answer".into(),
-            arguments: serde_json::json!({"answer": "42 is the answer"}),
-        }],
+async fn test_text_only_response_terminates_agent_loop() {
+    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+        "42 is the answer",
     )]));
     let registry = volt::test_utils::test_tool_registry().await;
-    registry
-        .register(
-            "final_answer",
-            "Submit final answer and terminate",
-            serde_json::json!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}),
-            "test",
-            Arc::new(|args| {
-                Box::pin(async move {
-                    let answer = args["answer"].as_str().unwrap_or("");
-                    ToolResult { success: true, output: answer.to_string(), error: None, duration_ms: 0 }
-                })
-            }),
-        )
-        .await;
 
     let agent = Agent::new(precision_config(), provider, registry).await;
     let result = agent.run("What is the meaning of life?").await;
-    assert!(result.is_ok(), "final_answer should return Ok");
+    assert!(result.is_ok(), "text-only response should return Ok");
     assert_eq!(result.unwrap(), "42 is the answer");
 }
 

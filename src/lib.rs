@@ -22,6 +22,7 @@ pub mod leak_detector;
 pub mod llm;
 pub mod local_embed;
 pub mod mcp;
+pub mod metrics;
 pub mod models;
 pub mod network_policy;
 pub mod orchestrator;
@@ -44,6 +45,7 @@ pub mod vector_index;
 #[cfg(feature = "webui")]
 pub mod webui;
 pub mod worker;
+pub mod workflow;
 
 #[cfg(any(test, feature = "testutils"))]
 pub mod test_utils;
@@ -74,6 +76,23 @@ pub fn http_client() -> reqwest::Client {
                 .expect("global reqwest client build must succeed")
         })
         .clone()
+}
+
+/// Returns a private reqwest::Client with a custom per-request timeout, sharing
+/// none of the global pool. Use only when an endpoint needs a different timeout
+/// than the default (e.g. short-poll endpoints). Prefer `http_client()` otherwise.
+pub fn http_client_with_timeout(timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .unwrap_or_default()
+}
+
+/// Returns the current working directory, or an empty PathBuf if it cannot be
+/// determined. This is the most common pattern in the codebase; centralizing
+/// the fallback avoids passing a meaningless empty path downstream.
+pub fn current_dir_or_empty() -> std::path::PathBuf {
+    std::env::current_dir().unwrap_or_default()
 }
 
 /// Cosine similarity between two vectors of equal length.

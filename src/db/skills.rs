@@ -3,7 +3,13 @@ use anyhow::Context;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+/// A skill row loaded from the skills table.
+///
+/// `#[non_exhaustive]` prevents downstream consumers from destructuring by
+/// name; new columns can be added without breaking semver. `Clone` is
+/// retained because skill entries are cloned into the context store.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SkillEntry {
     pub id: Uuid,
     pub name: String,
@@ -13,6 +19,33 @@ pub struct SkillEntry {
     pub mcp_servers: Vec<String>,
     pub source_path: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl SkillEntry {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+    pub fn mcp_servers(&self) -> &[String] {
+        &self.mcp_servers
+    }
+    pub fn source_path(&self) -> Option<&str> {
+        self.source_path.as_deref()
+    }
+    pub fn created_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.created_at
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

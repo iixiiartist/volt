@@ -19,18 +19,21 @@ impl MtpTool {
     }
 
     /// Run MTP: draft model generates candidate tokens, full model verifies.
-    pub async fn run_with_draft(&self, model_path: &str, prompt: &str) -> anyhow::Result<String> {
-        let draft_model = format!("{}.draft", model_path);
-
+    pub async fn run_with_draft(
+        &self,
+        draft_model: &str,
+        full_model: &str,
+        prompt: &str,
+    ) -> anyhow::Result<String> {
         // Run draft model to generate candidates
         let draft_output = match self.framework.as_str() {
             "litertlm" => {
                 let tool = LiteRTTool::new(self.draft_binary.clone());
-                tool.run(&draft_model, prompt, 128).await?
+                tool.run(draft_model, prompt, 128).await?
             }
             "llamacpp" => {
                 let tool = LlamaCppTool::new(self.draft_binary.clone());
-                tool.run(&draft_model, prompt, 512).await?
+                tool.run(draft_model, prompt, 512).await?
             }
             _ => return Err(anyhow::anyhow!("Unsupported framework: {}", self.framework)),
         };
@@ -39,11 +42,11 @@ impl MtpTool {
         let full_output = match self.framework.as_str() {
             "litertlm" => {
                 let tool = LiteRTTool::new(self.full_binary.clone());
-                tool.run(model_path, &draft_output, 256).await?
+                tool.run(full_model, &draft_output, 256).await?
             }
             "llamacpp" => {
                 let tool = LlamaCppTool::new(self.full_binary.clone());
-                tool.run(model_path, &draft_output, 4096).await?
+                tool.run(full_model, &draft_output, 4096).await?
             }
             _ => return Err(anyhow::anyhow!("Unsupported framework: {}", self.framework)),
         };

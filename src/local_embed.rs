@@ -24,12 +24,11 @@ use tokenizers::Tokenizer;
 ///
 /// Requires the `tools-local-embeddings` feature flag and MSVC toolchain.
 ///
-/// Default model: Xenova/bge-small-en-v1.5 (384d, int8 quantized ONNX, ~60MB).
-/// Output is padded to 1024d by normalize_dims().
+/// Default model: Xenova/bge-large-en-v1.5 (1024d, int8 quantized ONNX, ~337MB).
 ///
 /// Override with:
 ///   VOLT_ONNX_MODEL_DIR  — path to directory with model.onnx + tokenizer.json
-///   EMBEDDING_MODEL      — HuggingFace model ID (default: Xenova/bge-small-en-v1.5)
+///   EMBEDDING_MODEL      — HuggingFace model ID (default: Xenova/bge-large-en-v1.5)
 #[cfg(feature = "tools-local-embeddings")]
 pub struct LocalEmbedder {
     session: Mutex<Session>,
@@ -117,7 +116,7 @@ impl LocalEmbedder {
         let token_type_ids_tensor = Tensor::from_array(token_type_ids)?;
 
         let (seq, hidden, data) = {
-            let mut session_lock = self.session.lock().unwrap();
+            let mut session_lock = self.session.lock().expect("ort session mutex poisoned");
             let outputs = session_lock.run(ort::inputs![
                 "input_ids" => input_ids_tensor,
                 "attention_mask" => attention_mask_tensor,
@@ -224,7 +223,7 @@ impl LocalEmbedder {
         let token_type_ids_tensor = Tensor::from_array(token_type_ids)?;
 
         let (max_seq, hidden, data) = {
-            let mut session_lock = self.session.lock().unwrap();
+            let mut session_lock = self.session.lock().expect("ort session mutex poisoned");
             let outputs = session_lock.run(ort::inputs![
                 "input_ids" => input_ids_tensor,
                 "attention_mask" => attention_mask_tensor,
@@ -305,7 +304,7 @@ fn resolve_model_dir() -> anyhow::Result<std::path::PathBuf> {
     }
 
     let model_id =
-        std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "Xenova/bge-small-en-v1.5".into());
+        std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "Xenova/bge-large-en-v1.5".into());
 
     let api = hf_hub::api::sync::Api::new()?;
     let repo = api.model(model_id);

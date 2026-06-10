@@ -35,7 +35,12 @@ pub struct AgentConfig {
     pub context_kind_quotas: std::collections::HashMap<crate::context::ContextKind, usize>,
     #[serde(default)]
     pub use_mtp: bool,
-    #[serde(default)]
+    /// Chain-of-Thought planning. Removed: the planning call produced
+    /// output that was never used to constrain the actual loop, and
+    /// cost an LLM call per `agent.run`. The field is kept for
+    /// backward compatibility (deserializing old TOML/JSON) but is
+    /// ignored at runtime.
+    #[serde(default, skip_serializing)]
     pub use_cot: bool,
     #[serde(default)]
     pub allow_write: bool,
@@ -60,21 +65,20 @@ pub struct AgentConfig {
     pub blueprint_path: Option<String>,
 }
 
+/// Default context kinds for the 3-Kind Core Context Store.
+///
+/// Reframed for the streamlined architecture: per-turn retrieval now
+/// covers only Tool, Memory, and Conversation. System prompts,
+/// policies, permissions, and security are loaded once at session
+/// startup and refreshed only on mtime change. The full 12-kind
+/// enum is retained for backward compatibility with persisted data,
+/// but is no longer seeded or queried by default.
 pub fn default_context_kinds() -> Vec<crate::context::ContextKind> {
     use crate::context::ContextKind;
     vec![
         ContextKind::Tool,
-        ContextKind::Skill,
         ContextKind::Memory,
         ContextKind::Conversation,
-        ContextKind::AgentRun,
-        ContextKind::Artifact,
-        ContextKind::SystemPrompt,
-        ContextKind::FewShot,
-        ContextKind::Policy,
-        ContextKind::Permission,
-        ContextKind::Security,
-        ContextKind::MCPConfig,
     ]
 }
 
@@ -352,6 +356,10 @@ pub struct Usage {
 pub struct PromptTokensDetails {
     #[serde(default)]
     pub cached_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_tokens: Option<u64>,
 }
 
 /// Per-model usage breakdown from Compound System responses.
@@ -704,6 +712,13 @@ impl CancelToken {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clear the cancelled flag so the same token can be reused for
+    /// the next operation. Used by the webui runtime to avoid leaking
+    /// cancellation state across chat turns.
+    pub fn reset(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

@@ -116,17 +116,35 @@ impl SeedEvent {
 
 // ── MPSC channel wrapper ───────────────────────────────────────────────────
 
+/// Bounded channel capacity for the seed-event bus. Adversarial agent loops
+/// (or pathological retries) could otherwise OOM by emitting unlimited events.
+const SEED_CHANNEL_CAPACITY: usize = 256;
+
 /// Clone-able sender for the MPSC channel from agent loop to background worker.
-/// Non-blocking — silently logs warnings if the worker has stopped.
+/// Non-blocking — drops events with a warning if the buffer is full or the
+/// worker has stopped.
 #[derive(Clone)]
 pub struct SeedChannel {
-    tx: mpsc::UnboundedSender<SeedEvent>,
+    tx: mpsc::Sender<SeedEvent>,
 }
 
 impl SeedChannel {
+    /// `try_send` is non-blocking. If the buffer is full we drop the event
+    /// (with a warning) rather than block the agent loop. The seed channel
+    /// is best-effort telemetry; losing events is preferable to backpressuring
+    /// tool execution.
     pub fn send(&self, event: SeedEvent) {
-        if let Err(e) = self.tx.send(event) {
-            tracing::warn!("[volt worker] seed channel closed, event dropped: {:?}", e);
+        match self.tx.try_send(event) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(
+                    "[volt worker] seed channel full ({}), event dropped",
+                    SEED_CHANNEL_CAPACITY
+                );
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!("[volt worker] seed channel closed, event dropped");
+            }
         }
     }
 
@@ -178,8 +196,8 @@ impl SeedChannel {
     }
 }
 
-pub fn create_seed_channel() -> (SeedChannel, mpsc::UnboundedReceiver<SeedEvent>) {
-    let (tx, rx) = mpsc::unbounded_channel();
+pub fn create_seed_channel() -> (SeedChannel, mpsc::Receiver<SeedEvent>) {
+    let (tx, rx) = mpsc::channel(SEED_CHANNEL_CAPACITY);
     (SeedChannel { tx }, rx)
 }
 
@@ -211,7 +229,7 @@ impl AutoSeedWorker {
         }
     }
 
-    pub fn spawn(self, mut rx: mpsc::UnboundedReceiver<SeedEvent>) {
+    pub fn spawn(self, mut rx: mpsc::Receiver<SeedEvent>) {
         tokio::spawn(async move {
             info!("[volt worker] auto-seed daemon started");
 
@@ -258,7 +276,13 @@ impl AutoSeedWorker {
                         let text = format!("{}: {}", entry.kind.as_str(), entry.content);
                         async move {
                             let _permit = sem.acquire().await.ok();
-                            let emb = embedder.embed_description(&text).await.ok();
+                            let emb = match embedder.embed_description(&text).await {
+                                Ok(e) => Some(e),
+                                Err(e) => {
+                                    tracing::warn!("[worker] embedder failed for entry: {}", e);
+                                    None
+                                }
+                            };
                             (entry.clone(), emb)
                         }
                     })
@@ -340,7 +364,13 @@ impl AutoSeedWorker {
                 let text = format!("{}: {}", entry.kind.as_str(), entry.content);
                 async move {
                     let _permit = sem.acquire().await.ok();
-                    let emb = embedder.embed_description(&text).await.ok();
+                    let emb = match embedder.embed_description(&text).await {
+                        Ok(e) => Some(e),
+                        Err(e) => {
+                            tracing::warn!("[worker] embedder failed: {}", e);
+                            None
+                        }
+                    };
                     (entry.clone(), emb)
                 }
             })
@@ -366,7 +396,28 @@ impl AutoSeedWorker {
 // ── Auto-seed pre-warm: all context fields ─────────────────────────────────
 
 pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &EmbeddingClient) {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    seed_from_workspace_at(store, embedder, None).await
+}
+
+/// Like `seed_from_workspace` but with an explicit workspace directory.
+/// When `workspace` is `None`, the current working directory is used.
+/// Seeding is silently skipped when the workspace directory does not exist.
+pub async fn seed_from_workspace_at(
+    store: &Arc<ContextStore>,
+    embedder: &EmbeddingClient,
+    workspace: Option<&std::path::Path>,
+) {
+    let cwd = workspace.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    });
+
+    if workspace.is_some_and(|p| !p.exists()) {
+        tracing::info!(
+            "[worker] workspace path {:?} does not exist — skipping workspace seed",
+            workspace.unwrap()
+        );
+        return;
+    }
 
     let seed_files = [
         ("SOUL.md", ContextKind::SystemPrompt),
@@ -374,26 +425,47 @@ pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &Embedding
         ("AGENTS.md", ContextKind::Policy),
     ];
 
+    let leak_detector = crate::leak_detector::LeakDetector::new();
     let mut entries: Vec<ContextEntry> = Vec::new();
+    let mut leaks_found = 0usize;
 
     for (filename, kind) in &seed_files {
         let path = cwd.join(filename);
         if path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                entries.push(ContextEntry {
-                    id: uuid::Uuid::new_v4(),
-                    kind: *kind,
-                    content,
-                    embedding: None,
-                    metadata: serde_json::json!({"source": filename}),
-                    frequency: 0,
-                    success_rate: 1.0,
-                    usage_count: 0,
-                    last_used_at: chrono::Utc::now(),
-                    created_at: chrono::Utc::now(),
-                });
+                let scan = leak_detector.scan(&content);
+                if scan.found.is_empty() {
+                    entries.push(ContextEntry {
+                        id: uuid::Uuid::new_v4(),
+                        kind: *kind,
+                        content,
+                        embedding: None,
+                        metadata: serde_json::json!({"source": filename}),
+                        frequency: 0,
+                        success_rate: 1.0,
+                        usage_count: 0,
+                        last_used_at: chrono::Utc::now(),
+                        created_at: chrono::Utc::now(),
+                    });
+                } else {
+                    leaks_found += scan.found.len();
+                    tracing::warn!(
+                        "[worker] skipped seeding {} due to {} leaks (categories: {:?})",
+                        filename,
+                        scan.found.len(),
+                        scan.found.iter().map(|m| &m.category).collect::<Vec<_>>()
+                    );
+                }
             }
         }
+    }
+
+    if leaks_found > 0 {
+        tracing::warn!(
+            "[worker] workspace seed skipped {} files containing {} potential secret leaks",
+            leaks_found,
+            leaks_found
+        );
     }
 
     if !entries.is_empty() {
@@ -407,13 +479,16 @@ pub async fn seed_from_workspace(store: &Arc<ContextStore>, embedder: &Embedding
 }
 
 /// Spawn background seeding: workspace, tool intents, permissions, security.
+/// `workspace` is an optional path to the workspace directory. When `None`,
+/// the current directory is used.
 pub async fn seed_background(
     store: Arc<ContextStore>,
     embedder: EmbeddingClient,
     tools: Arc<ToolRegistry>,
     sandbox: SandboxPolicy,
+    workspace: Option<std::path::PathBuf>,
 ) {
-    seed_from_workspace(&store, &embedder).await;
+    seed_from_workspace_at(&store, &embedder, workspace.as_deref()).await;
     seed_tool_intents(&store, &tools, &embedder).await;
     seed_permissions(&store, &tools, &embedder).await;
     seed_security_policy(&store, &sandbox, &embedder).await;
@@ -493,7 +568,13 @@ pub async fn seed_permissions(
             def.name,
             def.description,
         );
-        let embedding = embedder.embed_description(&content).await.ok();
+        let embedding = match embedder.embed_description(&content).await {
+            Ok(e) => Some(e),
+            Err(e) => {
+                tracing::warn!("[worker] embedder failed for skill content: {}", e);
+                None
+            }
+        };
         entries.push(ContextEntry {
             id: uuid::Uuid::new_v4(),
             kind: ContextKind::Permission,

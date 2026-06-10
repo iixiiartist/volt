@@ -24,7 +24,8 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         worktree,
     } = options;
 
-    let (provider, provider_kind) = crate::orchestrator::build_provider(&model, "volt-agent");
+    let (provider, provider_kind) = crate::orchestrator::try_build_provider(&model, "volt-agent")
+        .map_err(|e| anyhow::anyhow!("{}\n{}", e, e.hint()))?;
     let embedder = EmbeddingClient::new_smart().await;
     let tools = crate::tools::setup_tools(Some(&embedder), None).await;
 
@@ -63,7 +64,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
                 let wt_id = uuid::Uuid::new_v4();
                 match mgr.create_for_session(wt_id).await {
                     Ok(info) => {
-                        eprintln!(
+                        tracing::info!(
                             "[worktree] isolated to {} (branch {})",
                             info.path.display(),
                             info.branch
@@ -71,17 +72,17 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
                         info.path
                     }
                     Err(e) => {
-                        eprintln!("[worktree] failed: {} — using cwd", e);
+                        tracing::warn!("[worktree] failed: {} - using cwd", e);
                         cwd
                     }
                 }
             }
             Ok(None) => {
-                eprintln!("[worktree] not in a git repo — --worktree ignored");
+                tracing::info!("[worktree] not in a git repo - --worktree ignored");
                 std::env::current_dir().unwrap_or_default()
             }
             Err(e) => {
-                eprintln!("[worktree] detect failed: {} — using cwd", e);
+                tracing::warn!("[worktree] detect failed: {} - using cwd", e);
                 std::env::current_dir().unwrap_or_default()
             }
         }
@@ -107,6 +108,7 @@ pub async fn run(options: AgentTuiOptions) -> anyhow::Result<()> {
         embedder.clone(),
         tools.clone(),
         settings.sandbox_policy.clone(),
+        None,
     ));
 
     if let Ok(pool) = db::connect(&settings.database_url).await {
@@ -215,9 +217,29 @@ pub struct AgentTuiOptions {
 }
 
 impl AgentTuiOptions {
+    /// Same resolution order as `AgentRunOptions::model_or_default`.
     pub fn model_or_default(model: Option<String>) -> String {
-        model.unwrap_or_else(|| {
-            std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
-        })
+        if let Some(m) = model {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        if let Ok(m) = std::env::var("LLM_MODEL") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        if let Ok(m) = std::env::var("LLM_DEFAULT_MODEL") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        let inv = crate::llm::detect_providers();
+        for p in inv.active() {
+            if let Some(default) = p.default_model {
+                return default.to_string();
+            }
+        }
+        String::new()
     }
 }

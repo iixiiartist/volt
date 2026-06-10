@@ -58,6 +58,7 @@ impl AgentMode {
 pub mod agent;
 pub mod agent_run;
 pub mod agent_tui;
+pub mod config;
 pub mod daemon;
 pub mod doctor;
 pub mod eval;

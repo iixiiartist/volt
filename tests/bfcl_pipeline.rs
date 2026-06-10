@@ -11,7 +11,8 @@ const DISTRACTOR_COUNT: usize = 50;
 const TOP_K: usize = 8;
 
 fn build_provider() -> Box<dyn LLMProvider> {
-    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant");
+    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant")
+        .expect("bfcl_pipeline: configure an LLM provider (e.g. GROQ_API_KEY) to run this test");
     Box::new(OpenAIProvider::new(
         route.api_key,
         route.base_url,
@@ -293,6 +294,11 @@ async fn test_bfcl_voltr_pipeline() {
         println!("  --- {} RESULTS ---", mode.to_uppercase());
         println!("  Accuracy: {}/{} = {:.1}%", correct, total, pct);
         println!("  Avg prompt tokens: {:.0}", avg_tok);
+
+        assert!(total > 0, "bfcl_pipeline: no cases were evaluated");
+        if std::env::var("VOLT_BFCL_REQUIRE_PASS").as_deref() == Ok("1") {
+            assert!(correct > 0, "bfcl_pipeline {}: 0/{} correct", mode, total);
+        }
     }
 
     println!("\n{}", "=".repeat(70));

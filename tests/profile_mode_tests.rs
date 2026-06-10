@@ -1,8 +1,7 @@
 //! v0.3.0 Profile mode integration tests.
-//! Validates the exact context kind sets, final_answer termination,
+//! Validates the exact context kind sets, tool call loop termination,
 //! and the "Agent Tax" tradeoff documented in paper §4.5.
 
-use std::sync::Arc;
 use volt::agent::Agent;
 use volt::commands::AgentMode;
 use volt::context::ContextKind;
@@ -136,31 +135,14 @@ fn balanced_config() -> AgentConfig {
     }
 }
 
-// ── final_answer termination test ───────────────────────────────────
+// ── text-only termination test ──────────────────────────────────────
 
 #[tokio::test]
-async fn test_final_answer_terminates_agent_loop() {
-    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_calls(
-        vec![ToolCall {
-            id: "call_1".into(),
-            name: "final_answer".into(),
-            arguments: serde_json::json!({"answer": "42 is the answer"}),
-        }],
+async fn test_text_only_response_terminates_agent_loop() {
+    let provider = Box::new(MockLLMProvider::new(vec![MockLLMProvider::tool_result(
+        "42 is the answer",
     )]));
     let registry = volt::test_utils::test_tool_registry().await;
-    // Register final_answer as a tool so the agent can call it
-    registry.register(
-        "final_answer",
-        "Submit final answer and terminate",
-        serde_json::json!({"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}),
-        "test",
-        Arc::new(|args| {
-            Box::pin(async move {
-                let answer = args["answer"].as_str().unwrap_or("");
-                ToolResult { success: true, output: answer.to_string(), error: None, duration_ms: 0 }
-            })
-        }),
-    ).await;
 
     let agent = Agent::new(precision_config(), provider, registry).await;
     let result = agent.run("What is the meaning of life?").await;

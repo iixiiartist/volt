@@ -105,9 +105,8 @@ pub fn build_default_tool_graph(graph: &ToolGraph) {
     graph.add_relationship("edit", "write", 0.7);
 
     // Web relationships
-    graph.add_relationship("web_fetch", "web_scrape", 0.9);
-    graph.add_relationship("web_fetch", "web_scrape_all", 0.8);
-    graph.add_relationship("web_scrape", "web_fetch", 0.5);
+    graph.add_relationship("web_fetch", "browser_extract", 0.7);
+    graph.add_relationship("web_fetch", "ollama_web_fetch", 0.6);
 
     // Code workflow
     graph.add_relationship("read", "bash", 0.6);
@@ -115,14 +114,5 @@ pub fn build_default_tool_graph(graph: &ToolGraph) {
     graph.add_relationship("bash", "read", 0.4);
 
     // Data tools
-    graph.add_relationship("json_validate", "json_query", 0.8);
-    graph.add_relationship("json_query", "json_prettify", 0.5);
     graph.add_relationship("csv_read", "csv_write", 0.8);
-
-    // Git workflow
-    graph.add_relationship("git_status", "git_diff_unstaged", 0.9);
-    graph.add_relationship("git_diff_unstaged", "git_add", 0.8);
-    graph.add_relationship("git_add", "git_commit", 0.9);
-    graph.add_relationship("git_diff_staged", "git_commit", 0.7);
-    graph.add_relationship("git_log", "git_show", 0.8);
 }

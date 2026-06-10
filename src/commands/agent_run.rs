@@ -49,7 +49,8 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         };
     }
 
-    let (provider, provider_kind) = orchestrator::build_provider(&model, "volt-agent");
+    let (provider, provider_kind) = orchestrator::try_build_provider(&model, "volt-agent")
+        .map_err(|e| anyhow::anyhow!("{}\n{}", e, e.hint()))?;
     let cancel = CancelToken::new();
     let c = cancel.clone();
     tokio::spawn(async move {
@@ -124,7 +125,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
                 "[router] routing task across {} blueprint(s)...",
                 blueprints.len()
             );
-            match crate::agent::router::route_task(&input, &blueprints, &*provider).await {
+            match crate::agent::router::route_task(&input, &blueprints).await {
                 Some(bp) => {
                     chat!("[router] selected blueprint: {} ({})", bp.id, bp.name);
                     let paths = crate::agent::router::discover_blueprints();
@@ -192,6 +193,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         std::env::current_dir().unwrap_or_default()
     };
 
+    let ws_path = workspace_root.clone();
     let mut agent = Agent::new(config, provider, tools_for_agent)
         .await
         .with_workspace(workspace_root)
@@ -281,7 +283,8 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         let store = ContextStore::new_with_db(p.clone());
         match store.hydrate_from_db(2000).await {
             Ok(n) if n > 0 => chat!("[context] hydrated {} entries from DB", n),
-            _ => {}
+            Ok(_) => chat!("[context] hydrate: no entries found (fresh DB)"),
+            Err(e) => tracing::error!("[context] hydrate_from_db failed: {:#}", e),
         }
         store
     } else {
@@ -317,6 +320,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
         embedder.clone(),
         tools_for_seed.clone(),
         settings.sandbox_policy.clone(),
+        Some(ws_path),
     ));
 
     chat!(
@@ -376,7 +380,7 @@ pub async fn run(options: AgentRunOptions) -> anyhow::Result<()> {
                 }
                 None => {
                     // Truly empty: just print the error to stderr.
-                    eprintln!("error: {}", e);
+                    tracing::error!("error: {}", e);
                 }
             }
         }
@@ -443,10 +447,10 @@ async fn load_tool_stubs(
                     }
                 }
             }
-            eprintln!("[tools] loaded {} BFCL stubs from {}", count, path);
+            tracing::info!("[tools] loaded {} BFCL stubs from {}", count, path);
             tools.compute_embeddings(embedder).await;
         }
-        Err(e) => eprintln!("[tools] failed to load {}: {}", path, e),
+        Err(e) => tracing::warn!("[tools] failed to load {}: {}", path, e),
     }
 }
 
@@ -535,9 +539,41 @@ pub struct AgentRunOptions {
 }
 
 impl AgentRunOptions {
+    /// Resolve the model name. Resolution order:
+    /// 1. Explicit `--model` flag
+    /// 2. `LLM_MODEL` env var
+    /// 3. `LLM_DEFAULT_MODEL` env var
+    /// 4. The first active provider's `default_model` (from
+    ///    `provider_detector`)
+    ///
+    /// If none of the above yield a value, this returns an empty
+    /// string. The caller is expected to detect that and surface a
+    /// "no model configured" error to the user — we no longer silently
+    /// substitute `llama-3.1-8b-instant`, which masked configuration
+    /// errors.
     pub fn model_or_default(model: Option<String>) -> String {
-        model.unwrap_or_else(|| {
-            std::env::var("LLM_MODEL").unwrap_or_else(|_| "llama-3.1-8b-instant".into())
-        })
+        if let Some(m) = model {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        if let Ok(m) = std::env::var("LLM_MODEL") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        if let Ok(m) = std::env::var("LLM_DEFAULT_MODEL") {
+            if !m.trim().is_empty() {
+                return m;
+            }
+        }
+        // Last resort: the first active provider's default model.
+        let inv = crate::llm::detect_providers();
+        for p in inv.active() {
+            if let Some(default) = p.default_model {
+                return default.to_string();
+            }
+        }
+        String::new()
     }
 }

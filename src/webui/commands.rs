@@ -89,6 +89,23 @@ pub enum UiCommand {
         allow: bool,
     },
 
+    /// Load the list of saved workflow files from disk.
+    ListCanvasWorkflows,
+
+    /// Load a specific workflow file into the canvas editor.
+    LoadCanvasWorkflow { name: String },
+
+    /// Save the current canvas state as a workflow file. The body is
+    /// the serialized `WorkflowGraph` JSON. If `name` matches an
+    /// existing file, that file is overwritten.
+    SaveCanvasWorkflow { name: String, graph_json: String },
+
+    /// Delete a workflow file.
+    DeleteCanvasWorkflow { name: String },
+
+    /// Create a new empty workflow in the canvas editor.
+    NewCanvasWorkflow { name: String },
+
     /// List scheduled jobs.
     ListJobs,
 
@@ -159,6 +176,21 @@ pub enum UiCommand {
 
     /// Liveness probe.
     Ping,
+
+    /// Persist a newly-entered API key. The runtime writes the value
+    /// to `volt_home()/.env` (so it survives restarts), sets it in the
+    /// process environment, and rebuilds the LLM provider. Emitted
+    /// back to the UI as a `SetupReady` event on success.
+    SubmitApiKey {
+        /// Provider slug, e.g. "groq", "openai", "anthropic", "nvidia",
+        /// "ollama". The runtime maps this to the correct env var name.
+        provider: String,
+        /// The API key value. Ignored for providers with no key (e.g.
+        /// local Ollama).
+        api_key: String,
+        /// Default model to use for this provider (e.g. "llama-3.1-8b-instant").
+        model: String,
+    },
 }
 
 // =============================================================================
@@ -239,6 +271,18 @@ pub enum UiEvent {
     /// Workflow list snapshot.
     WorkflowsListed { workflows: Vec<WorkflowInfo> },
 
+    /// Canvas workflow list (files in the workflows directory).
+    CanvasWorkflowsListed { workflows: Vec<CanvasWorkflowInfo> },
+
+    /// A workflow file was loaded into the canvas.
+    CanvasWorkflowLoaded { name: String, graph_json: String },
+
+    /// A workflow file was saved successfully.
+    CanvasWorkflowSaved { name: String, path: String },
+
+    /// A workflow file was deleted.
+    CanvasWorkflowDeleted { name: String },
+
     /// A workflow run has started.
     WorkflowStarted { pattern: String, run_id: String },
 
@@ -304,8 +348,40 @@ pub enum UiEvent {
     /// Pong response to `UiCommand::Ping`.
     Pong,
 
+    /// The runtime started but no LLM API key is configured. The UI
+    /// should show a setup wizard and let the user enter credentials.
+    /// Includes the current env-var search paths so the UI can tell
+    /// the user which key names are accepted.
+    SetupNeeded { providers: Vec<ProviderInfo> },
+
+    /// The runtime accepted a new API key, persisted it, and rebuilt
+    /// the LLM provider successfully. The UI should close the wizard.
+    SetupReady { provider: String, model: String },
+
     /// Generic transport-level or command-handler error.
     Error { source: String, message: String },
+}
+
+/// One entry in the provider list shown by the setup wizard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub slug: String,
+    pub label: String,
+    /// Env var that the runtime will read (e.g. "GROQ_API_KEY").
+    /// `None` for local providers that don't need a key.
+    pub env_var: Option<String>,
+    /// Default model id for this provider.
+    pub default_model: String,
+}
+
+/// UI-side record of an `ApprovalRequest` event. Stored in
+/// `VoltState::pending_approvals` so the modal can render all
+/// outstanding requests and the user can answer each one in turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequestInfo {
+    pub request_id: uuid::Uuid,
+    pub tool_name: String,
+    pub args: serde_json::Value,
 }
 
 // =============================================================================
@@ -482,7 +558,7 @@ impl std::fmt::Display for SkillSource {
 }
 
 /// Snapshot entry describing a single tool in the registry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolInfo {
     pub name: String,
     pub description: String,
@@ -552,6 +628,10 @@ pub struct DoctorReport {
     pub permissions_default: String,
     pub recent_failures: u32,
     pub workspace_files: Vec<WorkspaceFileStatus>,
+    /// Per-kind context entry counts (Tool, Memory, Conversation).
+    /// `None` when the context store is not wired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_entries: Option<std::collections::HashMap<String, usize>>,
 }
 
 /// Status of a single API key in the environment.
@@ -588,6 +668,15 @@ pub struct WorkflowInfo {
     pub description: String,
     pub pattern: String,
     pub agents: Vec<String>,
+}
+
+/// Summary of a saved workflow file (for the canvas file browser).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasWorkflowInfo {
+    pub name: String,
+    pub path: String,
+    pub node_count: u32,
+    pub edge_count: u32,
 }
 
 /// A scheduled job.
@@ -681,7 +770,9 @@ mod tests {
 
     #[test]
     fn round_trip_install_skill() {
-        let c = UiCommand::InstallSkill { name: "weather".into() };
+        let c = UiCommand::InstallSkill {
+            name: "weather".into(),
+        };
         let s = serde_json::to_string(&c).unwrap();
         let v: UiCommand = serde_json::from_str(&s).unwrap();
         match v {
@@ -692,7 +783,9 @@ mod tests {
 
     #[test]
     fn round_trip_create_job() {
-        let c = UiCommand::CreateJob { description: "build the thing".into() };
+        let c = UiCommand::CreateJob {
+            description: "build the thing".into(),
+        };
         let s = serde_json::to_string(&c).unwrap();
         let v: UiCommand = serde_json::from_str(&s).unwrap();
         match v {
@@ -729,7 +822,12 @@ mod tests {
         let s = serde_json::to_string(&c).unwrap();
         let v: UiCommand = serde_json::from_str(&s).unwrap();
         match v {
-            UiCommand::RegisterMcpServer { name, transport, command, url } => {
+            UiCommand::RegisterMcpServer {
+                name,
+                transport,
+                command,
+                url,
+            } => {
                 assert_eq!(name, "himalaya");
                 assert_eq!(transport, "stdio");
                 assert_eq!(command.as_deref(), Some("himalaya-mcp --stdio"));
@@ -751,7 +849,11 @@ mod tests {
         assert!(s.contains("\"final\":\"done\""), "got {}", s);
         let v: UiEvent = serde_json::from_str(&s).unwrap();
         match v {
-            UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
+            UiEvent::ChatComplete {
+                final_text,
+                tokens_used,
+                duration_ms,
+            } => {
                 assert_eq!(final_text, "done");
                 assert_eq!(tokens_used, 42);
                 assert_eq!(duration_ms, 123);

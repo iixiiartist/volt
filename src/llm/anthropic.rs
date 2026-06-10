@@ -1,11 +1,13 @@
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::TokenCallback;
+use crate::llm::provider::{TokenCallback, DEFAULT_MAX_TOKENS, LLM_HTTP_TIMEOUT};
 use crate::llm::LLMProvider;
 use crate::models::{LLMRequest, LLMResponse, ToolCall, Usage};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
+
+const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
 pub struct AnthropicProvider {
     http: reqwest::Client,
@@ -127,7 +129,7 @@ impl LLMProvider for AnthropicProvider {
 
         let mut body = json!({
             "model": request.model,
-            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "max_tokens": request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             "messages": messages
         });
         if !system_blocks.is_empty() {
@@ -144,7 +146,7 @@ impl LLMProvider for AnthropicProvider {
             // Array system blocks with cache_control require 2023-06-01 or newer.
             // 2023-06-01 is the stable version that supports both array system
             // blocks and prompt caching.
-            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-version", ANTHROPIC_API_VERSION)
             .json(&body)
             .send()
             .await?
@@ -171,7 +173,7 @@ impl LLMProvider for AnthropicProvider {
 
         let mut body = json!({
             "model": request.model,
-            "max_tokens": request.max_tokens.unwrap_or(4096),
+            "max_tokens": request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             "stream": true,
             "messages": messages
         });
@@ -186,11 +188,11 @@ impl LLMProvider for AnthropicProvider {
             .http
             .post(&url)
             .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-version", ANTHROPIC_API_VERSION)
             .json(&body)
             .send();
 
-        let response = tokio::time::timeout(std::time::Duration::from_secs(300), fut)
+        let response = tokio::time::timeout(LLM_HTTP_TIMEOUT, fut)
             .await
             .map_err(|_| anyhow::anyhow!("anthropic request timed out after 300s"))?
             .map_err(|e| anyhow::anyhow!("anthropic request failed: {}", e))?
@@ -204,7 +206,7 @@ impl LLMProvider for AnthropicProvider {
         let mut input_tokens = 0u64;
         let mut output_tokens = 0u64;
         let mut cache_read_tokens = 0u64;
-        let mut _cache_create_tokens = 0u64;
+        let mut cache_create_tokens = 0u64;
 
         let mut stream = response.bytes_stream();
         while let Some(chunk_result) = stream.next().await {
@@ -273,7 +275,7 @@ impl LLMProvider for AnthropicProvider {
                                 input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
                                 cache_read_tokens =
                                     u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                                _cache_create_tokens =
+                                cache_create_tokens =
                                     u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                             }
                         }
@@ -303,6 +305,16 @@ impl LLMProvider for AnthropicProvider {
                 total_time: None,
                 prompt_tokens_details: Some(crate::models::PromptTokensDetails {
                     cached_tokens: if cache_read_tokens > 0 {
+                        Some(cache_read_tokens)
+                    } else {
+                        None
+                    },
+                    cache_creation_tokens: if cache_create_tokens > 0 {
+                        Some(cache_create_tokens)
+                    } else {
+                        None
+                    },
+                    cache_read_tokens: if cache_read_tokens > 0 {
                         Some(cache_read_tokens)
                     } else {
                         None
@@ -341,7 +353,7 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
             .get("cache_read_input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let _cache_create = u
+        let cache_create = u
             .get("cache_creation_input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
@@ -354,6 +366,16 @@ fn parse_anthropic_response(resp: serde_json::Value) -> anyhow::Result<LLMRespon
             total_time: None,
             prompt_tokens_details: Some(crate::models::PromptTokensDetails {
                 cached_tokens: if cache_read > 0 {
+                    Some(cache_read)
+                } else {
+                    None
+                },
+                cache_creation_tokens: if cache_create > 0 {
+                    Some(cache_create)
+                } else {
+                    None
+                },
+                cache_read_tokens: if cache_read > 0 {
                     Some(cache_read)
                 } else {
                     None

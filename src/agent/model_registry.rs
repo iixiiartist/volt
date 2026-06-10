@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 /// Static model registry mapping (variant, quant, framework) → ModelSpec.
 pub static MODEL_REGISTRY: LazyLock<
@@ -47,9 +47,53 @@ pub fn has_enough_ram(required_mb: u64) -> bool {
     total_mb >= required_mb
 }
 
+static TOTAL_RAM_MB: OnceLock<u64> = OnceLock::new();
+
 fn get_total_ram_mb() -> u64 {
-    // TODO: Use sysinfo or another crate to get actual RAM. For now, stub huge value.
-    32_768
+    *TOTAL_RAM_MB.get_or_init(detect_total_ram_mb)
+}
+
+fn detect_total_ram_mb() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(s) = std::fs::read_to_string("/proc/meminfo") {
+            for line in s.lines() {
+                if let Some(rest) = line.strip_prefix("MemTotal:") {
+                    if let Some(kb_str) = rest.split_whitespace().next() {
+                        if let Ok(kb) = kb_str.parse::<u64>() {
+                            return kb / 1024;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
+            if let Ok(s) = String::from_utf8(out.stdout) {
+                if let Ok(bytes) = s.trim().parse::<u64>() {
+                    return bytes / (1024 * 1024);
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(out) = Command::new("systeminfo").output() {
+            if let Ok(s) = String::from_utf8(out.stdout) {
+                for line in s.lines() {
+                    if let Some(rest) = line.trim_start().strip_prefix("Total Physical Memory:") {
+                        let cleaned: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if let Ok(mb) = cleaned.parse::<u64>() {
+                            return mb;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
 }
 
 #[cfg(test)]
@@ -67,7 +111,18 @@ mod tests {
 
     #[test]
     fn test_has_enough_ram() {
+        let total = detect_total_ram_mb();
         assert!(has_enough_ram(1));
-        assert!(has_enough_ram(1000));
+        if total > 0 {
+            assert!(has_enough_ram(total));
+            assert!(!has_enough_ram(total + 10_000_000));
+        } else {
+            assert!(has_enough_ram(1000));
+        }
+    }
+
+    #[test]
+    fn test_detect_total_ram_mb_returns_nonzero() {
+        assert!(detect_total_ram_mb() > 0);
     }
 }

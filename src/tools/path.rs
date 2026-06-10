@@ -98,19 +98,6 @@ pub fn resolve_path(path: &str) -> String {
             return canonical.to_string_lossy().to_string();
         }
     }
-    let components: Vec<&str> = path
-        .split(&['/', '\\'][..])
-        .filter(|s| !s.is_empty())
-        .collect();
-    for i in (1..=components.len()).rev() {
-        let suffix = components[components.len() - i..].join("/");
-        let candidate = Path::new(&root).join(&suffix);
-        if let Ok(canonical) = candidate.canonicalize() {
-            if canonical.starts_with(&root) {
-                return canonical.to_string_lossy().to_string();
-            }
-        }
-    }
     path.to_string()
 }
 

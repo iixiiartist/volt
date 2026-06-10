@@ -1,5 +1,3 @@
-pub mod encrypted;
-
 use std::collections::HashMap;
 
 pub trait SecretStore: Send + Sync {

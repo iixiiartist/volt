@@ -99,12 +99,12 @@ impl ProviderConfig {
             "huggingface" | "hf" => Some(Self {
                 provider: EmbeddingProvider::HuggingFace,
                 model: if model.is_empty() {
-                    "BAAI/bge-small-en-v1.5".into()
+                    "BAAI/bge-large-en-v1.5".into()
                 } else {
                     model
                 },
                 endpoint: if endpoint.is_empty() {
-                    "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+                    "https://router.huggingface.co/hf-inference/models/BAAI/bge-large-en-v1.5"
                         .into()
                 } else {
                     endpoint
@@ -172,8 +172,8 @@ pub(crate) async fn auto_detect_providers(http: &Client) -> Vec<ProviderConfig> 
     if let Some(key) = hf_key {
         providers.push(ProviderConfig {
             provider: EmbeddingProvider::HuggingFace,
-            model: "BAAI/bge-small-en-v1.5".into(),
-            endpoint: "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+            model: "BAAI/bge-large-en-v1.5".into(),
+            endpoint: "https://router.huggingface.co/hf-inference/models/BAAI/bge-large-en-v1.5"
                 .into(),
             api_key: Some(key),
         });

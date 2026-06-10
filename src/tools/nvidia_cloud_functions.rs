@@ -1,8 +1,12 @@
 use crate::models::ToolResult;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Duration;
 
 const NVCF_BASE: &str = "https://api.nvcf.nvidia.com/v2/nvcf";
+const POLL_MAX_ITERATIONS: u32 = 60;
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn get_api_key() -> Option<String> {
     std::env::var("NVIDIA_API_KEY")
@@ -58,7 +62,7 @@ pub async fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRe
                     }
                 }
             };
-            match req.timeout(std::time::Duration::from_secs(30)).send().await {
+            match req.timeout(HTTP_TIMEOUT).send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     match resp.json::<serde_json::Value>().await {
@@ -168,7 +172,12 @@ pub async fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRe
                                 }
                             }
                         };
-                        let req_id = async_resp["request_id"].as_str().unwrap_or("").to_string();
+                        let req_id = async_resp["request_id"]
+                            .as_str()
+                            .or_else(|| async_resp["reqId"].as_str())
+                            .or_else(|| async_resp["requestId"].as_str())
+                            .unwrap_or("")
+                            .to_string();
                         if req_id.is_empty() {
                             return ToolResult {
                                 success: true,
@@ -178,13 +187,10 @@ pub async fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRe
                                 duration_ms: 0,
                             };
                         }
-                        // Poll for completion
-                        let poll_url = format!(
-                            "{}/functions/{}/versions/{}/status",
-                            NVCF_BASE, function_id, version_id
-                        );
-                        for _ in 0..60 {
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        // Poll for completion via the per-request status endpoint.
+                        let poll_url = format!("{}/requests/{}", NVCF_BASE, req_id);
+                        for _ in 0..POLL_MAX_ITERATIONS {
+                            tokio::time::sleep(POLL_INTERVAL).await;
                             let poll_req = match make_auth_req(
                                 &client,
                                 reqwest::Method::GET,
@@ -193,38 +199,74 @@ pub async fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRe
                                 Some(r) => r,
                                 None => break,
                             };
-                            if let Ok(poll_resp) = poll_req
-                                .timeout(std::time::Duration::from_secs(30))
-                                .send()
-                                .await
-                            {
-                                if let Ok(poll_val) = poll_resp.json::<serde_json::Value>().await {
-                                    let state = poll_val["status"].as_str().unwrap_or("unknown");
-                                    match state {
-                                        "completed" | "succeeded" => {
-                                            return ToolResult {
-                                                success: true,
-                                                output: serde_json::to_string_pretty(&poll_val)
-                                                    .unwrap_or_default(),
-                                                error: None,
-                                                duration_ms: 0,
-                                            };
+                            match poll_req.timeout(HTTP_TIMEOUT).send().await {
+                                Ok(poll_resp) => {
+                                    match poll_resp.json::<serde_json::Value>().await {
+                                        Ok(poll_val) => {
+                                            let state =
+                                                poll_val["status"].as_str().unwrap_or("unknown");
+                                            match state {
+                                                "completed" | "succeeded" => {
+                                                    return ToolResult {
+                                                        success: true,
+                                                        output: serde_json::to_string_pretty(
+                                                            &poll_val,
+                                                        )
+                                                        .unwrap_or_default(),
+                                                        error: None,
+                                                        duration_ms: 0,
+                                                    };
+                                                }
+                                                "failed" | "error" => {
+                                                    return ToolResult {
+                                                        success: false,
+                                                        output: String::new(),
+                                                        error: Some(
+                                                            poll_val["error"]
+                                                                .as_str()
+                                                                .unwrap_or(
+                                                                    "function invocation failed",
+                                                                )
+                                                                .to_string(),
+                                                        ),
+                                                        duration_ms: 0,
+                                                    };
+                                                }
+                                                "unknown" => {
+                                                    return ToolResult {
+                                                        success: false,
+                                                        output: String::new(),
+                                                        error: Some(format!(
+                                                        "polling returned unknown status; raw: {}",
+                                                        serde_json::to_string(&poll_val)
+                                                            .unwrap_or_default()
+                                                    )),
+                                                        duration_ms: 0,
+                                                    };
+                                                }
+                                                _ => continue,
+                                            }
                                         }
-                                        "failed" | "error" => {
+                                        Err(e) => {
                                             return ToolResult {
                                                 success: false,
                                                 output: String::new(),
-                                                error: Some(
-                                                    poll_val["error"]
-                                                        .as_str()
-                                                        .unwrap_or("function invocation failed")
-                                                        .to_string(),
-                                                ),
+                                                error: Some(format!(
+                                                    "poll response parse failed: {}",
+                                                    e
+                                                )),
                                                 duration_ms: 0,
                                             };
                                         }
-                                        _ => continue,
                                     }
+                                }
+                                Err(e) => {
+                                    return ToolResult {
+                                        success: false,
+                                        output: String::new(),
+                                        error: Some(format!("poll request failed: {}", e)),
+                                        duration_ms: 0,
+                                    };
                                 }
                             }
                         }

@@ -11,7 +11,7 @@ pub const COLOR_PANEL_HOVER: &str = "#1a1a35";
 pub const COLOR_BORDER: &str = "#25254a";
 pub const COLOR_TEXT: &str = "#e6e6f0";
 pub const COLOR_TEXT_DIM: &str = "#9090a8";
-pub const COLOR_TEXT_MUTED: &str = "#5a5a78";
+pub const COLOR_TEXT_MUTED: &str = "#7a7a98";
 pub const COLOR_ACCENT: &str = "#a855f7";
 pub const COLOR_ACCENT_HOVER: &str = "#9333ea";
 pub const COLOR_SUCCESS: &str = "#22c55e";
@@ -37,6 +37,9 @@ pub struct Toast {
     pub id: u64,
     pub level: ToastLevel,
     pub message: String,
+    /// `SystemTime` ms since the epoch at creation. Used by
+    /// `prune_toasts()` to drop the entry after its TTL.
+    pub created_at_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +88,6 @@ pub struct VoltState {
     pub toasts: Signal<Vec<Toast>>,
     pub toast_counter: Signal<u64>,
 
-    pub modal: Signal<Option<Modal>>,
     pub sidebar_collapsed: Signal<bool>,
     pub show_command_palette: Signal<bool>,
     pub show_trace_panel: Signal<bool>,
@@ -102,42 +104,52 @@ pub struct VoltState {
     pub catalog_query: Signal<String>,
     pub mcp_servers: Signal<Vec<super::commands::McpServerInfo>>,
     pub audit_entries: Signal<Vec<super::commands::AuditEntry>>,
+    pub tools: Signal<Vec<super::commands::ToolInfo>>,
+    pub worktrees: Signal<Vec<super::commands::WorktreeInfo>>,
+    pub workflows: Signal<Vec<super::commands::WorkflowInfo>>,
+    pub canvas_workflows: Signal<Vec<super::commands::CanvasWorkflowInfo>>,
+    /// Name of the workflow currently loaded into the canvas editor.
+    pub canvas_loaded_name: Signal<Option<String>>,
+    /// Serialized `WorkflowGraph` JSON of the currently loaded workflow.
+    /// Stored as a string so the editor can mutate/parse on every
+    /// edit without round-tripping through serde at the signal level.
+    pub canvas_graph_json: Signal<String>,
+    pub models: Signal<Vec<super::commands::ModelInfo>>,
+    pub doctor_report: Signal<Option<super::commands::DoctorReport>>,
+    pub config: Signal<serde_json::Value>,
+    pub tool_calls: Signal<Vec<super::commands::ToolCallInfo>>,
 
     // Chat state.
     pub chat_messages: Signal<Vec<super::commands::ChatMessage>>,
     pub chat_streaming: Signal<bool>,
     pub chat_session: Signal<Option<uuid::Uuid>>,
 
+    /// Last message the user typed but the chat got cancelled or
+    /// errored. Cleared on a successful send; restored to the
+    /// textarea by the ChatPage when the runtime reports failure.
+    pub last_user_draft: Signal<Option<String>>,
+
     // Sessions list cache (used by SessionsPage).
     pub sessions_cache: Signal<Vec<super::commands::SessionInfo>>,
-}
 
-#[derive(Clone, Debug)]
-pub enum Modal {
-    NewSession {
-        name: String,
-    },
-    ImportSkill,
-    InstallSkill {
-        query: String,
-    },
-    RunWorkflow {
-        pattern: String,
-        agents: String,
-        tasks: String,
-    },
-    ToolExecute {
-        name: String,
-        schema: serde_json::Value,
-        args: String,
-    },
-    About,
-    Settings,
-    Confirm {
-        title: String,
-        message: String,
-        action: String,
-    },
+    // First-run setup wizard. Populated by the `SetupNeeded` event;
+    // cleared on `SetupReady`. The wizard is shown as a full-screen
+    // overlay whenever this list is non-empty (or when `show_setup_wizard`
+    // is true after the user dismisses but then opens it again).
+    pub setup_providers: Signal<Vec<super::commands::ProviderInfo>>,
+    pub show_setup_wizard: Signal<bool>,
+
+    // Approval queue. The runtime emits an `ApprovalRequest` event
+    // for every privileged tool call; we stash the request here so
+    // the modal UI can render it and dispatch the user's Allow/Deny
+    // response back through `UiCommand::ApprovalResponse`.
+    pub pending_approvals: Signal<Vec<super::commands::ApprovalRequestInfo>>,
+
+    /// Tracks whether the focused element is a text-entry field
+    /// (input/textarea/contenteditable). The global keydown handler
+    /// skips Ctrl/Cmd shortcuts when this is true so typing in
+    /// the chat textarea doesn't trigger the command palette.
+    pub focus_in_text_input: Signal<bool>,
 }
 
 impl Default for VoltState {
@@ -154,7 +166,6 @@ impl Default for VoltState {
             embedder_loaded: Signal::new(false),
             toasts: Signal::new(Vec::new()),
             toast_counter: Signal::new(0),
-            modal: Signal::new(None),
             sidebar_collapsed: Signal::new(false),
             show_command_palette: Signal::new(false),
             show_trace_panel: Signal::new(false),
@@ -167,27 +178,59 @@ impl Default for VoltState {
             catalog_query: Signal::new(String::new()),
             mcp_servers: Signal::new(Vec::new()),
             audit_entries: Signal::new(Vec::new()),
+            tools: Signal::new(Vec::new()),
+            worktrees: Signal::new(Vec::new()),
+            workflows: Signal::new(Vec::new()),
+            canvas_workflows: Signal::new(Vec::new()),
+            canvas_loaded_name: Signal::new(None),
+            canvas_graph_json: Signal::new(String::new()),
+            models: Signal::new(Vec::new()),
+            doctor_report: Signal::new(None),
+            config: Signal::new(serde_json::Value::Null),
+            tool_calls: Signal::new(Vec::new()),
             chat_messages: Signal::new(Vec::new()),
             chat_streaming: Signal::new(false),
             chat_session: Signal::new(None),
+            last_user_draft: Signal::new(None),
             sessions_cache: Signal::new(Vec::new()),
+            setup_providers: Signal::new(Vec::new()),
+            show_setup_wizard: Signal::new(false),
+            pending_approvals: Signal::new(Vec::new()),
+            focus_in_text_input: Signal::new(false),
         }
     }
 }
 
 impl VoltState {
     pub fn toast(&mut self, level: ToastLevel, message: impl Into<String>) {
-        let id = *self.toast_counter.read() + 1;
+        let id = *self.toast_counter.peek() + 1;
         self.toast_counter.set(id);
         let mut toasts = self.toasts.write();
         toasts.push(Toast {
             id,
             level,
             message: message.into(),
+            created_at_ms: now_ms(),
         });
         if toasts.len() > 5 {
             toasts.remove(0);
         }
+    }
+
+    /// Drop toasts that are older than their TTL. Errors get 8 s;
+    /// everything else gets 5 s. The `ToastContainer` calls this
+    /// from a `use_future` ticker so we don't have to schedule one
+    /// timer per toast.
+    pub fn prune_toasts(&mut self) {
+        let now = now_ms();
+        let mut toasts = self.toasts.write();
+        toasts.retain(|t| {
+            let ttl_ms = match t.level {
+                ToastLevel::Error => 8_000,
+                _ => 5_000,
+            };
+            now.saturating_sub(t.created_at_ms) < ttl_ms
+        });
     }
 
     pub fn dismiss_toast(&mut self, id: u64) {
@@ -203,18 +246,10 @@ impl VoltState {
         }
     }
 
-    pub fn open_modal(&mut self, modal: Modal) {
-        self.modal.set(Some(modal));
-    }
-
-    pub fn close_modal(&mut self) {
-        self.modal.set(None);
-    }
-
     pub async fn dispatch(&mut self, cmd: UiCommand) {
-        let handle_opt = self.handle.read().clone();
+        let handle_opt = self.handle.peek().clone();
         if let Some(handle) = handle_opt {
-            let count = *self.total_commands.read() + 1;
+            let count = *self.total_commands.peek() + 1;
             self.total_commands.set(count);
             if let Err(e) = handle.send(cmd).await {
                 self.toast(ToastLevel::Error, format!("Dispatch failed: {}", e));
@@ -225,17 +260,28 @@ impl VoltState {
     }
 
     /// Fires a command without awaiting. Returns nothing so the closure type is `Fn`, not async.
-    /// Increments the command counter and spawns the actual send on the runtime.
+    /// Increments the command counter and spawns the actual send on the tokio runtime
+    /// (detached from the Dioxus component scope so commands aren't lost on navigation).
     pub fn fire(&mut self, cmd: UiCommand) {
-        let handle_opt = self.handle.read().clone();
-        let count = *self.total_commands.read() + 1;
+        let handle_opt = self.handle.peek().clone();
+        let count = *self.total_commands.peek() + 1;
         self.total_commands.set(count);
         if let Some(handle) = handle_opt {
-            dioxus::prelude::spawn(async move {
+            tokio::spawn(async move {
                 if let Err(e) = handle.send(cmd).await {
-                    tracing::warn!("Dispatch failed: {}", e);
+                    // The runtime's broadcast is gone (the only way send
+                    // fails). Log and move on; there's no toast path
+                    // from a detached task.
+                    tracing::error!("[webui] dispatch failed: {}", e);
                 }
             });
         }
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

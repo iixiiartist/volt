@@ -19,13 +19,13 @@ fn build_tools() -> Arc<ToolRegistry> {
     ToolRegistry::new()
 }
 
-fn build_provider() -> Box<dyn volt::llm::LLMProvider> {
-    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant");
-    Box::new(volt::llm::openai::OpenAIProvider::new(
+fn build_provider() -> Option<Box<dyn volt::llm::LLMProvider>> {
+    let route = volt::orchestrator::resolve_provider("llama-3.1-8b-instant").ok()?;
+    Some(Box::new(volt::llm::openai::OpenAIProvider::new(
         route.api_key,
         route.base_url,
         "program-bench".into(),
-    ))
+    )))
 }
 
 #[tokio::test]
@@ -43,7 +43,12 @@ async fn test_program_bench() {
         }
     }
 
-    let provider = build_provider();
+    let Some(provider) = build_provider() else {
+        eprintln!(
+            "program_bench: SKIPPED — no LLM provider configured (set GROQ_API_KEY or other)"
+        );
+        return;
+    };
     let tools = build_tools();
     let config = AgentConfig {
         name: "program-bench".into(),
@@ -126,4 +131,10 @@ async fn test_program_bench() {
     println!("RESULTS — ProgramBench | {}ms total", total_duration);
     println!("  Accuracy: {}/{} = {:.1}%", correct, total, pct);
     println!("{}", "=".repeat(70));
+
+    assert!(
+        correct > 0,
+        "program_bench: agent got 0/{} correct — must solve at least 1 problem",
+        total
+    );
 }
