@@ -764,21 +764,45 @@ mod tests {
     fn provider_env_var_known_slugs() {
         // Cloud providers always need a key.
         assert_eq!(provider_env_var("groq").as_deref(), Some("GROQ_API_KEY"));
-        assert_eq!(provider_env_var("openai").as_deref(), Some("OPENAI_API_KEY"));
-        assert_eq!(provider_env_var("anthropic").as_deref(), Some("ANTHROPIC_API_KEY"));
-        assert_eq!(provider_env_var("nvidia").as_deref(), Some("NVIDIA_API_KEY"));
+        assert_eq!(
+            provider_env_var("openai").as_deref(),
+            Some("OPENAI_API_KEY")
+        );
+        assert_eq!(
+            provider_env_var("anthropic").as_deref(),
+            Some("ANTHROPIC_API_KEY")
+        );
+        assert_eq!(
+            provider_env_var("nvidia").as_deref(),
+            Some("NVIDIA_API_KEY")
+        );
         // Ollama: key only when the user has set OLLAMA_API_KEY (cloud tier).
         std::env::remove_var("OLLAMA_API_KEY");
         assert_eq!(provider_env_var("ollama"), None);
         std::env::set_var("OLLAMA_API_KEY", "test_cloud_key");
-        assert_eq!(provider_env_var("ollama").as_deref(), Some("OLLAMA_API_KEY"));
+        assert_eq!(
+            provider_env_var("ollama").as_deref(),
+            Some("OLLAMA_API_KEY")
+        );
         std::env::remove_var("OLLAMA_API_KEY");
         // Local servers and the OpenAI override are mapped to their
         // host / base-URL env vars (not LLM_API_KEY).
-        assert_eq!(provider_env_var("ollama_local").as_deref(), Some("OLLAMA_HOST"));
-        assert_eq!(provider_env_var("llamacpp").as_deref(), Some("LLAMA_CPP_HOST"));
-        assert_eq!(provider_env_var("litertlm").as_deref(), Some("LITERTLM_HOST"));
-        assert_eq!(provider_env_var("oai_override").as_deref(), Some("LLM_BASE_URL"));
+        assert_eq!(
+            provider_env_var("ollama_local").as_deref(),
+            Some("OLLAMA_HOST")
+        );
+        assert_eq!(
+            provider_env_var("llamacpp").as_deref(),
+            Some("LLAMA_CPP_HOST")
+        );
+        assert_eq!(
+            provider_env_var("litertlm").as_deref(),
+            Some("LITERTLM_HOST")
+        );
+        assert_eq!(
+            provider_env_var("oai_override").as_deref(),
+            Some("LLM_BASE_URL")
+        );
         // Truly unknown slug returns None — caller should ask the user
         // to pick a known provider.
         assert_eq!(provider_env_var("custom"), None);
@@ -798,8 +822,8 @@ mod tests {
     #[test]
     fn save_api_key_persists_and_idempotent() {
         // Use a sentinel env var that we can verify was set.
-        let env_var = save_api_key("groq", "gsk_test_persistence_key_12345")
-            .expect("save should succeed");
+        let env_var =
+            save_api_key("groq", "gsk_test_persistence_key_12345").expect("save should succeed");
         assert_eq!(env_var, "GROQ_API_KEY");
         // Visible in process env.
         assert_eq!(
@@ -988,9 +1012,8 @@ pub fn read_volt_home_env() -> std::collections::HashMap<String, String> {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 return None;
             }
-            l.split_once('=').map(|(k, v)| {
-                (k.trim().to_string(), v.trim().to_string())
-            })
+            l.split_once('=')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
         })
         .collect()
 }

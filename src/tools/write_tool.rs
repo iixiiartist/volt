@@ -45,10 +45,7 @@ mod tests {
         // with a clear error rather than auto-creating it.
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("nested").join("file.txt");
-        let result = futures::executor::block_on(write_file(
-            target.to_str().unwrap(),
-            "x",
-        ));
+        let result = futures::executor::block_on(write_file(target.to_str().unwrap(), "x"));
         assert!(!result.success, "must not auto-create missing parents");
         assert!(result.error.unwrap().contains("does not exist"));
         assert!(!target.exists(), "file must not have been created");

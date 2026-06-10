@@ -26,7 +26,9 @@
 //! the integration test lands.
 
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::{TokenCallback, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, LLM_HTTP_TIMEOUT};
+use crate::llm::provider::{
+    TokenCallback, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, LLM_HTTP_TIMEOUT,
+};
 use crate::llm::LLMProvider;
 use crate::models::{
     AudioRequest, AudioResponse, LLMRequest, LLMResponse, ToolCall, TtsRequest, Usage,
@@ -188,28 +190,29 @@ impl VllmProvider {
         // vLLM supports the same structured-output response_format as
         // OpenAI; the content field is a JSON string with tool_calls
         // and content sub-fields. Try to parse it first.
-        let (tool_calls, content) = if let Some((calls, text)) = parse_structured_output(&raw_content) {
-            (Some(calls), Arc::new(text))
-        } else {
-            let calls = message["tool_calls"].as_array().map(|arr| {
-                arr.iter()
-                    .map(|tc| {
-                        let args_val = &tc["function"]["arguments"];
-                        let arguments = if args_val.is_string() {
-                            parse_lossy_json(args_val.as_str().unwrap_or("{}"))
-                        } else {
-                            args_val.clone()
-                        };
-                        ToolCall {
-                            id: tc["id"].as_str().unwrap_or("").to_string(),
-                            name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                            arguments,
-                        }
-                    })
-                    .collect()
-            });
-            (calls, Arc::new(raw_content))
-        };
+        let (tool_calls, content) =
+            if let Some((calls, text)) = parse_structured_output(&raw_content) {
+                (Some(calls), Arc::new(text))
+            } else {
+                let calls = message["tool_calls"].as_array().map(|arr| {
+                    arr.iter()
+                        .map(|tc| {
+                            let args_val = &tc["function"]["arguments"];
+                            let arguments = if args_val.is_string() {
+                                parse_lossy_json(args_val.as_str().unwrap_or("{}"))
+                            } else {
+                                args_val.clone()
+                            };
+                            ToolCall {
+                                id: tc["id"].as_str().unwrap_or("").to_string(),
+                                name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                                arguments,
+                            }
+                        })
+                        .collect()
+                });
+                (calls, Arc::new(raw_content))
+            };
 
         let usage = resp["usage"].as_object().map(|u| Usage {
             prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -252,7 +255,10 @@ fn build_strict_response_schema(tools: &[crate::models::ToolDefinition]) -> serd
         .map(|t| {
             let mut args_schema = t.input_schema.clone();
             if let Some(obj) = args_schema.as_object_mut() {
-                obj.insert("additionalProperties".into(), serde_json::Value::Bool(false));
+                obj.insert(
+                    "additionalProperties".into(),
+                    serde_json::Value::Bool(false),
+                );
             }
             json!({
                 "type": "object",
@@ -301,22 +307,23 @@ fn build_strict_response_schema(tools: &[crate::models::ToolDefinition]) -> serd
 fn parse_structured_output(content_str: &str) -> Option<(Vec<ToolCall>, String)> {
     let parsed = serde_json::from_str::<serde_json::Value>(content_str).ok()?;
     let text_content = parsed.get("content")?.as_str()?.to_string();
-    let calls: Vec<ToolCall> = if let Some(tool_calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
-        tool_calls
-            .iter()
-            .filter_map(|tc| {
-                let name = tc.get("name")?.as_str()?.to_string();
-                let args = tc.get("arguments")?.clone();
-                Some(ToolCall {
-                    id: format!("call_{}", &uuid::Uuid::new_v4().to_string()[..8]),
-                    name,
-                    arguments: args,
+    let calls: Vec<ToolCall> =
+        if let Some(tool_calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
+            tool_calls
+                .iter()
+                .filter_map(|tc| {
+                    let name = tc.get("name")?.as_str()?.to_string();
+                    let args = tc.get("arguments")?.clone();
+                    Some(ToolCall {
+                        id: format!("call_{}", &uuid::Uuid::new_v4().to_string()[..8]),
+                        name,
+                        arguments: args,
+                    })
                 })
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+                .collect()
+        } else {
+            Vec::new()
+        };
     Some((calls, text_content))
 }
 
@@ -482,7 +489,11 @@ impl LLMProvider for VllmProvider {
 
         Ok(LLMResponse {
             content: Arc::new(full_content),
-            tool_calls: if tool_calls_acc.is_empty() { None } else { Some(tool_calls_acc) },
+            tool_calls: if tool_calls_acc.is_empty() {
+                None
+            } else {
+                Some(tool_calls_acc)
+            },
             finish_reason,
             usage,
             usage_breakdown: None,
@@ -499,7 +510,10 @@ impl LLMProvider for VllmProvider {
         // at the time of writing.
         let url = format!("{}/audio/transcriptions", self.base_url);
         let mut form = reqwest::multipart::Form::new()
-            .part("file", make_audio_part(audio.file_data.clone(), &audio.file_name))
+            .part(
+                "file",
+                make_audio_part(audio.file_data.clone(), &audio.file_name),
+            )
             .text("model", audio.model.clone());
         if let Some(ref lang) = audio.language {
             form = form.text("language", lang.clone());
@@ -525,7 +539,10 @@ impl LLMProvider for VllmProvider {
             x_groq: None,
             segments: None,
             task: resp.get("task").and_then(|v| v.as_str()).map(String::from),
-            language: resp.get("language").and_then(|v| v.as_str()).map(String::from),
+            language: resp
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             duration: resp.get("duration").and_then(|v| v.as_f64()),
         })
     }
@@ -533,7 +550,10 @@ impl LLMProvider for VllmProvider {
     async fn translate(&self, audio: &AudioRequest) -> anyhow::Result<AudioResponse> {
         let url = format!("{}/audio/translations", self.base_url);
         let form = reqwest::multipart::Form::new()
-            .part("file", make_audio_part(audio.file_data.clone(), &audio.file_name))
+            .part(
+                "file",
+                make_audio_part(audio.file_data.clone(), &audio.file_name),
+            )
             .text("model", audio.model.clone());
 
         let req = self.apply_auth(self.http.post(&url).multipart(form));
@@ -550,7 +570,10 @@ impl LLMProvider for VllmProvider {
             x_groq: None,
             segments: None,
             task: resp.get("task").and_then(|v| v.as_str()).map(String::from),
-            language: resp.get("language").and_then(|v| v.as_str()).map(String::from),
+            language: resp
+                .get("language")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             duration: resp.get("duration").and_then(|v| v.as_f64()),
         })
     }
@@ -657,7 +680,10 @@ mod tests {
         assert!(body.get("tools").is_none());
         // response_format with json_schema
         assert_eq!(body["response_format"]["type"], "json_schema");
-        assert_eq!(body["response_format"]["json_schema"]["name"], "volt_tool_calls");
+        assert_eq!(
+            body["response_format"]["json_schema"]["name"],
+            "volt_tool_calls"
+        );
         assert_eq!(body["response_format"]["json_schema"]["strict"], true);
         // tool_choice forced to "none" in strict mode
         assert_eq!(body["tool_choice"], "none");

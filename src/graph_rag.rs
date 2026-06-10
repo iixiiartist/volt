@@ -115,5 +115,4 @@ pub fn build_default_tool_graph(graph: &ToolGraph) {
 
     // Data tools
     graph.add_relationship("csv_read", "csv_write", 0.8);
-
 }

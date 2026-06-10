@@ -830,8 +830,7 @@ impl TuiChat {
             let state = self.agent.state().lock().await;
             state.session_id
         };
-        let snapshot: Vec<ChatMessage> =
-            self.messages.iter().take(up_to).cloned().collect();
+        let snapshot: Vec<ChatMessage> = self.messages.iter().take(up_to).cloned().collect();
 
         if let Err(e) = persist_tui_messages(&pool, current_session, &self.agent).await {
             self.add_message(
@@ -916,10 +915,7 @@ impl TuiChat {
                             }
                         }
                         Err(e) => {
-                            self.add_message(
-                                "system",
-                                &format!("failed to list sessions: {}", e),
-                            );
+                            self.add_message("system", &format!("failed to list sessions: {}", e));
                         }
                     }
                 }
@@ -1059,10 +1055,7 @@ fn color_for_tool(name: &str) -> Color {
         return Color::Magenta;
     }
     // agent orchestration
-    if n.contains("delegate")
-        || n.contains("workflow")
-        || n.contains("agent")
-    {
+    if n.contains("delegate") || n.contains("workflow") || n.contains("agent") {
         return Color::Cyan;
     }
     // data / query
@@ -1334,12 +1327,7 @@ mod tests {
 
     #[test]
     fn build_item_enhanced_tool_highlights_json_result() {
-        let item = build_item_enhanced(
-            "tool",
-            r#"{"rows": 3, "status": "ok"}"#,
-            Some("read"),
-            80,
-        );
+        let item = build_item_enhanced("tool", r#"{"rows": 3, "status": "ok"}"#, Some("read"), 80);
         // JSON highlighting produces a wider item than a plain string
         // because the JSON content has key/string/number/punctuation
         // categories broken out into separate spans.

@@ -315,14 +315,20 @@ fn send_chat_message(state: &mut VoltState, mut input: Signal<String>, text: Str
     state.last_user_draft.set(Some(text.clone()));
     input.set(String::new());
     state.chat_streaming.set(true);
-    state.chat_messages.write().push(super::commands::ChatMessage {
-        id: uuid::Uuid::new_v4(),
-        role: super::commands::ChatRole::User,
-        content: text.clone(),
-        tool_calls: Vec::new(),
-        timestamp: chrono::Utc::now(),
+    state
+        .chat_messages
+        .write()
+        .push(super::commands::ChatMessage {
+            id: uuid::Uuid::new_v4(),
+            role: super::commands::ChatRole::User,
+            content: text.clone(),
+            tool_calls: Vec::new(),
+            timestamp: chrono::Utc::now(),
+        });
+    state.fire(UiCommand::Chat {
+        session_id: sid,
+        input: text,
     });
-    state.fire(UiCommand::Chat { session_id: sid, input: text });
 }
 
 /// Pop the stashed user input back into the chat textarea, if any.
@@ -331,9 +337,25 @@ fn send_chat_message(state: &mut VoltState, mut input: Signal<String>, text: Str
 fn ChatBubble(role: ChatRole, content: String) -> Element {
     let is_user = role == ChatRole::User;
     let is_tool = role == ChatRole::Tool;
-    let bg = if is_user { COLOR_PANEL_HOVER } else { COLOR_PANEL };
-    let label = if is_user { "You" } else if is_tool { "Tool" } else { "Volt" };
-    let label_color = if is_user { COLOR_ACCENT } else if is_tool { COLOR_INFO } else { COLOR_SUCCESS };
+    let bg = if is_user {
+        COLOR_PANEL_HOVER
+    } else {
+        COLOR_PANEL
+    };
+    let label = if is_user {
+        "You"
+    } else if is_tool {
+        "Tool"
+    } else {
+        "Volt"
+    };
+    let label_color = if is_user {
+        COLOR_ACCENT
+    } else if is_tool {
+        COLOR_INFO
+    } else {
+        COLOR_SUCCESS
+    };
     rsx! {
         div { style: "display: flex; flex-direction: column; gap: 4px;",
             span { style: "color: {label_color}; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;",
@@ -390,7 +412,11 @@ pub fn ToolsPage() -> Element {
 }
 
 #[component]
-fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>, show_all: Signal<bool>) -> Element {
+fn ToolList(
+    filter: Signal<String>,
+    selected: Signal<Option<ToolInfo>>,
+    show_all: Signal<bool>,
+) -> Element {
     let state: VoltState = use_context();
     let tools = state.tools.read().clone();
     let needle = filter.read().to_lowercase();
@@ -399,7 +425,9 @@ fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>, show_all
     let visible: Vec<_> = tools
         .iter()
         .filter(|t| {
-            if !all && !t.enabled { return false; }
+            if !all && !t.enabled {
+                return false;
+            }
             needle.is_empty()
                 || t.name.to_lowercase().contains(&needle)
                 || t.description.to_lowercase().contains(&needle)
@@ -435,8 +463,16 @@ fn ToolList(filter: Signal<String>, selected: Signal<Option<ToolInfo>>, show_all
 
 #[component]
 fn ToolRow(tool: ToolInfo, selected: Signal<Option<ToolInfo>>) -> Element {
-    let is_selected = selected.read().as_ref().map(|s| s.name == tool.name).unwrap_or(false);
-    let bg = if is_selected { COLOR_PANEL_HOVER } else { COLOR_PANEL };
+    let is_selected = selected
+        .read()
+        .as_ref()
+        .map(|s| s.name == tool.name)
+        .unwrap_or(false);
+    let bg = if is_selected {
+        COLOR_PANEL_HOVER
+    } else {
+        COLOR_PANEL
+    };
     let perm_color = match tool.permission {
         super::commands::ToolPermission::Allow => COLOR_SUCCESS,
         super::commands::ToolPermission::Prompt => COLOR_WARNING,
@@ -1534,7 +1570,8 @@ fn ApiKeyRow(slug: String, display_name: String) -> Element {
         .as_ref()
         .map(|k| k.masked.clone())
         .unwrap_or_default();
-    let is_set = !masked.is_empty() && masked != "***" && !masked.to_lowercase().contains("not set");
+    let is_set =
+        !masked.is_empty() && masked != "***" && !masked.to_lowercase().contains("not set");
     rsx! {
         div { style: "display: grid; grid-template-columns: 160px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; background-color: {COLOR_PANEL_HOVER}; border-radius: 6px;",
             div { style: "font-size: 13px; color: {COLOR_TEXT};",

@@ -472,8 +472,8 @@ pub fn tool_required_scope(tool_name: &str) -> CapabilityScope {
         | "copy_file" => CapabilityScope::FsWrite,
         "bash" | "sh" | "powershell" | "cmd" | "run" | "execute" | "run_command" | "run_shell"
         | "spawn_process" => CapabilityScope::System,
-        "web_search" | "web_fetch" | "browser_navigate" | "browser_extract"
-        | "you_research" | "you_contents" | "http_get" | "http_post" => CapabilityScope::Network,
+        "web_search" | "web_fetch" | "browser_navigate" | "browser_extract" | "you_research"
+        | "you_contents" | "http_get" | "http_post" => CapabilityScope::Network,
         "db_query" | "sql" | "database" | "pg_query" => CapabilityScope::Database,
         "memory_read" | "memory_write" | "memory_search" | "memory_save" => CapabilityScope::Memory,
         // Tools with API namespaced scopes

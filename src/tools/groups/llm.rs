@@ -110,7 +110,9 @@ pub async fn register_llm_tools(registry: &Arc<ToolRegistry>) {
     }
 
     // MTP (Multimodal Token Prediction) tool
-    if local_llm_enabled() && (tool_bin_path("litert_lm.exe").exists() || tool_bin_path("llama.exe").exists()) {
+    if local_llm_enabled()
+        && (tool_bin_path("litert_lm.exe").exists() || tool_bin_path("llama.exe").exists())
+    {
         register_tool!(
             registry,
             "mtp",

@@ -7,7 +7,10 @@ pub async fn sleep_until(target_time: &str) -> ToolResult {
         Ok(t) => t.with_timezone(&chrono::Utc),
         Err(_) => {
             // Try parsing as UTC-only RFC 3339 (ends with Z)
-            match chrono::DateTime::parse_from_rfc3339(&format!("{}Z", target_time.trim_end_matches('Z'))) {
+            match chrono::DateTime::parse_from_rfc3339(&format!(
+                "{}Z",
+                target_time.trim_end_matches('Z')
+            )) {
                 Ok(t) => t.with_timezone(&chrono::Utc),
                 Err(e) => {
                     return ToolResult {

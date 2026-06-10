@@ -1,5 +1,7 @@
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::{TokenCallback, LLM_HTTP_TIMEOUT, LLM_POLL_INTERVAL, LLM_POLL_MAX_ITERATIONS, LLM_POLL_TIMEOUT};
+use crate::llm::provider::{
+    TokenCallback, LLM_HTTP_TIMEOUT, LLM_POLL_INTERVAL, LLM_POLL_MAX_ITERATIONS, LLM_POLL_TIMEOUT,
+};
 use crate::llm::LLMProvider;
 use crate::models::{
     AudioRequest, AudioResponse, LLMRequest, LLMResponse, ToolCall, TtsRequest, Usage,
@@ -155,10 +157,7 @@ impl LLMProvider for OllamaProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let resp_val = req
-            .timeout(LLM_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let resp_val = req.timeout(LLM_HTTP_TIMEOUT).send().await?;
 
         let status = resp_val.status();
 
@@ -187,7 +186,8 @@ impl LLMProvider for OllamaProvider {
                     }
                 },
                 parse_ollama_response,
-            ).await;
+            )
+            .await;
         }
 
         if !status.is_success() {
@@ -214,10 +214,7 @@ impl LLMProvider for OllamaProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response = req
-            .timeout(LLM_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let response = req.timeout(LLM_HTTP_TIMEOUT).send().await?;
 
         let status = response.status();
         if !status.is_success() {

@@ -199,69 +199,67 @@ pub async fn register_nvidia_cloud_functions(registry: &Arc<crate::tools::ToolRe
                                 Some(r) => r,
                                 None => break,
                             };
-                            match poll_req
-                                .timeout(HTTP_TIMEOUT)
-                                .send()
-                                .await
-                            {
-                                Ok(poll_resp) => match poll_resp.json::<serde_json::Value>().await {
-                                    Ok(poll_val) => {
-                                        let state = poll_val["status"]
-                                            .as_str()
-                                            .unwrap_or("unknown");
-                                        match state {
-                                            "completed" | "succeeded" => {
-                                                return ToolResult {
-                                                    success: true,
-                                                    output:
-                                                        serde_json::to_string_pretty(&poll_val)
-                                                            .unwrap_or_default(),
-                                                    error: None,
-                                                    duration_ms: 0,
-                                                };
-                                            }
-                                            "failed" | "error" => {
-                                                return ToolResult {
-                                                    success: false,
-                                                    output: String::new(),
-                                                    error: Some(
-                                                        poll_val["error"]
-                                                            .as_str()
-                                                            .unwrap_or(
-                                                                "function invocation failed",
-                                                            )
-                                                            .to_string(),
-                                                    ),
-                                                    duration_ms: 0,
-                                                };
-                                            }
-                                            "unknown" => {
-                                                return ToolResult {
-                                                    success: false,
-                                                    output: String::new(),
-                                                    error: Some(format!(
+                            match poll_req.timeout(HTTP_TIMEOUT).send().await {
+                                Ok(poll_resp) => {
+                                    match poll_resp.json::<serde_json::Value>().await {
+                                        Ok(poll_val) => {
+                                            let state =
+                                                poll_val["status"].as_str().unwrap_or("unknown");
+                                            match state {
+                                                "completed" | "succeeded" => {
+                                                    return ToolResult {
+                                                        success: true,
+                                                        output: serde_json::to_string_pretty(
+                                                            &poll_val,
+                                                        )
+                                                        .unwrap_or_default(),
+                                                        error: None,
+                                                        duration_ms: 0,
+                                                    };
+                                                }
+                                                "failed" | "error" => {
+                                                    return ToolResult {
+                                                        success: false,
+                                                        output: String::new(),
+                                                        error: Some(
+                                                            poll_val["error"]
+                                                                .as_str()
+                                                                .unwrap_or(
+                                                                    "function invocation failed",
+                                                                )
+                                                                .to_string(),
+                                                        ),
+                                                        duration_ms: 0,
+                                                    };
+                                                }
+                                                "unknown" => {
+                                                    return ToolResult {
+                                                        success: false,
+                                                        output: String::new(),
+                                                        error: Some(format!(
                                                         "polling returned unknown status; raw: {}",
                                                         serde_json::to_string(&poll_val)
                                                             .unwrap_or_default()
                                                     )),
-                                                    duration_ms: 0,
-                                                };
+                                                        duration_ms: 0,
+                                                    };
+                                                }
+                                                _ => continue,
                                             }
-                                            _ => continue,
+                                        }
+                                        Err(e) => {
+                                            return ToolResult {
+                                                success: false,
+                                                output: String::new(),
+                                                error: Some(format!(
+                                                    "poll response parse failed: {}",
+                                                    e
+                                                )),
+                                                duration_ms: 0,
+                                            };
                                         }
                                     }
-                                    Err(e) => {
-                                        return ToolResult {
-                                            success: false,
-                                            output: String::new(),
-                                            error: Some(format!(
-                                                "poll response parse failed: {}",
-                                                e
-                                            )),
-                                            duration_ms: 0,
-                                        };
-                                    }
-                                },
+                                }
                                 Err(e) => {
                                     return ToolResult {
                                         success: false,

@@ -109,9 +109,24 @@ pub fn build_system_prompt(config: &AgentConfig, workspace: Option<&Path>) -> St
         // cache automatically; no per-turn disk I/O.
         WORKSPACE_CACHE.with(|cache| {
             for (label, path, cap, slot) in &[
-                ("Personality", ws.join("SOUL.md"), PERSONALITY_INLINE_CAP, &cache.soul),
-                ("Persistent Memory", ws.join("MEMORY.md"), PERSONALITY_INLINE_CAP, &cache.memory),
-                ("User Profile", ws.join("USER.md"), PERSONALITY_INLINE_CAP, &cache.user),
+                (
+                    "Personality",
+                    ws.join("SOUL.md"),
+                    PERSONALITY_INLINE_CAP,
+                    &cache.soul,
+                ),
+                (
+                    "Persistent Memory",
+                    ws.join("MEMORY.md"),
+                    PERSONALITY_INLINE_CAP,
+                    &cache.memory,
+                ),
+                (
+                    "User Profile",
+                    ws.join("USER.md"),
+                    PERSONALITY_INLINE_CAP,
+                    &cache.user,
+                ),
             ] {
                 if let Some(snippet) = read_capped_cached(path, *cap, slot) {
                     parts.push(format!("## {}\n{}", label, snippet));
@@ -213,8 +228,11 @@ mod tests {
     #[test]
     fn read_capped_cached_missing_file_returns_none() {
         let slot = fresh_slot();
-        let result =
-            read_capped_cached(Path::new("/nonexistent/path/that/does/not/exist"), 100, &slot);
+        let result = read_capped_cached(
+            Path::new("/nonexistent/path/that/does/not/exist"),
+            100,
+            &slot,
+        );
         assert!(result.is_none());
     }
 
@@ -230,7 +248,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         std::fs::write(&tmp, "second content").unwrap();
         let r2 = read_capped_cached(&tmp, 1000, &slot).unwrap();
-        assert_eq!(r2, "second content", "cache should have invalidated on mtime change");
+        assert_eq!(
+            r2, "second content",
+            "cache should have invalidated on mtime change"
+        );
         std::fs::remove_file(&tmp).ok();
     }
 }

@@ -5,16 +5,18 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub async fn register_chart_tools(registry: &Arc<ToolRegistry>) {
-    let chart_schema = || serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": { "type": "string" },
-            "labels": { "type": "array", "items": { "type": "string" } },
-            "values": { "type": "array", "items": { "type": "number" } },
-            "output_path": { "type": "string" }
-        },
-        "required": ["title", "labels", "values", "output_path"]
-    });
+    let chart_schema = || {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string" },
+                "labels": { "type": "array", "items": { "type": "string" } },
+                "values": { "type": "array", "items": { "type": "number" } },
+                "output_path": { "type": "string" }
+            },
+            "required": ["title", "labels", "values", "output_path"]
+        })
+    };
 
     register_tool!(
         registry,
@@ -24,10 +26,16 @@ pub async fn register_chart_tools(registry: &Arc<ToolRegistry>) {
         "builtin",
         |args: Value| async move {
             let t = args["title"].as_str().unwrap_or("Chart");
-            let l: Vec<String> = args["labels"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            let l: Vec<String> = args["labels"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
-            let v: Vec<f64> = args["values"].as_array()
+            let v: Vec<f64> = args["values"]
+                .as_array()
                 .map(|a| a.iter().filter_map(|n| n.as_f64()).collect())
                 .unwrap_or_default();
             let o = args["output_path"].as_str().unwrap_or("chart.html");
@@ -43,10 +51,16 @@ pub async fn register_chart_tools(registry: &Arc<ToolRegistry>) {
         "builtin",
         |args: Value| async move {
             let t = args["title"].as_str().unwrap_or("Chart");
-            let l: Vec<String> = args["labels"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            let l: Vec<String> = args["labels"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
-            let v: Vec<f64> = args["values"].as_array()
+            let v: Vec<f64> = args["values"]
+                .as_array()
                 .map(|a| a.iter().filter_map(|n| n.as_f64()).collect())
                 .unwrap_or_default();
             let o = args["output_path"].as_str().unwrap_or("chart.html");
@@ -169,8 +183,13 @@ pub async fn register_archive_tools(registry: &Arc<ToolRegistry>) {
         "builtin",
         |args: Value| async move {
             let path = args["path"].as_str().unwrap_or("");
-            let sources: Vec<String> = args["sources"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            let sources: Vec<String> = args["sources"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             let format = args["format"].as_str().unwrap_or("tar.gz");
             crate::tools::archive_tool::archive_create(path, &sources, format).await

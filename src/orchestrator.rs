@@ -303,9 +303,7 @@ pub enum ResolveError {
     ModelNotMatched { model: String, active: String },
     /// The model name has a vendor prefix that maps to a provider, but
     /// that provider's API key is missing.
-    #[error(
-        "model `{model}` requires provider `{provider}` but {env_var} is not set."
-    )]
+    #[error("model `{model}` requires provider `{provider}` but {env_var} is not set.")]
     ProviderKeyMissing {
         model: String,
         provider: String,
@@ -376,8 +374,7 @@ pub fn resolve_provider_with(
                     if m.contains(prefix) {
                         let provider_slug =
                             route["provider"].as_str().unwrap_or("openai").to_string();
-                        let base_url =
-                            route["base_url"].as_str().unwrap_or("").to_string();
+                        let base_url = route["base_url"].as_str().unwrap_or("").to_string();
                         let env_var = route["api_key_env"]
                             .as_str()
                             .unwrap_or("LLM_API_KEY")
@@ -446,10 +443,7 @@ pub fn resolve_provider_with(
             });
         }
     }
-    if m.contains("nvidia")
-        || m.contains("nvlm")
-        || is_nim_hosted_model(&m)
-    {
+    if m.contains("nvidia") || m.contains("nvlm") || is_nim_hosted_model(&m) {
         if let Some(p) = inv
             .active()
             .find(|p| p.slug == "nvidia" || p.slug == "moonshot")
@@ -511,10 +505,7 @@ pub fn resolve_provider_with(
 /// Build a `ProviderRoute` from a `DetectedProvider`. For local servers
 /// and overrides, the API key is empty; for cloud providers, we re-read
 /// the env var at call time so runtime key changes are honored.
-fn route_from_detected(
-    p: &DetectedProvider,
-    model: &str,
-) -> Result<ProviderRoute, ResolveError> {
+fn route_from_detected(p: &DetectedProvider, model: &str) -> Result<ProviderRoute, ResolveError> {
     let api_key = if p.env_var.is_empty() {
         String::new()
     } else {
@@ -796,9 +787,7 @@ impl Orchestrator {
 
         let mut worker_steps: Vec<StepResult> = Vec::with_capacity(handles.len());
         for h in handles {
-            let step = h
-                .await
-                .map_err(|e| anyhow::anyhow!("worker join: {}", e))?;
+            let step = h.await.map_err(|e| anyhow::anyhow!("worker join: {}", e))?;
             worker_steps.push(step);
         }
 
@@ -1345,7 +1334,8 @@ impl Orchestrator {
     ) -> anyhow::Result<WorkflowResult> {
         let started = std::time::Instant::now();
         let workflow = DagWorkflow::from_json(dag_json)?;
-        self.execute_dag_internal(workflow, initial_input, started).await
+        self.execute_dag_internal(workflow, initial_input, started)
+            .await
     }
 
     /// Execute a `WorkflowGraph` (canvas format). Resolves role names to
@@ -1432,7 +1422,8 @@ impl Orchestrator {
         }
 
         // 3. Execute the resolved DAG.
-        self.execute_dag_internal(dag_workflow, initial_input, started).await
+        self.execute_dag_internal(dag_workflow, initial_input, started)
+            .await
     }
 
     async fn execute_dag_internal(
@@ -1489,7 +1480,12 @@ pub fn parse_prod_allowlist() -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .filter(|v: &Vec<String>| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_PROD_ALLOWLIST.iter().map(|s| s.to_string()).collect())
+        .unwrap_or_else(|| {
+            DEFAULT_PROD_ALLOWLIST
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        })
 }
 
 /// Classify a model ID to a provider slug. Returns `None` when the
@@ -1541,7 +1537,8 @@ pub fn classify_model_to_slug(model: &str) -> Option<&'static str> {
         || m.starts_with("google/")
         || m.starts_with("minimax")
         || m.starts_with("baai/")
-        || m.starts_with("openai/gpt-oss-") // GPT-OSS is also served by vLLM
+        || m.starts_with("openai/gpt-oss-")
+    // GPT-OSS is also served by vLLM
     {
         return Some("vllm");
     }
@@ -1550,10 +1547,7 @@ pub fn classify_model_to_slug(model: &str) -> Option<&'static str> {
         return Some("ollama_local");
     }
     // ── 4. Loose substring matches (last resort) ──
-    if m.contains("llama")
-        || m.contains("qwen")
-        || m.contains("mistral")
-        || m.contains("deepseek")
+    if m.contains("llama") || m.contains("qwen") || m.contains("mistral") || m.contains("deepseek")
     {
         return Some("vllm");
     }
@@ -1693,9 +1687,18 @@ mod tests {
         assert_eq!(classify_model_to_slug("groq/llama-3.1-70b"), Some("groq"));
         assert_eq!(classify_model_to_slug("gpt-4o"), Some("openai"));
         assert_eq!(classify_model_to_slug("o1-preview"), Some("openai"));
-        assert_eq!(classify_model_to_slug("claude-sonnet-4-5"), Some("anthropic"));
-        assert_eq!(classify_model_to_slug("nvidia/meta/llama-3.1-8b"), Some("nvidia"));
-        assert_eq!(classify_model_to_slug("meta-llama/Llama-3.1-8B"), Some("vllm"));
+        assert_eq!(
+            classify_model_to_slug("claude-sonnet-4-5"),
+            Some("anthropic")
+        );
+        assert_eq!(
+            classify_model_to_slug("nvidia/meta/llama-3.1-8b"),
+            Some("nvidia")
+        );
+        assert_eq!(
+            classify_model_to_slug("meta-llama/Llama-3.1-8B"),
+            Some("vllm")
+        );
         assert_eq!(classify_model_to_slug("qwen/qwen3-32b"), Some("vllm"));
         assert_eq!(classify_model_to_slug("llama3.1:8b"), Some("ollama_local"));
     }

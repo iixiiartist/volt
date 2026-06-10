@@ -44,7 +44,9 @@ async fn test_program_bench() {
     }
 
     let Some(provider) = build_provider() else {
-        eprintln!("program_bench: SKIPPED — no LLM provider configured (set GROQ_API_KEY or other)");
+        eprintln!(
+            "program_bench: SKIPPED — no LLM provider configured (set GROQ_API_KEY or other)"
+        );
         return;
     };
     let tools = build_tools();

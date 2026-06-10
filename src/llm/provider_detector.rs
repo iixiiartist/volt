@@ -112,7 +112,11 @@ impl ProviderInventory {
         //    importantly Ollama-style tags like `claudette:7b` which
         //    would otherwise match the `claude` Anthropic hint below.
         if let Some((prefix, _)) = m.split_once(':').or_else(|| m.split_once('/')) {
-            if let Some(p) = self.providers.iter().find(|p| p.slug == prefix && p.is_active) {
+            if let Some(p) = self
+                .providers
+                .iter()
+                .find(|p| p.slug == prefix && p.is_active)
+            {
                 return Some(p);
             }
         }
@@ -391,7 +395,12 @@ pub fn detect_uncached() -> ProviderInventory {
     let local: &[(&str, &str, &str, &str)] = &[
         // (slug, display, default_host:port, env_var_to_override)
         ("vllm", "vLLM (local)", "127.0.0.1:8000", "VLLM_HOST"),
-        ("ollama_local", "Ollama (local)", "127.0.0.1:11434", "OLLAMA_HOST"),
+        (
+            "ollama_local",
+            "Ollama (local)",
+            "127.0.0.1:11434",
+            "OLLAMA_HOST",
+        ),
         (
             "llamacpp",
             "llama.cpp (local)",
@@ -406,9 +415,7 @@ pub fn detect_uncached() -> ProviderInventory {
         ),
     ];
     for (slug, name, default_addr, env_var) in local {
-        let configured = std::env::var(env_var)
-            .ok()
-            .filter(|v| !v.trim().is_empty());
+        let configured = std::env::var(env_var).ok().filter(|v| !v.trim().is_empty());
         let (host, port) = if let Some(ref v) = configured {
             // Parse "host:port" or assume default port.
             if let Some((h, p)) = v.rsplit_once(':') {
@@ -571,7 +578,14 @@ mod tests {
         let inv = detect_uncached();
         // The 6 cloud providers are always present (slugs stable). They
         // must all be inactive in this configuration.
-        for slug in ["groq", "nvidia", "openai", "anthropic", "ollama", "moonshot"] {
+        for slug in [
+            "groq",
+            "nvidia",
+            "openai",
+            "anthropic",
+            "ollama",
+            "moonshot",
+        ] {
             let p = inv
                 .providers
                 .iter()
@@ -580,8 +594,7 @@ mod tests {
             assert!(
                 !p.is_active,
                 "{} should be inactive when no key set, but was active (status: {:?})",
-                slug,
-                p.status
+                slug, p.status
             );
         }
         // No override URL set.
@@ -692,7 +705,10 @@ mod tests {
         std::env::set_var("GROQ_API_KEY", "gsk_real-looking-key-1234");
         let inv = detect_uncached();
         let groq = inv.providers.iter().find(|p| p.slug == "groq").unwrap();
-        assert!(!groq.is_active, "groq should be inactive without VOLT_ENABLE_CLOUD_PROVIDERS");
+        assert!(
+            !groq.is_active,
+            "groq should be inactive without VOLT_ENABLE_CLOUD_PROVIDERS"
+        );
         assert_eq!(groq.status, ProviderStatus::InactiveNoKey);
     }
 

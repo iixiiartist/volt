@@ -40,7 +40,10 @@ async fn test_agent_returns_text_response() {
 
     let result = agent.run("Say hello").await;
     let output = result.expect("agent should return text response");
-    assert!(output.contains("Hello"), "output should contain mock LLM text, got: {output}");
+    assert!(
+        output.contains("Hello"),
+        "output should contain mock LLM text, got: {output}"
+    );
 }
 
 #[tokio::test]
@@ -60,7 +63,10 @@ async fn test_agent_runs_tool_and_uses_result() {
 
     let result = agent.run("Use the echo tool").await;
     let output = result.expect("agent should complete after one tool call");
-    assert!(output.contains("Tool result"), "output should reference tool result, got: {output}");
+    assert!(
+        output.contains("Tool result"),
+        "output should reference tool result, got: {output}"
+    );
 }
 
 #[tokio::test]

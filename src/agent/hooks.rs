@@ -1295,10 +1295,8 @@ mod tests {
         // without touching the test again, we tee the hook's
         // stdout to a tempfile and include the contents in the
         // panic message.
-        let tmp = std::env::temp_dir().join(format!(
-            "volt-hook-test-modify-{}.out",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("volt-hook-test-modify-{}.out", std::process::id()));
         let tmp_str = tmp.display().to_string();
         let _ = std::fs::remove_file(&tmp);
         // Wrap the hook command so its stdout is both delivered to

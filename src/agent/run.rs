@@ -8,7 +8,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 impl Agent {
-
     pub async fn run(&self, input: &str) -> anyhow::Result<String> {
         // PreRun hooks (one-shot side effects; not allowed to block).
         if let Some(registry) = &self.hook_registry {
@@ -276,8 +275,7 @@ impl Agent {
 
                 // ── max_tools_per_turn enforcement ─────────────────────
                 if let Some(max) = self.config.max_tools_per_turn {
-                    if tool_calls.len() > max
-                    {
+                    if tool_calls.len() > max {
                         let overflow: Vec<_> = tool_calls
                             .iter()
                             .skip(max)
@@ -680,9 +678,7 @@ impl Agent {
             // active kinds (default: Tool + Memory + Conversation),
             // not a per-kind fan-out. This is one DB round-trip + one
             // embedding, not 8.
-            let retrieved = store
-                .search(emb, 8, None, 0.25, Some(&context_query))
-                .await;
+            let retrieved = store.search(emb, 8, None, 0.25, Some(&context_query)).await;
             if !retrieved.is_empty() {
                 let blocks: Vec<String> = retrieved
                     .iter()
@@ -939,11 +935,9 @@ impl Agent {
         for tc in tool_calls {
             let scope = crate::capability::tool_required_scope(&tc.name);
             let tokens = self.capability_manager.list_tokens().await;
-            let has_valid = tokens.iter().any(|t| {
-                t.scope == scope
-                    && t.remaining > 0
-                    && chrono::Utc::now() <= t.expires_at
-            });
+            let has_valid = tokens
+                .iter()
+                .any(|t| t.scope == scope && t.remaining > 0 && chrono::Utc::now() <= t.expires_at);
             if !has_valid {
                 tracing::warn!(
                     "[capability] no valid token for {:?} — skipping tool '{}'",
@@ -1067,13 +1061,12 @@ impl Agent {
                     format!("error: {}", error_msg.unwrap_or_default())
                 };
 
-                let output = if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref()
-                    != Some("false")
-                {
-                    crate::safety_layer::wrap_tool_output(&name, &raw_output)
-                } else {
-                    raw_output
-                };
+                let output =
+                    if std::env::var("VOLT_WRAP_TOOL_OUTPUT").ok().as_deref() != Some("false") {
+                        crate::safety_layer::wrap_tool_output(&name, &raw_output)
+                    } else {
+                        raw_output
+                    };
 
                 let mut post_output = output;
                 if let Some(registry) = hook_registry {
@@ -1146,7 +1139,6 @@ impl Agent {
             }
         }
     }
-
 
     async fn store_memory(
         &self,

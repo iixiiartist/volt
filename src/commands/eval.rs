@@ -5,8 +5,16 @@ use std::path::PathBuf;
 pub async fn run(suite: PathBuf, model: Option<String>) -> anyhow::Result<()> {
     let model = model
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("LLM_MODEL").ok().filter(|s| !s.trim().is_empty()))
-        .or_else(|| std::env::var("LLM_DEFAULT_MODEL").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| {
+            std::env::var("LLM_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .or_else(|| {
+            std::env::var("LLM_DEFAULT_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
         .or_else(|| {
             let inv = crate::llm::detect_providers();
             let defaults: Vec<String> = inv

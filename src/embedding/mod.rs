@@ -104,10 +104,7 @@ impl EmbeddingClient {
                 .iter()
                 .map(|p| format!("{:?}", p.provider))
                 .collect();
-            tracing::info!(
-                "[embedding] auto-detected providers: {}",
-                names.join(", ")
-            );
+            tracing::info!("[embedding] auto-detected providers: {}", names.join(", "));
         } else {
             tracing::warn!(
                 "[embedding] no embedding providers detected. Local ONNX model + remote keys \

@@ -77,7 +77,11 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
         UiEvent::ChatChunk { content } => {
             append_assistant_chunk(state, &content);
         }
-        UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
+        UiEvent::ChatComplete {
+            final_text,
+            tokens_used,
+            duration_ms,
+        } => {
             state.chat_streaming.set(false);
             finalize_assistant_message(state, &final_text);
             state.toast(
@@ -140,10 +144,16 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
             state.toast(ToastLevel::Error, format!("{}: {}", source, message));
         }
         UiEvent::JobCreated { id } => {
-            state.toast(ToastLevel::Success, format!("Job created ({})", short_id(&id)));
+            state.toast(
+                ToastLevel::Success,
+                format!("Job created ({})", short_id(&id)),
+            );
             state.fire(UiCommand::ListJobs);
         }
-        UiEvent::JobUpdated { id, state: job_state } => {
+        UiEvent::JobUpdated {
+            id,
+            state: job_state,
+        } => {
             state.toast(
                 ToastLevel::Info,
                 format!("Job {} \u{2192} {}", short_id(&id), job_state),
@@ -153,12 +163,19 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
         UiEvent::RoutineUpdated { id, enabled } => {
             state.toast(
                 ToastLevel::Success,
-                format!("Routine {} {}", short_id(&id), if enabled { "enabled" } else { "disabled" }),
+                format!(
+                    "Routine {} {}",
+                    short_id(&id),
+                    if enabled { "enabled" } else { "disabled" }
+                ),
             );
             state.fire(UiCommand::ListRoutines);
         }
         UiEvent::RoutineDeleted { id } => {
-            state.toast(ToastLevel::Info, format!("Routine {} deleted", short_id(&id)));
+            state.toast(
+                ToastLevel::Info,
+                format!("Routine {} deleted", short_id(&id)),
+            );
             state.fire(UiCommand::ListRoutines);
         }
         UiEvent::SkillInstalled { name } => {
@@ -170,7 +187,10 @@ async fn handle_event(state: &mut VoltState, event: UiEvent) {
             state.fire(UiCommand::ListSkills);
         }
         UiEvent::McpServerRegistered { name } => {
-            state.toast(ToastLevel::Success, format!("MCP server registered: {}", name));
+            state.toast(
+                ToastLevel::Success,
+                format!("MCP server registered: {}", name),
+            );
             state.fire(UiCommand::ListMcpServers);
         }
         UiEvent::WorkflowCompleted { pattern, .. } => {

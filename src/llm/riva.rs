@@ -100,10 +100,7 @@ impl LLMProvider for RivaProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let resp_val = req
-            .timeout(AUDIO_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let resp_val = req.timeout(AUDIO_HTTP_TIMEOUT).send().await?;
 
         let status = resp_val.status();
         if !status.is_success() {
@@ -156,10 +153,7 @@ impl LLMProvider for RivaProvider {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let resp_val = req
-            .timeout(AUDIO_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let resp_val = req.timeout(AUDIO_HTTP_TIMEOUT).send().await?;
 
         let status = resp_val.status();
         if !status.is_success() {

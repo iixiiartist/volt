@@ -2,16 +2,66 @@ use volt::attenuation::{effective_permission, TrustLevel};
 use volt::models::PermissionLevel;
 
 const CASES: &[(TrustLevel, PermissionLevel, &str, PermissionLevel)] = &[
-    (TrustLevel::Builtin, PermissionLevel::Allow, "bash", PermissionLevel::Allow),
-    (TrustLevel::Builtin, PermissionLevel::Prompt, "bash", PermissionLevel::Prompt),
-    (TrustLevel::Trusted, PermissionLevel::Allow, "write", PermissionLevel::Allow),
-    (TrustLevel::Installed, PermissionLevel::Allow, "read", PermissionLevel::Allow),
-    (TrustLevel::Installed, PermissionLevel::Allow, "grep", PermissionLevel::Allow),
-    (TrustLevel::Installed, PermissionLevel::Allow, "bash", PermissionLevel::Blocked),
-    (TrustLevel::Installed, PermissionLevel::Allow, "write", PermissionLevel::Blocked),
-    (TrustLevel::Installed, PermissionLevel::Allow, "edit", PermissionLevel::Blocked),
-    (TrustLevel::Installed, PermissionLevel::Allow, "browser_navigate", PermissionLevel::Allow),
-    (TrustLevel::Installed, PermissionLevel::Prompt, "bash", PermissionLevel::Blocked),
+    (
+        TrustLevel::Builtin,
+        PermissionLevel::Allow,
+        "bash",
+        PermissionLevel::Allow,
+    ),
+    (
+        TrustLevel::Builtin,
+        PermissionLevel::Prompt,
+        "bash",
+        PermissionLevel::Prompt,
+    ),
+    (
+        TrustLevel::Trusted,
+        PermissionLevel::Allow,
+        "write",
+        PermissionLevel::Allow,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Allow,
+        "read",
+        PermissionLevel::Allow,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Allow,
+        "grep",
+        PermissionLevel::Allow,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Allow,
+        "bash",
+        PermissionLevel::Blocked,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Allow,
+        "write",
+        PermissionLevel::Blocked,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Allow,
+        "edit",
+        PermissionLevel::Blocked,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Allow,
+        "browser_navigate",
+        PermissionLevel::Allow,
+    ),
+    (
+        TrustLevel::Installed,
+        PermissionLevel::Prompt,
+        "bash",
+        PermissionLevel::Blocked,
+    ),
 ];
 
 #[test]

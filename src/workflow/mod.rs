@@ -45,7 +45,6 @@ pub enum NodeKind {
     Note,
 }
 
-
 /// The deployment environment a workflow targets. The runtime
 /// enforces a per-environment provider allowlist so a workflow
 /// tagged `prod` cannot route to a non-allowlisted provider even if
@@ -198,8 +197,8 @@ impl WorkflowGraph {
 
     /// Parse a workflow file from JSON.
     pub fn from_json(text: &str) -> Result<Self> {
-        let g: WorkflowGraph = serde_json::from_str(text)
-            .with_context(|| "failed to parse workflow JSON")?;
+        let g: WorkflowGraph =
+            serde_json::from_str(text).with_context(|| "failed to parse workflow JSON")?;
         if g.version > WORKFLOW_FILE_VERSION {
             bail!(
                 "workflow file version {} is newer than supported ({})",
@@ -240,7 +239,11 @@ impl WorkflowGraph {
         if !self.nodes.iter().any(|n| n.id == edge.to) {
             bail!("edge references unknown target node: {}", edge.to);
         }
-        if self.edges.iter().any(|e| e.from == edge.from && e.to == edge.to) {
+        if self
+            .edges
+            .iter()
+            .any(|e| e.from == edge.from && e.to == edge.to)
+        {
             // Idempotent — silently no-op for repeated connections.
             return Ok(());
         }
@@ -287,10 +290,7 @@ impl WorkflowGraph {
     pub fn topological_order(&self) -> Result<Vec<String>> {
         let g = self.to_petgraph();
         match petgraph::algo::toposort(&g, None) {
-            Ok(order) => Ok(order
-                .into_iter()
-                .map(|i| g[i].clone())
-                .collect()),
+            Ok(order) => Ok(order.into_iter().map(|i| g[i].clone()).collect()),
             Err(_) => bail!("workflow contains a cycle"),
         }
     }
@@ -299,11 +299,9 @@ impl WorkflowGraph {
     /// Only `Agent` nodes are kept; other kinds are dropped (the
     /// orchestrator can only run agents). Returns a `DagWorkflow` plus
     /// the list of node IDs that were dropped (for user feedback).
-    pub fn to_dag_workflow(
-        &self,
-    ) -> Result<(crate::orchestrator::DagWorkflow, Vec<String>)> {
-        use crate::orchestrator::{AgentSpec, DagEdge, DagNode, DagWorkflow};
+    pub fn to_dag_workflow(&self) -> Result<(crate::orchestrator::DagWorkflow, Vec<String>)> {
         use crate::llm::role_registry::{ResolutionSource, RoleRegistry};
+        use crate::orchestrator::{AgentSpec, DagEdge, DagNode, DagWorkflow};
 
         let registry = RoleRegistry::load_default().ok();
         let mut nodes = Vec::new();
@@ -357,10 +355,7 @@ impl WorkflowGraph {
                     };
                     let _ = ResolutionSource::Role; // silence unused import
                     let agent = AgentSpec {
-                        name: n
-                            .agent_name
-                            .clone()
-                            .unwrap_or_else(|| n.id.clone()),
+                        name: n.agent_name.clone().unwrap_or_else(|| n.id.clone()),
                         model,
                         system_prompt: n.system_prompt.clone(),
                         max_iterations,
@@ -379,8 +374,7 @@ impl WorkflowGraph {
             }
         }
 
-        let id_set: std::collections::HashSet<&str> =
-            nodes.iter().map(|n| n.id.as_str()).collect();
+        let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
         let edges: Vec<DagEdge> = self
             .edges
             .iter()
@@ -416,13 +410,14 @@ impl WorkflowGraph {
                 NodeKind::Agent => {
                     let (model_id, source) =
                         registry.resolve_node(n.role.as_deref(), n.model.as_deref())?;
-                    let (temperature, max_iterations) = match n.role.as_deref().and_then(|r| registry.resolve(r)) {
-                        Some(m) => (
-                            m.temperature.unwrap_or(0.3),
-                            m.max_tokens.map(|t| t / 256).unwrap_or(8).max(1),
-                        ),
-                        None => (0.3, 8),
-                    };
+                    let (temperature, max_iterations) =
+                        match n.role.as_deref().and_then(|r| registry.resolve(r)) {
+                            Some(m) => (
+                                m.temperature.unwrap_or(0.3),
+                                m.max_tokens.map(|t| t / 256).unwrap_or(8).max(1),
+                            ),
+                            None => (0.3, 8),
+                        };
                     resolutions.push(RoleResolution {
                         node_id: n.id.clone(),
                         role: n.role.clone(),
@@ -430,10 +425,7 @@ impl WorkflowGraph {
                         source,
                     });
                     let agent = AgentSpec {
-                        name: n
-                            .agent_name
-                            .clone()
-                            .unwrap_or_else(|| n.id.clone()),
+                        name: n.agent_name.clone().unwrap_or_else(|| n.id.clone()),
                         model: model_id,
                         system_prompt: n.system_prompt.clone(),
                         max_iterations,
@@ -463,8 +455,7 @@ impl WorkflowGraph {
             }
         }
 
-        let id_set: std::collections::HashSet<&str> =
-            nodes.iter().map(|n| n.id.as_str()).collect();
+        let id_set: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
         let edges: Vec<DagEdge> = self
             .edges
             .iter()
@@ -497,11 +488,8 @@ impl WorkflowGraph {
         };
 
         let mut level: HashMap<String, usize> = HashMap::new();
-        let mut in_degree: HashMap<String, usize> = self
-            .nodes
-            .iter()
-            .map(|n| (n.id.clone(), 0))
-            .collect();
+        let mut in_degree: HashMap<String, usize> =
+            self.nodes.iter().map(|n| (n.id.clone(), 0)).collect();
         for e in &self.edges {
             *in_degree.entry(e.to.clone()).or_insert(0) += 1;
         }
@@ -819,7 +807,10 @@ mod tests {
     fn environment_parses_various_strings() {
         assert_eq!(WorkflowEnvironment::parse("dev"), WorkflowEnvironment::Dev);
         assert_eq!(WorkflowEnvironment::parse("DEV"), WorkflowEnvironment::Dev);
-        assert_eq!(WorkflowEnvironment::parse("development"), WorkflowEnvironment::Dev);
+        assert_eq!(
+            WorkflowEnvironment::parse("development"),
+            WorkflowEnvironment::Dev
+        );
         assert_eq!(
             WorkflowEnvironment::parse("staging"),
             WorkflowEnvironment::Staging
@@ -828,13 +819,19 @@ mod tests {
             WorkflowEnvironment::parse("stage"),
             WorkflowEnvironment::Staging
         );
-        assert_eq!(WorkflowEnvironment::parse("prod"), WorkflowEnvironment::Prod);
+        assert_eq!(
+            WorkflowEnvironment::parse("prod"),
+            WorkflowEnvironment::Prod
+        );
         assert_eq!(
             WorkflowEnvironment::parse("PRODUCTION"),
             WorkflowEnvironment::Prod
         );
         // Unknown falls back to Dev
-        assert_eq!(WorkflowEnvironment::parse("garbage"), WorkflowEnvironment::Dev);
+        assert_eq!(
+            WorkflowEnvironment::parse("garbage"),
+            WorkflowEnvironment::Dev
+        );
     }
 
     #[test]
@@ -907,7 +904,9 @@ mod tests {
 
     #[test]
     fn dag_projection_resolves_role_to_model() {
-        use crate::llm::role_registry::{ResolutionSource, RoleMapping, RoleRegistry, VoltModelsConfig};
+        use crate::llm::role_registry::{
+            ResolutionSource, RoleMapping, RoleRegistry, VoltModelsConfig,
+        };
         let mut cfg = VoltModelsConfig::default();
         cfg.roles.insert(
             "supervisor".into(),
@@ -939,7 +938,10 @@ mod tests {
         assert_eq!(dag.nodes.len(), 1);
         assert!(dropped.is_empty());
         // The role resolved to the registry's model, not the (None) field
-        assert_eq!(dag.nodes[0].agent.model, "meta-llama/Llama-3.3-70B-Instruct");
+        assert_eq!(
+            dag.nodes[0].agent.model,
+            "meta-llama/Llama-3.3-70B-Instruct"
+        );
         assert_eq!(dag.nodes[0].agent.temperature, 0.3);
         // Audit-log record
         assert_eq!(resolutions.len(), 1);

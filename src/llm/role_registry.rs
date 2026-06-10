@@ -122,8 +122,8 @@ impl RoleRegistry {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read config at {:?}", path))?;
-        let config: VoltModelsConfig = toml::from_str(&text)
-            .with_context(|| format!("failed to parse TOML at {:?}", path))?;
+        let config: VoltModelsConfig =
+            toml::from_str(&text).with_context(|| format!("failed to parse TOML at {:?}", path))?;
         Ok(Self {
             config,
             source: Some(path),
@@ -135,8 +135,8 @@ impl RoleRegistry {
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read config at {:?}", path))?;
-        let config: VoltModelsConfig = toml::from_str(&text)
-            .with_context(|| format!("failed to parse TOML at {:?}", path))?;
+        let config: VoltModelsConfig =
+            toml::from_str(&text).with_context(|| format!("failed to parse TOML at {:?}", path))?;
         Ok(Self {
             config,
             source: Some(path.to_path_buf()),

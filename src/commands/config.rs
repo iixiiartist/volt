@@ -130,8 +130,10 @@ async fn set(provider: &str, key: &str) -> anyhow::Result<()> {
     // take a host URL (or a base URL for the override). `save_api_key`
     // will route to the right env var thanks to the updated
     // `provider_env_var` mapping.
-    if !matches!(p.slug.as_str(), "groq" | "nvidia" | "openai" | "anthropic" | "ollama" | "moonshot")
-    {
+    if !matches!(
+        p.slug.as_str(),
+        "groq" | "nvidia" | "openai" | "anthropic" | "ollama" | "moonshot"
+    ) {
         // For local servers / override, the value is a URL, not a key.
         if key.contains("://") || key.starts_with("http") {
             // OK, treat as URL.
@@ -174,7 +176,10 @@ async fn unset(provider: &str) -> anyhow::Result<()> {
     let home = volt_home();
     let env_path = home.join(".env");
     if !env_path.exists() {
-        println!("nothing to remove; .env does not exist at {}", env_path.display());
+        println!(
+            "nothing to remove; .env does not exist at {}",
+            env_path.display()
+        );
         return Ok(());
     }
     let existing = std::fs::read_to_string(&env_path)?;
@@ -249,7 +254,10 @@ async fn wizard() -> anyhow::Result<()> {
         .get(n - 1)
         .ok_or_else(|| anyhow::anyhow!("out of range"))?;
     if pick.env_var.is_empty() {
-        println!("Provider `{}` is a local server. Set {} to its base URL.", pick.slug, pick.env_var);
+        println!(
+            "Provider `{}` is a local server. Set {} to its base URL.",
+            pick.slug, pick.env_var
+        );
         return Ok(());
     }
     let key = prompt(&format!("Paste your {} API key: ", pick.display_name))?;
@@ -261,7 +269,10 @@ async fn wizard() -> anyhow::Result<()> {
     println!("Saved {} to .env (and process env).", env_var);
     println!();
     println!("Quick test:");
-    println!("  volt agent run --input \"hello\" --model {}", pick.default_model.unwrap_or("default-model"));
+    println!(
+        "  volt agent run --input \"hello\" --model {}",
+        pick.default_model.unwrap_or("default-model")
+    );
     Ok(())
 }
 
@@ -278,6 +289,13 @@ fn mask_key(s: &str) -> String {
     if len <= 4 {
         return "****".to_string();
     }
-    let tail: String = s.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    let tail: String = s
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("****{}", tail)
 }

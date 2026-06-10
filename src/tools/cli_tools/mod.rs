@@ -27,13 +27,16 @@ static MUTATING_VERBS: LazyLock<HashMap<&'static str, &'static [&'static str]>> 
             (
                 "task",
                 &[
-                    "add", "delete", "modify", "done", "start", "stop", "edit", "annotate", "denotate",
-                    "log", "append", "prepend", "replace", "import", "export", "config",
+                    "add", "delete", "modify", "done", "start", "stop", "edit", "annotate",
+                    "denotate", "log", "append", "prepend", "replace", "import", "export",
+                    "config",
                 ][..],
             ),
             (
                 "crm",
-                &["add", "create", "update", "delete", "remove", "set", "import"][..],
+                &[
+                    "add", "create", "update", "delete", "remove", "set", "import",
+                ][..],
             ),
             (
                 "hledger",
@@ -50,9 +53,25 @@ static MUTATING_VERBS: LazyLock<HashMap<&'static str, &'static [&'static str]>> 
             (
                 "qsv",
                 &[
-                    "slice", "sort", "rename", "select", "dedup", "frequency", "luf", "cat",
-                    "apply", "enum", "fill", "replace", "update", "join", "flatten", "pivot",
-                    "transpose", "search", "edit",
+                    "slice",
+                    "sort",
+                    "rename",
+                    "select",
+                    "dedup",
+                    "frequency",
+                    "luf",
+                    "cat",
+                    "apply",
+                    "enum",
+                    "fill",
+                    "replace",
+                    "update",
+                    "join",
+                    "flatten",
+                    "pivot",
+                    "transpose",
+                    "search",
+                    "edit",
                 ][..],
             ),
             (
@@ -190,7 +209,11 @@ fn make_cli_exec_fn() -> crate::tools::ToolFn {
                             error: Some(format!(
                                 "exit code {}: {}",
                                 exit_code,
-                                if stderr.is_empty() { "no stderr" } else { &stderr }
+                                if stderr.is_empty() {
+                                    "no stderr"
+                                } else {
+                                    &stderr
+                                }
                             )),
                             duration_ms: started.elapsed().as_millis(),
                         };
@@ -235,15 +258,12 @@ fn make_cli_query_fn() -> crate::tools::ToolFn {
 
             if let Some(verb) = first_non_flag_arg(&raw_args) {
                 let lower = verb.to_ascii_lowercase();
-                if let Some(denied) = MUTATING_VERBS
-                    .get(binary.as_str())
-                    .and_then(|verbs| {
-                        verbs
-                            .iter()
-                            .find(|v| v.eq_ignore_ascii_case(&lower))
-                            .map(|s| s.to_string())
-                    })
-                {
+                if let Some(denied) = MUTATING_VERBS.get(binary.as_str()).and_then(|verbs| {
+                    verbs
+                        .iter()
+                        .find(|v| v.eq_ignore_ascii_case(&lower))
+                        .map(|s| s.to_string())
+                }) {
                     return fail(
                         started,
                         format!(
@@ -263,7 +283,11 @@ fn make_cli_query_fn() -> crate::tools::ToolFn {
                             error: Some(format!(
                                 "exit code {}: {}",
                                 exit_code,
-                                if stderr.is_empty() { "no stderr" } else { &stderr }
+                                if stderr.is_empty() {
+                                    "no stderr"
+                                } else {
+                                    &stderr
+                                }
                             )),
                             duration_ms: started.elapsed().as_millis(),
                         };

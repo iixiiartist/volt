@@ -346,7 +346,11 @@ fn ConnectionIndicator(collapsed: bool) -> Element {
 /// Returns the platform-specific keyboard shortcut label for
 /// the command palette button. `⌘K` on macOS, `Ctrl K` elsewhere.
 fn platform_shortcut_label() -> String {
-    if cfg!(target_os = "macos") { "\u{2318}K".to_string() } else { "Ctrl K".to_string() }
+    if cfg!(target_os = "macos") {
+        "\u{2318}K".to_string()
+    } else {
+        "Ctrl K".to_string()
+    }
 }
 
 #[component]

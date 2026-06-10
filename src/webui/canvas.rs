@@ -11,9 +11,9 @@
 //! trigger nodes.
 
 use super::state::{
-    VoltState, COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO,
-    COLOR_PANEL, COLOR_PANEL_HOVER, COLOR_SUCCESS, COLOR_TEXT, COLOR_TEXT_DIM,
-    COLOR_TEXT_MUTED, COLOR_WARNING, FONT_MONO,
+    VoltState, COLOR_ACCENT, COLOR_BG, COLOR_BORDER, COLOR_DANGER, COLOR_INFO, COLOR_PANEL,
+    COLOR_PANEL_HOVER, COLOR_SUCCESS, COLOR_TEXT, COLOR_TEXT_DIM, COLOR_TEXT_MUTED, COLOR_WARNING,
+    FONT_MONO,
 };
 use crate::workflow::{
     NodeKind, NodePosition, Viewport, WorkflowEdge, WorkflowGraph, WorkflowNode,
@@ -40,7 +40,11 @@ enum DragMode {
     /// Not interacting.
     None,
     /// Dragging a node body.
-    Node { id: String, grab_x: f64, grab_y: f64 },
+    Node {
+        id: String,
+        grab_x: f64,
+        grab_y: f64,
+    },
     /// Dragging the canvas (panning).
     Pan { grab_x: f64, grab_y: f64 },
     /// Drawing an edge from a node's output port to the cursor.
@@ -314,7 +318,8 @@ fn render_live_edge(from_id: &str, cursor_x: f64, cursor_y: f64, graph: &Workflo
     };
     let (x1, y1) = output_port_pos(&from.position);
     let dx = (cursor_x - x1).abs().max(40.0);
-    let path = format!(
+    let path =
+        format!(
         "M {x1:.1} {y1:.1} C {hx1:.1} {y1:.1} {hx2:.1} {cursor_y:.1} {cursor_x:.1} {cursor_y:.1}",
         x1 = x1, y1 = y1, hx1 = x1 + dx, hx2 = cursor_x - dx
     );
@@ -475,12 +480,16 @@ pub fn CanvasInspector() -> Element {
     let mut state: VoltState = use_context();
     let graph = parse_graph(&state.canvas_graph_json.peek());
     // Find a node whose notes contain the selected-at marker.
-    let selected: Option<WorkflowNode> = graph.nodes.iter().find(|n| {
-        n.notes
-            .as_deref()
-            .map(|s| s.starts_with("__selected_at:"))
-            .unwrap_or(false)
-    }).cloned();
+    let selected: Option<WorkflowNode> = graph
+        .nodes
+        .iter()
+        .find(|n| {
+            n.notes
+                .as_deref()
+                .map(|s| s.starts_with("__selected_at:"))
+                .unwrap_or(false)
+        })
+        .cloned();
 
     match selected {
         Some(node) => {

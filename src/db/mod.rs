@@ -43,7 +43,10 @@ pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
     // and fast (~5ms when no work is needed). This removes the
     // "did you run `volt init-db`?" failure mode for first-time users.
     if let Err(e) = init_schema(&pool).await {
-        tracing::warn!("[db] auto-migrate failed (non-fatal): {}. Run `volt migrate` to retry.", e);
+        tracing::warn!(
+            "[db] auto-migrate failed (non-fatal): {}. Run `volt migrate` to retry.",
+            e
+        );
     }
     Ok(pool)
 }

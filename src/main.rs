@@ -269,14 +269,9 @@ enum ConfigCmd {
         provider: String,
     },
     /// Set an API key. Writes to `volt_home()/.env` and the process env.
-    Set {
-        provider: String,
-        key: String,
-    },
+    Set { provider: String, key: String },
     /// Remove an API key from `volt_home()/.env`.
-    Unset {
-        provider: String,
-    },
+    Unset { provider: String },
     /// Provider-focused diagnostics. Surfaces the active set, lists
     /// missing keys with the env var name, and explains how to enable
     /// each provider.
@@ -673,9 +668,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 let settings = volt::config::Settings::from_env()?;
-                let resolved_model = commands::agent_run::AgentRunOptions::model_or_default(
-                    model_name.clone(),
-                );
+                let resolved_model =
+                    commands::agent_run::AgentRunOptions::model_or_default(model_name.clone());
                 if resolved_model.is_empty() {
                     anyhow::bail!(
                         "no model configured. Pass --model, set LLM_MODEL in .env, \
@@ -832,7 +826,11 @@ async fn main() -> anyhow::Result<()> {
                 let routines = volt::db::list_routines(&pool).await?;
                 println!("{}", serde_json::to_string_pretty(&routines)?);
             }
-            RoutinesSubcommand::Create { name, action_prompt, cron } => {
+            RoutinesSubcommand::Create {
+                name,
+                action_prompt,
+                cron,
+            } => {
                 volt::routines::validate_action_prompt(&action_prompt)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
                 let pool = volt::db::connect(&settings.database_url).await?;
@@ -850,35 +848,55 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
                 println!("Created routine {} ({})", name, id);
             }
-            RoutinesSubcommand::Edit { id, name, action_prompt, cron } => {
+            RoutinesSubcommand::Edit {
+                id,
+                name,
+                action_prompt,
+                cron,
+            } => {
                 let pool = volt::db::connect(&settings.database_url).await?;
-                let uuid: uuid::Uuid = id.parse().map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+                let uuid: uuid::Uuid = id
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
                 if let Some(ref p) = action_prompt {
                     volt::routines::validate_action_prompt(p)
                         .map_err(|e| anyhow::anyhow!("{}", e))?;
                 }
                 if let Some(n) = &name {
                     sqlx::query("UPDATE routines SET name = $1 WHERE id = $2")
-                        .bind(n).bind(uuid).execute(&pool).await?;
+                        .bind(n)
+                        .bind(uuid)
+                        .execute(&pool)
+                        .await?;
                 }
                 if let Some(p) = &action_prompt {
                     sqlx::query("UPDATE routines SET action_prompt = $1 WHERE id = $2")
-                        .bind(p).bind(uuid).execute(&pool).await?;
+                        .bind(p)
+                        .bind(uuid)
+                        .execute(&pool)
+                        .await?;
                 }
                 if let Some(c) = &cron {
                     sqlx::query("UPDATE routines SET cron = $1 WHERE id = $2")
-                        .bind(c).bind(uuid).execute(&pool).await?;
+                        .bind(c)
+                        .bind(uuid)
+                        .execute(&pool)
+                        .await?;
                 }
                 println!("Updated routine {}", uuid);
             }
             RoutinesSubcommand::Delete { id } => {
                 let pool = volt::db::connect(&settings.database_url).await?;
-                let uuid: uuid::Uuid = id.parse().map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+                let uuid: uuid::Uuid = id
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
                 sqlx::query("DELETE FROM routines WHERE id = $1")
-                    .bind(uuid).execute(&pool).await?;
+                    .bind(uuid)
+                    .execute(&pool)
+                    .await?;
                 println!("Deleted routine {}", uuid);
             }
-        }
+        },
         Commands::AgentChat { .. } => {
             eprintln!("AgentChat is deprecated — use AgentRun or AgentTui");
         }

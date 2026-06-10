@@ -258,10 +258,9 @@ impl ToolRegistry {
                 let text = text.clone();
                 async move {
                     let _permit = sem.acquire().await.ok();
-                    let emb = embedder
-                        .embed_description(&text)
-                        .await
-                        .unwrap_or_else(|_| crate::embedding::deterministic_placeholder_embedding(&text));
+                    let emb = embedder.embed_description(&text).await.unwrap_or_else(|_| {
+                        crate::embedding::deterministic_placeholder_embedding(&text)
+                    });
                     (name, emb)
                 }
             })

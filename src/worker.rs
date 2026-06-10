@@ -137,7 +137,10 @@ impl SeedChannel {
         match self.tx.try_send(event) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!("[volt worker] seed channel full ({}), event dropped", SEED_CHANNEL_CAPACITY);
+                tracing::warn!(
+                    "[volt worker] seed channel full ({}), event dropped",
+                    SEED_CHANNEL_CAPACITY
+                );
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 tracing::warn!("[volt worker] seed channel closed, event dropped");
@@ -404,12 +407,15 @@ pub async fn seed_from_workspace_at(
     embedder: &EmbeddingClient,
     workspace: Option<&std::path::Path>,
 ) {
-    let cwd = workspace
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let cwd = workspace.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    });
 
     if workspace.is_some_and(|p| !p.exists()) {
-        tracing::info!("[worker] workspace path {:?} does not exist — skipping workspace seed", workspace.unwrap());
+        tracing::info!(
+            "[worker] workspace path {:?} does not exist — skipping workspace seed",
+            workspace.unwrap()
+        );
         return;
     }
 

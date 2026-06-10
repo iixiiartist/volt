@@ -262,9 +262,15 @@ async fn test_workflow1_software_dev_dag() {
         ("review", "Review passed"),
         ("report", "Final report"),
     ] {
-        let step = results.get(id).unwrap_or_else(|| panic!("missing result for {id}"));
+        let step = results
+            .get(id)
+            .unwrap_or_else(|| panic!("missing result for {id}"));
         assert!(step.success, "{id} should succeed");
-        assert!(step.output.contains(expected_prefix), "{id} output '{expected_prefix}' not found in '{}'", step.output);
+        assert!(
+            step.output.contains(expected_prefix),
+            "{id} output '{expected_prefix}' not found in '{}'",
+            step.output
+        );
         assert!(step.duration_ms > 0, "{id} should record duration");
     }
 }
@@ -332,11 +338,7 @@ async fn test_workflow2_data_analysis_pipeline() {
     // Verify tools were registered and the mock provider received the request
     let defs = registry.get_definitions().await;
     let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-    for required in &[
-        "web_fetch",
-        "csv_write",
-        "create_bar_chart",
-    ] {
+    for required in &["web_fetch", "csv_write", "create_bar_chart"] {
         assert!(
             names.contains(required),
             "Tool '{}' must be registered in registry",

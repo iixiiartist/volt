@@ -270,7 +270,8 @@ impl Runtime {
 
         // 5b) Wire the ContextStore + AutoSeedWorker (ref: commands/agent_run.rs:280-320).
         let context_store = if let Some(ref p) = pg_pool {
-            let store: Arc<crate::context::ContextStore> = crate::context::ContextStore::new_with_db(PgPool::clone(p));
+            let store: Arc<crate::context::ContextStore> =
+                crate::context::ContextStore::new_with_db(PgPool::clone(p));
             match store.hydrate_from_db(2000).await {
                 Ok(n) if n > 0 => tracing::info!("[webui] hydrated {} context entries from DB", n),
                 Ok(_) => tracing::debug!("[webui] hydrate_from_db: no entries found (fresh DB)"),
@@ -309,12 +310,14 @@ impl Runtime {
             .unwrap_or(9100);
         if metrics_port > 0 {
             tokio::spawn(async move {
-                let app = axum::Router::new()
-                    .route("/metrics", axum::routing::get(|| async {
+                let app = axum::Router::new().route(
+                    "/metrics",
+                    axum::routing::get(|| async {
                         axum::response::IntoResponse::into_response(
                             crate::metrics::render_prometheus(),
                         )
-                    }));
+                    }),
+                );
                 let addr = format!("0.0.0.0:{}", metrics_port);
                 match tokio::net::TcpListener::bind(&addr).await {
                     Ok(listener) => {
@@ -341,50 +344,52 @@ impl Runtime {
         //     wired (it just won't successfully chat). The
         //     `SubmitApiKey` command hot-swaps the provider once the
         //     user enters a key — no app restart needed.
-        let setup_providers: Vec<crate::webui::commands::ProviderInfo> = if !crate::config::has_any_llm_key() {
-            tracing::warn!("[webui] no LLM API key found — setup wizard will be shown");
-            let ollama_label = if std::env::var("OLLAMA_HOST").is_ok() {
-                "Ollama — running locally on this machine"
+        let setup_providers: Vec<crate::webui::commands::ProviderInfo> =
+            if !crate::config::has_any_llm_key() {
+                tracing::warn!("[webui] no LLM API key found — setup wizard will be shown");
+                let ollama_label = if std::env::var("OLLAMA_HOST").is_ok() {
+                    "Ollama — running locally on this machine"
+                } else {
+                    "Ollama — local models (no key needed if running locally) or cloud (needs OLLAMA_API_KEY)"
+                };
+                let ollama_env = crate::config::provider_env_var("ollama").map(String::from);
+                vec![
+                    crate::webui::commands::ProviderInfo {
+                        slug: "groq".into(),
+                        label: "Groq — fast cloud inference (free tier)".into(),
+                        env_var: crate::config::provider_env_var("groq").map(String::from),
+                        default_model: crate::config::default_model_for_provider("groq").into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "openai".into(),
+                        label: "OpenAI — GPT-4o, GPT-4o-mini".into(),
+                        env_var: crate::config::provider_env_var("openai").map(String::from),
+                        default_model: crate::config::default_model_for_provider("openai").into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "anthropic".into(),
+                        label: "Anthropic — Claude Sonnet 4.5".into(),
+                        env_var: crate::config::provider_env_var("anthropic").map(String::from),
+                        default_model: crate::config::default_model_for_provider("anthropic")
+                            .into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "nvidia".into(),
+                        label: "NVIDIA NIM — hosted open models".into(),
+                        env_var: crate::config::provider_env_var("nvidia").map(String::from),
+                        default_model: crate::config::default_model_for_provider("nvidia").into(),
+                    },
+                    crate::webui::commands::ProviderInfo {
+                        slug: "ollama".into(),
+                        label: ollama_label.into(),
+                        env_var: ollama_env,
+                        default_model: crate::config::default_model_for_provider("ollama").into(),
+                    },
+                ]
             } else {
-                "Ollama — local models (no key needed if running locally) or cloud (needs OLLAMA_API_KEY)"
+                tracing::info!("[webui] LLM key present — no setup wizard needed");
+                Vec::new()
             };
-            let ollama_env = crate::config::provider_env_var("ollama").map(String::from);
-            vec![
-                crate::webui::commands::ProviderInfo {
-                    slug: "groq".into(),
-                    label: "Groq — fast cloud inference (free tier)".into(),
-                    env_var: crate::config::provider_env_var("groq").map(String::from),
-                    default_model: crate::config::default_model_for_provider("groq").into(),
-                },
-                crate::webui::commands::ProviderInfo {
-                    slug: "openai".into(),
-                    label: "OpenAI — GPT-4o, GPT-4o-mini".into(),
-                    env_var: crate::config::provider_env_var("openai").map(String::from),
-                    default_model: crate::config::default_model_for_provider("openai").into(),
-                },
-                crate::webui::commands::ProviderInfo {
-                    slug: "anthropic".into(),
-                    label: "Anthropic — Claude Sonnet 4.5".into(),
-                    env_var: crate::config::provider_env_var("anthropic").map(String::from),
-                    default_model: crate::config::default_model_for_provider("anthropic").into(),
-                },
-                crate::webui::commands::ProviderInfo {
-                    slug: "nvidia".into(),
-                    label: "NVIDIA NIM — hosted open models".into(),
-                    env_var: crate::config::provider_env_var("nvidia").map(String::from),
-                    default_model: crate::config::default_model_for_provider("nvidia").into(),
-                },
-                crate::webui::commands::ProviderInfo {
-                    slug: "ollama".into(),
-                    label: ollama_label.into(),
-                    env_var: ollama_env,
-                    default_model: crate::config::default_model_for_provider("ollama").into(),
-                },
-            ]
-        } else {
-            tracing::info!("[webui] LLM key present — no setup wizard needed");
-            Vec::new()
-        };
 
         // 7) Channels
         let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(CMD_CHANNEL_CAPACITY);
@@ -607,18 +612,14 @@ impl Runtime {
                     .await
             }
             UiCommand::ListCanvasWorkflows => self.handle_list_canvas_workflows().await,
-            UiCommand::LoadCanvasWorkflow { name } => {
-                self.handle_load_canvas_workflow(name).await
-            }
+            UiCommand::LoadCanvasWorkflow { name } => self.handle_load_canvas_workflow(name).await,
             UiCommand::SaveCanvasWorkflow { name, graph_json } => {
                 self.handle_save_canvas_workflow(name, graph_json).await
             }
             UiCommand::DeleteCanvasWorkflow { name } => {
                 self.handle_delete_canvas_workflow(name).await
             }
-            UiCommand::NewCanvasWorkflow { name } => {
-                self.handle_new_canvas_workflow(name).await
-            }
+            UiCommand::NewCanvasWorkflow { name } => self.handle_new_canvas_workflow(name).await,
             UiCommand::ListJobs => self.handle_list_jobs().await,
             UiCommand::CreateJob { description } => self.handle_create_job(description).await,
             UiCommand::StartJob { id, worker_id } => self.handle_start_job(id, worker_id).await,
@@ -668,9 +669,7 @@ impl Runtime {
                 provider,
                 api_key,
                 model,
-            } => {
-                self.handle_submit_api_key(provider, api_key, model).await
-            }
+            } => self.handle_submit_api_key(provider, api_key, model).await,
         }
     }
 
@@ -1071,8 +1070,7 @@ impl Runtime {
         let inventory = crate::llm::provider_detector::detect();
         for provider in inventory.providers.iter().filter(|p| p.is_active) {
             let slug = provider.slug.as_str();
-            let has_key = !provider.env_var.is_empty()
-                && std::env::var(provider.env_var).is_ok();
+            let has_key = !provider.env_var.is_empty() && std::env::var(provider.env_var).is_ok();
             let (display_name, supports_tools, supports_vision) = match slug {
                 "groq" => ("llama-3.1-8b-instant", true, false),
                 "nvidia" => ("meta/llama-3.1-70b-instruct", true, false),
@@ -1295,11 +1293,7 @@ impl Runtime {
                     edge_count: g.edges.len() as u32,
                 }),
                 Err(e) => {
-                    tracing::warn!(
-                        "[webui] skipping unreadable workflow file {:?}: {}",
-                        p,
-                        e
-                    );
+                    tracing::warn!("[webui] skipping unreadable workflow file {:?}: {}", p, e);
                 }
             }
         }
@@ -1318,7 +1312,10 @@ impl Runtime {
         match crate::workflow::load(&path) {
             Ok(g) => match g.to_pretty_json() {
                 Ok(json) => {
-                    self.emit(UiEvent::CanvasWorkflowLoaded { name, graph_json: json });
+                    self.emit(UiEvent::CanvasWorkflowLoaded {
+                        name,
+                        graph_json: json,
+                    });
                 }
                 Err(e) => self.emit_error("load_canvas_workflow", e),
             },
@@ -1375,7 +1372,10 @@ impl Runtime {
         let graph = crate::workflow::WorkflowGraph::new(name.clone());
         match graph.to_pretty_json() {
             Ok(json) => {
-                self.emit(UiEvent::CanvasWorkflowLoaded { name, graph_json: json });
+                self.emit(UiEvent::CanvasWorkflowLoaded {
+                    name,
+                    graph_json: json,
+                });
             }
             Err(e) => self.emit_error("new_canvas_workflow", e),
         }
@@ -1908,7 +1908,11 @@ impl Runtime {
                     actor: AuditActor::User,
                     action: AuditAction::Approval,
                     target: request_id.to_string(),
-                    result: if allow { AuditResult::Ok } else { AuditResult::Denied },
+                    result: if allow {
+                        AuditResult::Ok
+                    } else {
+                        AuditResult::Denied
+                    },
                     detail: json!({ "allow_session": allow_session }),
                     session_id: None,
                 });
@@ -1926,12 +1930,7 @@ impl Runtime {
     /// `SetupReady` so the UI can close its wizard. Returns an error
     /// event if persistence or provider construction fails — the UI
     /// surfaces the error and keeps the wizard open.
-    async fn handle_submit_api_key(
-        &self,
-        provider_slug: String,
-        api_key: String,
-        model: String,
-    ) {
+    async fn handle_submit_api_key(&self, provider_slug: String, api_key: String, model: String) {
         tracing::info!(
             "[webui] submit_api_key: provider={} model={}",
             provider_slug,
@@ -1963,8 +1962,7 @@ impl Runtime {
         }
 
         // 2) Build the new provider and swap it into the agent.
-        let (new_provider, _kind) =
-            crate::orchestrator::build_provider(&model, "volt-webui");
+        let (new_provider, _kind) = crate::orchestrator::build_provider(&model, "volt-webui");
         {
             let mut agent = self.agent.lock().await;
             agent.replace_provider(new_provider);
@@ -2292,4 +2290,3 @@ async fn worktree_remove(branch: &str) -> anyhow::Result<()> {
 fn mcp_servers_path() -> std::path::PathBuf {
     crate::config::volt_home().join("mcp_servers.json")
 }
-

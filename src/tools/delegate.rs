@@ -58,10 +58,10 @@ pub async fn delegate_task_with_cap_mgr(
                 .collect();
             defaults.into_iter().next()
         });
-    let model = match model {
-        Some(m) => m,
-        None => {
-            return ToolResult {
+    let model =
+        match model {
+            Some(m) => m,
+            None => return ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(
@@ -69,9 +69,8 @@ pub async fn delegate_task_with_cap_mgr(
                         .into(),
                 ),
                 duration_ms: started.elapsed().as_millis(),
-            }
-        }
-    };
+            },
+        };
     let route = match resolve_provider(&model) {
         Ok(r) => r,
         Err(e) => {

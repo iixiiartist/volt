@@ -352,9 +352,7 @@ pub enum UiEvent {
     /// should show a setup wizard and let the user enter credentials.
     /// Includes the current env-var search paths so the UI can tell
     /// the user which key names are accepted.
-    SetupNeeded {
-        providers: Vec<ProviderInfo>,
-    },
+    SetupNeeded { providers: Vec<ProviderInfo> },
 
     /// The runtime accepted a new API key, persisted it, and rebuilt
     /// the LLM provider successfully. The UI should close the wizard.
@@ -772,7 +770,9 @@ mod tests {
 
     #[test]
     fn round_trip_install_skill() {
-        let c = UiCommand::InstallSkill { name: "weather".into() };
+        let c = UiCommand::InstallSkill {
+            name: "weather".into(),
+        };
         let s = serde_json::to_string(&c).unwrap();
         let v: UiCommand = serde_json::from_str(&s).unwrap();
         match v {
@@ -783,7 +783,9 @@ mod tests {
 
     #[test]
     fn round_trip_create_job() {
-        let c = UiCommand::CreateJob { description: "build the thing".into() };
+        let c = UiCommand::CreateJob {
+            description: "build the thing".into(),
+        };
         let s = serde_json::to_string(&c).unwrap();
         let v: UiCommand = serde_json::from_str(&s).unwrap();
         match v {
@@ -820,7 +822,12 @@ mod tests {
         let s = serde_json::to_string(&c).unwrap();
         let v: UiCommand = serde_json::from_str(&s).unwrap();
         match v {
-            UiCommand::RegisterMcpServer { name, transport, command, url } => {
+            UiCommand::RegisterMcpServer {
+                name,
+                transport,
+                command,
+                url,
+            } => {
                 assert_eq!(name, "himalaya");
                 assert_eq!(transport, "stdio");
                 assert_eq!(command.as_deref(), Some("himalaya-mcp --stdio"));
@@ -842,7 +849,11 @@ mod tests {
         assert!(s.contains("\"final\":\"done\""), "got {}", s);
         let v: UiEvent = serde_json::from_str(&s).unwrap();
         match v {
-            UiEvent::ChatComplete { final_text, tokens_used, duration_ms } => {
+            UiEvent::ChatComplete {
+                final_text,
+                tokens_used,
+                duration_ms,
+            } => {
                 assert_eq!(final_text, "done");
                 assert_eq!(tokens_used, 42);
                 assert_eq!(duration_ms, 123);

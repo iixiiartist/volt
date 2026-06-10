@@ -1,5 +1,5 @@
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::{TokenCallback, LLM_HTTP_TIMEOUT, DEFAULT_MAX_TOKENS};
+use crate::llm::provider::{TokenCallback, DEFAULT_MAX_TOKENS, LLM_HTTP_TIMEOUT};
 use crate::llm::LLMProvider;
 use crate::models::{LLMRequest, LLMResponse, ToolCall, Usage};
 use async_trait::async_trait;

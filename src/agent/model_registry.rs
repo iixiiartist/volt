@@ -84,10 +84,7 @@ fn detect_total_ram_mb() -> u64 {
             if let Ok(s) = String::from_utf8(out.stdout) {
                 for line in s.lines() {
                     if let Some(rest) = line.trim_start().strip_prefix("Total Physical Memory:") {
-                        let cleaned: String = rest
-                            .chars()
-                            .filter(|c| c.is_ascii_digit())
-                            .collect();
+                        let cleaned: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
                         if let Ok(mb) = cleaned.parse::<u64>() {
                             return mb;
                         }

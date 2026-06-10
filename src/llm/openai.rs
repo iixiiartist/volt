@@ -1,7 +1,10 @@
 use crate::agent::tool_parser::parse_lossy_json;
-use crate::llm::provider::{TokenCallback, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, LLM_HTTP_TIMEOUT, LLM_POLL_INTERVAL, LLM_POLL_MAX_ITERATIONS, LLM_POLL_TIMEOUT};
-use crate::llm::LLMProvider;
 use crate::llm::poll_async;
+use crate::llm::provider::{
+    TokenCallback, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, LLM_HTTP_TIMEOUT, LLM_POLL_INTERVAL,
+    LLM_POLL_MAX_ITERATIONS, LLM_POLL_TIMEOUT,
+};
+use crate::llm::LLMProvider;
 use crate::models::{
     AudioRequest, AudioResponse, ExecutedTool, LLMRequest, LLMResponse, ModelUsage,
     PromptTokensDetails, ToolCall, TtsRequest, Usage,
@@ -289,11 +292,7 @@ impl LLMProvider for OpenAIProvider {
         let body = build_request_body(request);
 
         let req = self.apply_auth(self.http.post(&url));
-        let resp_val = req
-            .json(&body)
-            .timeout(LLM_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let resp_val = req.json(&body).timeout(LLM_HTTP_TIMEOUT).send().await?;
 
         let status = resp_val.status();
 
@@ -316,7 +315,8 @@ impl LLMProvider for OpenAIProvider {
                 LLM_POLL_TIMEOUT,
                 |req| self.apply_auth(req),
                 parse_openai_response,
-            ).await;
+            )
+            .await;
         }
 
         if !status.is_success() {
@@ -340,11 +340,7 @@ impl LLMProvider for OpenAIProvider {
 
         let req = self.apply_auth(self.http.post(&url));
 
-        let response = req
-            .json(&body)
-            .timeout(LLM_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let response = req.json(&body).timeout(LLM_HTTP_TIMEOUT).send().await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -489,10 +485,7 @@ impl LLMProvider for OpenAIProvider {
 
         let req = self.apply_auth(self.http.post(&url).multipart(form));
 
-        let resp_val = req
-            .timeout(LLM_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let resp_val = req.timeout(LLM_HTTP_TIMEOUT).send().await?;
 
         let status = resp_val.status();
         if !status.is_success() {
@@ -526,10 +519,7 @@ impl LLMProvider for OpenAIProvider {
 
         let req = self.apply_auth(self.http.post(&url).multipart(form));
 
-        let resp_val = req
-            .timeout(LLM_HTTP_TIMEOUT)
-            .send()
-            .await?;
+        let resp_val = req.timeout(LLM_HTTP_TIMEOUT).send().await?;
 
         let status = resp_val.status();
         if !status.is_success() {

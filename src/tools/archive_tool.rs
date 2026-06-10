@@ -100,8 +100,7 @@ fn safe_unpack<R: std::io::Read>(
     archive: &mut tar::Archive<R>,
     dest: &str,
 ) -> Result<usize, String> {
-    let dest_abs = std::fs::canonicalize(dest)
-        .map_err(|e| format!("canonicalize dest: {}", e))?;
+    let dest_abs = std::fs::canonicalize(dest).map_err(|e| format!("canonicalize dest: {}", e))?;
     std::fs::create_dir_all(&dest_abs).map_err(|e| format!("mkdir dest: {}", e))?;
 
     let mut count = 0usize;

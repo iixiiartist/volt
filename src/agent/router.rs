@@ -1,4 +1,4 @@
-use super::blueprint::{AgentBlueprint, load_blueprint};
+use super::blueprint::{load_blueprint, AgentBlueprint};
 use std::path::PathBuf;
 
 /// Filter blueprints to only those whose provider is in the active set.
@@ -143,7 +143,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_route_task_keyword_match() {
-        let coding_bp = make_bp("coder", "groq", vec!["code", "programming", "rust", "python"]);
+        let coding_bp = make_bp(
+            "coder",
+            "groq",
+            vec!["code", "programming", "rust", "python"],
+        );
         let writing_bp = make_bp("writer", "nvidia", vec!["write", "essay", "documentation"]);
         let blueprints = vec![coding_bp, writing_bp];
 
