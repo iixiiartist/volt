@@ -525,11 +525,10 @@ fn route_from_detected(
         base_url: p.base_url.clone(),
         api_key,
     })
-    .map(|r| {
+    .inspect(|_r| {
         // For local servers, the `model` arg may be a tag like
         // `llama3.2:3b`. Pass it through unchanged.
         let _ = model;
-        r
     })
 }
 

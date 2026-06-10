@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{LazyLock, OnceLock};
 
 /// Static model registry mapping (variant, quant, framework) → ModelSpec.

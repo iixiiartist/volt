@@ -30,11 +30,13 @@ struct WorkspaceFileCache {
 }
 
 thread_local! {
-    static WORKSPACE_CACHE: WorkspaceFileCache = WorkspaceFileCache {
-        soul: Mutex::new(None),
-        memory: Mutex::new(None),
-        user: Mutex::new(None),
-        agents: Mutex::new(None),
+    static WORKSPACE_CACHE: WorkspaceFileCache = const {
+        WorkspaceFileCache {
+            soul: Mutex::new(None),
+            memory: Mutex::new(None),
+            user: Mutex::new(None),
+            agents: Mutex::new(None),
+        }
     };
 }
 

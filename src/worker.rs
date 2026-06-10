@@ -408,7 +408,7 @@ pub async fn seed_from_workspace_at(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
 
-    if workspace.map_or(false, |p| !p.exists()) {
+    if workspace.is_some_and(|p| !p.exists()) {
         tracing::info!("[worker] workspace path {:?} does not exist — skipping workspace seed", workspace.unwrap());
         return;
     }

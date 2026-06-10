@@ -29,10 +29,11 @@ pub const WORKFLOW_FILE_VERSION: u32 = 1;
 /// What the node does at runtime. The editor knows the full set; the
 /// orchestrator only consumes `Agent` nodes for now — other kinds are
 /// rendered in the canvas but skipped during execution (with a warning).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     /// An LLM agent task (mapped to `DagNode`).
+    #[default]
     Agent,
     /// A direct tool invocation (Phase 3).
     Tool,
@@ -44,11 +45,6 @@ pub enum NodeKind {
     Note,
 }
 
-impl Default for NodeKind {
-    fn default() -> Self {
-        Self::Agent
-    }
-}
 
 /// The deployment environment a workflow targets. The runtime
 /// enforces a per-environment provider allowlist so a workflow
